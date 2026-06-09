@@ -84,7 +84,19 @@ fn main() -> Result<()> {
                 "pkg",
             ],
         ),
-        Task::RunOracle => run("cargo", &["test", "-p", "rlt-core", "--", "--nocapture"]),
+        Task::RunOracle => run(
+            "cargo",
+            &[
+                "test",
+                "-p",
+                "rlt-cli",
+                "--test",
+                "oracle",
+                "--",
+                "--ignored",
+                "--nocapture",
+            ],
+        ),
     }
 }
 
