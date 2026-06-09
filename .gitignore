@@ -3,10 +3,13 @@
 **/*.rs.bk
 Cargo.lock.orig
 
-# Generated / fetched data — NOT committed (fetched on demand via `cargo xtask fetch-lt`)
+# Generated / fetched data — NOT committed (fetched on demand via `cargo xtask fetch-*`)
 /resources/lt/
 *.rkyv
 *.dict
+# nlprule engine binaries (fetched via `cargo xtask fetch-engine`)
+/resources/*.bin
+/resources/*.bin.gz
 
 # wasm-pack output
 /crates/rlt-wasm/pkg/

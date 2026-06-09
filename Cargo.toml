@@ -30,6 +30,9 @@ xsd-parser = "1.5"
 xsd-parser-types = { version = "0.2", features = ["quick-xml"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
+# Engine: vendored-via-dependency nlprule. default-features off + regex-fancy keeps it
+# pure-Rust so it compiles to wasm32 (the onig default pulls in a C lib that does not).
+nlprule = { version = "0.6.4", default-features = false, features = ["regex-fancy"] }
 # Pattern matching (engine)
 regex-automata = "0.4"
 fancy-regex = "0.18"
