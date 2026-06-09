@@ -1,15 +1,25 @@
 //! `rlt` — the command-line surface over [`rlt_core`].
 //!
-//! Two subcommands: `check` (lint a file, print diagnostics) and `convert` (run the offline LT →
-//! rkyv conversion, delegating to [`rlt_convert::convert`] so there is exactly one conversion
-//! codepath shared with the standalone `rlt-convert` binary).
+//! Subcommands: `check` (lint a file; `--matcher nlprule|ir` selects the L2 backend), `convert`
+//! (run the offline LT → rkyv conversion, sharing one codepath with the `rlt-convert` binary) and
+//! `tokens` (print the engine's tokenize + POS-tag analysis of a sentence).
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
-use rlt_core::{Checker, Diagnostic};
+use anyhow::{Context, Result, anyhow};
+use clap::{Parser, Subcommand, ValueEnum};
+use rlt_core::{Checker, Composite, Diagnostic, IrMatcher};
 use rlt_engine::VendoredEngine;
+
+/// Which L2 grammar backend to use.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Matcher {
+    /// nlprule's bundled LanguageTool v5.2 rules (broad coverage; works after `fetch-engine`).
+    Nlprule,
+    /// Our matcher over LanguageTool v6.7 rules compiled to `resources/en.rkyv` (the on-thesis
+    /// path; needs `cargo xtask build-blob` first).
+    Ir,
+}
 
 /// Local, web-native grammar and spell checker built on LanguageTool's open rule corpus.
 #[derive(Debug, Parser)]
@@ -25,6 +35,9 @@ enum Command {
     Check {
         /// Path to the UTF-8 text file to check.
         file: PathBuf,
+        /// Grammar backend for L2.
+        #[arg(long, value_enum, default_value_t = Matcher::Nlprule)]
+        matcher: Matcher,
     },
     /// Convert a LanguageTool grammar.xml into the runtime rkyv artifact.
     Convert {
@@ -51,7 +64,7 @@ fn main() -> Result<()> {
         .init();
 
     match Cli::parse().command {
-        Command::Check { file } => run_check(&file),
+        Command::Check { file, matcher } => run_check(&file, matcher),
         Command::Convert { grammar, out } => {
             let report = rlt_convert::convert(&grammar, &out)?;
             tracing::info!(
@@ -83,28 +96,39 @@ fn run_tokens(text: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_check(file: &std::path::Path) -> Result<()> {
+fn run_check(file: &std::path::Path, matcher: Matcher) -> Result<()> {
     let text =
         std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
 
     let tok = rlt_engine::DEFAULT_TOKENIZER_BIN;
-    let mut engine = VendoredEngine::from_path(std::path::Path::new(tok))
+    let engine = VendoredEngine::from_path(std::path::Path::new(tok))
         .with_context(|| format!("loading engine from {tok} (run `cargo xtask fetch-engine`?)"))?;
 
-    // Attach L2 grammar rules when available; otherwise run L1-only with a heads-up.
-    let rules = rlt_engine::DEFAULT_RULES_BIN;
-    if std::path::Path::new(rules).exists() {
-        engine = engine
-            .with_rules_path(std::path::Path::new(rules))
-            .with_context(|| format!("loading grammar rules from {rules}"))?;
-    } else {
-        tracing::warn!(
-            "{rules} not found — running spelling only (run `cargo xtask fetch-engine`)"
-        );
-    }
-
-    let checker = Checker::new(engine);
-    let diagnostics = checker.check(&text);
+    // L1 spelling runs for both backends; L2 grammar differs by `matcher`.
+    let diagnostics = match matcher {
+        Matcher::Nlprule => {
+            let rules = rlt_engine::DEFAULT_RULES_BIN;
+            let engine = if std::path::Path::new(rules).exists() {
+                engine
+                    .with_rules_path(std::path::Path::new(rules))
+                    .with_context(|| format!("loading grammar rules from {rules}"))?
+            } else {
+                tracing::warn!(
+                    "{rules} not found — spelling only (run `cargo xtask fetch-engine`)"
+                );
+                engine
+            };
+            Checker::new(engine).check(&text)
+        }
+        Matcher::Ir => {
+            let blob = rlt_convert::DEFAULT_OUT;
+            let bytes = std::fs::read(blob)
+                .with_context(|| format!("reading {blob} (run `cargo xtask build-blob`?)"))?;
+            let ir = IrMatcher::from_rkyv_bytes(&bytes)
+                .map_err(|e| anyhow!("compiling IR rules from {blob}: {e}"))?;
+            Checker::new(Composite::new(engine, ir)).check(&text)
+        }
+    };
 
     for d in &diagnostics {
         print_diagnostic(file, &text, d);
