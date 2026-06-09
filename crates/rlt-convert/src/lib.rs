@@ -21,7 +21,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
 use regex::Regex;
-use rlt_ir::{Construct, Rule, TokenPat};
+use rlt_ir::{Case, Construct, ExceptionPat, Rule, SugPart, Suggestion, TokenPat};
 use xsd_parser_types::quick_xml::{DeserializeSync, SliceReader, XmlReader};
 
 use lt_schema::{pattern, rules};
@@ -210,6 +210,8 @@ fn lower_rule(r: &rules::RuleElementType, group_id: Option<&str>) -> Rule {
             .unwrap_or_else(|| "<anon>".to_owned());
 
     let mut pattern = Vec::new();
+    let mut message = String::new();
+    let mut suggestions = Vec::new();
     for c in &r.content {
         match c {
             rules::RuleElementTypeContent::Pattern(p) => lower_pattern(&p.content, &mut pattern),
@@ -222,12 +224,86 @@ fn lower_rule(r: &rules::RuleElementType, group_id: Option<&str>) -> Rule {
                     kind: "regexp".to_owned(),
                 });
             }
-            // Antipattern/Message/Suggestion/Url/Short/Example are not pattern matchers; the
-            // diagnostic-output side (message/suggestion) is wired in M4.
+            rules::RuleElementTypeContent::Message(m) => {
+                let (text, sugs) = lower_message(m);
+                if message.is_empty() {
+                    message = text;
+                }
+                suggestions.extend(sugs);
+            }
+            rules::RuleElementTypeContent::Suggestion(s) => suggestions.push(lower_suggestion(s)),
+            // Antipattern/Url/Short/Example are not part of the match-and-suggest path here.
             _ => {}
         }
     }
-    Rule { id, pattern }
+    Rule {
+        id,
+        pattern,
+        message,
+        suggestions,
+    }
+}
+
+/// Lower a `<message>` into its display text plus the corrections (`<suggestion>`s) it embeds.
+fn lower_message(m: &rules::MessageElementType) -> (String, Vec<Suggestion>) {
+    let mut text = m
+        .text_before
+        .as_ref()
+        .map_or_else(String::new, |t| t.0.clone());
+    let mut suggestions = Vec::new();
+    for item in &m.content {
+        match item {
+            rules::MessageElementTypeContent::Suggestion(s) => {
+                suggestions.push(lower_suggestion(&s.value));
+                if let Some(after) = &s.text_after {
+                    text.push_str(&after.0);
+                }
+            }
+            rules::MessageElementTypeContent::Match(mt) => {
+                if let Some(after) = &mt.text_after {
+                    text.push_str(&after.0);
+                }
+            }
+        }
+    }
+    (text.trim().to_owned(), suggestions)
+}
+
+/// Lower a `<suggestion>` into a correction template (literal text + `<match no>` token refs).
+fn lower_suggestion(s: &rules::SuggestionElementType) -> Suggestion {
+    let mut parts = Vec::new();
+    if let Some(t) = &s.text_before {
+        push_text(&mut parts, &t.0);
+    }
+    for item in &s.content {
+        let m = &item.match_.value;
+        parts.push(SugPart::Token {
+            no: m.no,
+            case: map_case(m.case_conversion.as_ref()),
+        });
+        if let Some(after) = &item.match_.text_after {
+            push_text(&mut parts, &after.0);
+        }
+    }
+    Suggestion { parts }
+}
+
+/// Append a literal text part, preserving internal whitespace (significant when joining matches).
+fn push_text(parts: &mut Vec<SugPart>, text: &str) {
+    if !text.is_empty() {
+        parts.push(SugPart::Text(text.to_owned()));
+    }
+}
+
+/// Map LT's `case_conversion` to the IR [`Case`].
+fn map_case(c: Option<&pattern::MatchCaseConversionType>) -> Case {
+    use pattern::MatchCaseConversionType as M;
+    match c {
+        Some(M::Allupper) => Case::Upper,
+        Some(M::Alllower) => Case::Lower,
+        Some(M::Startupper | M::Firstupper) => Case::StartUpper,
+        _ => Case::Keep,
+    }
 }
 
 /// Lower the contents of a `<pattern>` into IR constructs.
@@ -302,15 +378,18 @@ fn lower_marker(content: &[pattern::MarkerElementTypeContent], out: &mut Vec<Con
     }
 }
 
-/// Lower a `<token>`'s declarative attributes and literal/regex text into a [`TokenPat`].
+/// Lower a `<token>`'s declarative attributes, literal/regex text and `<exception>`s.
 fn lower_token(t: &pattern::TokenElementType) -> TokenPat {
-    let text = t
-        .text_before
-        .as_ref()
-        .map(|x| x.0.trim().to_owned())
-        .filter(|s| !s.is_empty());
+    let exceptions = t
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            pattern::TokenElementTypeContent::Exception(e) => Some(lower_exception(&e.value)),
+            pattern::TokenElementTypeContent::Match(_) => None,
+        })
+        .collect();
     TokenPat {
-        text,
+        text: trimmed(t.text_before.as_ref()),
         postag: t.postag.clone(),
         regexp: is_yes(&t.regexp),
         negate: is_yes(&t.negate),
@@ -318,7 +397,27 @@ fn lower_token(t: &pattern::TokenElementType) -> TokenPat {
         min: t.min,
         max: t.max,
         skip: t.skip,
+        case_sensitive: t.case_sensitive.as_ref().is_some_and(is_yes),
+        exceptions,
     }
+}
+
+/// Lower a `<token>`'s `<exception>` into an [`ExceptionPat`].
+fn lower_exception(e: &pattern::ExceptionElementType) -> ExceptionPat {
+    ExceptionPat {
+        text: trimmed(e.text.as_ref()),
+        postag: e.postag.clone(),
+        regexp: is_yes(&e.regexp),
+        inflected: is_yes(&e.inflected),
+        negate: is_yes(&e.negate),
+        case_sensitive: e.case_sensitive.as_ref().is_some_and(is_yes),
+    }
+}
+
+/// A trimmed, non-empty literal from an optional mixed-content text node.
+fn trimmed(text: Option<&xsd_parser_types::xml::Text>) -> Option<String> {
+    text.map(|x| x.0.trim().to_owned())
+        .filter(|s| !s.is_empty())
 }
 
 /// LT's `yes`/`no` enum → bool.
