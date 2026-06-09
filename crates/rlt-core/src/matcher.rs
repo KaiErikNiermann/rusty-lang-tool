@@ -6,10 +6,11 @@
 //!
 //! Scope: literal/regex/POS token matching with `inflected`, `negate`, `case_sensitive`,
 //! `<exception>`s, `min`/`max`/`skip` quantifiers, `<or>`/`<and>` groups, `<marker>` spans,
-//! `<antipattern>` suppression and suggestion rendering (literal text + `<match no>`/`\N` token
-//! copies with case conversion). `<phraseref>`s are inlined at convert time. Rules whose pattern
-//! still contains an unsupported construct (`<unify>` — unused in English — or `<filter>`) are
-//! skipped rather than matched wrongly.
+//! `<antipattern>` suppression, rule-level `<regexp>` rules (matched over text), and suggestion
+//! rendering — literal text + `<match no>`/`\N` token copies with case conversion and
+//! `regexp_replace` transforms. `<phraseref>`s are inlined at convert time. Suggestions needing
+//! morphological synthesis (`postag_replace`) are dropped, and rules left with an unsupported
+//! construct (`<unify>` — unused in English — or `<filter>`) are skipped rather than matched wrong.
 
 use std::collections::HashMap;
 
@@ -28,6 +29,8 @@ pub struct IrMatcher {
     by_first_literal: HashMap<String, Vec<usize>>,
     /// Indices of rules whose first element is not a plain literal → tried at every position.
     general: Vec<usize>,
+    /// Rule-level `<regexp>` rules, matched as a regex over the sentence text.
+    regexp_rules: Vec<CompiledRegexpRule>,
 }
 
 impl IrMatcher {
@@ -37,7 +40,15 @@ impl IrMatcher {
         let mut compiled = Vec::new();
         let mut by_first_literal: HashMap<String, Vec<usize>> = HashMap::new();
         let mut general = Vec::new();
+        let mut regexp_rules = Vec::new();
         for r in rules {
+            if r.pattern
+                .iter()
+                .any(|c| matches!(c, Construct::Regexp { .. }))
+            {
+                regexp_rules.extend(compile_regexp_rule(r));
+                continue;
+            }
             let Some(rule) = compile_rule(r) else {
                 continue;
             };
@@ -52,6 +63,7 @@ impl IrMatcher {
             rules: compiled,
             by_first_literal,
             general,
+            regexp_rules,
         }
     }
 
@@ -63,10 +75,10 @@ impl IrMatcher {
         Ok(Self::new(&rlt_ir::deserialize_rules(bytes)?))
     }
 
-    /// Number of rules successfully compiled (the matchable subset).
+    /// Number of rules successfully compiled (the matchable subset, including regexp rules).
     #[must_use]
     pub fn rule_count(&self) -> usize {
-        self.rules.len()
+        self.rules.len() + self.regexp_rules.len()
     }
 
     fn diagnostics(&self, text: &str, tokens: &[Token]) -> Vec<Diagnostic> {
@@ -90,6 +102,9 @@ impl IrMatcher {
                 }
             }
         }
+        for rr in &self.regexp_rules {
+            rr.diagnostics(text, &mut out);
+        }
         // De-duplicate identical (span, rule) hits produced at overlapping start positions.
         out.sort_by(|a, b| {
             (a.span.start, a.span.end, &a.code).cmp(&(b.span.start, b.span.end, &b.code))
@@ -112,9 +127,24 @@ struct CompiledRule {
     message: String,
     elements: Vec<Elem>,
     marker: Option<(usize, usize)>,
-    suggestions: Vec<IrSuggestion>,
+    suggestions: Vec<CompiledSuggestion>,
     /// Antipattern element sequences; if any matches overlapping the rule's match, suppress it.
     antipatterns: Vec<Vec<Elem>>,
+}
+
+/// A correction template with any `regexp_replace` transforms pre-compiled.
+struct CompiledSuggestion {
+    parts: Vec<CompiledPart>,
+}
+
+enum CompiledPart {
+    Text(String),
+    /// Copy the Nth matched token's surface, apply the optional regex substitution, then `case`.
+    Token {
+        no: usize,
+        case: Case,
+        regex: Option<(Regex, String)>,
+    },
 }
 
 impl CompiledRule {
@@ -173,7 +203,14 @@ enum TagMatch {
 /// Compile a rule, or `None` if it cannot be matched faithfully (unsupported construct, no
 /// suggestions, empty pattern, or an uncompilable main regex).
 fn compile_rule(r: &Rule) -> Option<CompiledRule> {
-    if r.suggestions.is_empty() {
+    // Compile suggestions up front (pre-compiling regex transforms); a rule with no renderable
+    // suggestion cannot produce a correction, so skip it.
+    let suggestions: Vec<CompiledSuggestion> = r
+        .suggestions
+        .iter()
+        .filter_map(compile_suggestion)
+        .collect();
+    if suggestions.is_empty() {
         return None;
     }
     let mut elements = Vec::new();
@@ -205,9 +242,133 @@ fn compile_rule(r: &Rule) -> Option<CompiledRule> {
         message: r.message.clone(),
         elements,
         marker,
-        suggestions: r.suggestions.clone(),
+        suggestions,
         antipatterns,
     })
+}
+
+/// Pre-compile a suggestion's parts (compiling any `regexp_replace`); `None` if a transform regex
+/// or an unknown part makes it unrenderable.
+fn compile_suggestion(s: &IrSuggestion) -> Option<CompiledSuggestion> {
+    let mut parts = Vec::new();
+    for p in &s.parts {
+        match p {
+            SugPart::Text(t) => parts.push(CompiledPart::Text(t.clone())),
+            SugPart::Token {
+                no,
+                case,
+                transform,
+            } => {
+                let regex = match transform {
+                    Some((m, r)) => Some((Regex::new(m).ok()?, r.clone())),
+                    None => None,
+                };
+                parts.push(CompiledPart::Token {
+                    no: *no,
+                    case: *case,
+                    regex,
+                });
+            }
+            _ => return None,
+        }
+    }
+    Some(CompiledSuggestion { parts })
+}
+
+/// A compiled rule-level `<regexp>` rule, matched as a regex over the sentence text.
+struct CompiledRegexpRule {
+    id: String,
+    message: String,
+    regex: Regex,
+    mark: Option<usize>,
+    suggestions: Vec<CompiledSuggestion>,
+}
+
+impl CompiledRegexpRule {
+    /// Append a diagnostic for each regex match over `text`.
+    fn diagnostics(&self, text: &str, out: &mut Vec<Diagnostic>) {
+        for caps in self.regex.captures_iter(text) {
+            let Some(m) = self.mark.and_then(|g| caps.get(g)).or_else(|| caps.get(0)) else {
+                continue;
+            };
+            let mut seen = Vec::new();
+            let mut suggestions = Vec::new();
+            for s in &self.suggestions {
+                if let Some(rep) = render_regexp_suggestion(s, &caps) {
+                    if !rep.is_empty() && !seen.contains(&rep) {
+                        seen.push(rep.clone());
+                        suggestions.push(Suggestion { replacement: rep });
+                    }
+                }
+            }
+            if suggestions.is_empty() {
+                continue;
+            }
+            out.push(Diagnostic {
+                span: Span {
+                    start: m.start(),
+                    end: m.end(),
+                },
+                code: self.id.clone(),
+                message: self.message.clone(),
+                suggestions,
+                source: Source::Grammar,
+            });
+        }
+    }
+}
+
+/// Compile a rule whose pattern is a rule-level `<regexp>`; `None` if the regex does not compile or
+/// no suggestion renders.
+fn compile_regexp_rule(r: &Rule) -> Option<CompiledRegexpRule> {
+    let (pattern, mark, case_sensitive) = r.pattern.iter().find_map(|c| match c {
+        Construct::Regexp {
+            pattern,
+            mark,
+            case_sensitive,
+        } => Some((pattern, *mark, *case_sensitive)),
+        _ => None,
+    })?;
+    let src = if case_sensitive {
+        pattern.clone()
+    } else {
+        format!("(?i){pattern}")
+    };
+    let regex = Regex::new(&src).ok()?;
+    let suggestions: Vec<CompiledSuggestion> = r
+        .suggestions
+        .iter()
+        .filter_map(compile_suggestion)
+        .collect();
+    if suggestions.is_empty() {
+        return None;
+    }
+    Some(CompiledRegexpRule {
+        id: r.id.clone(),
+        message: r.message.clone(),
+        regex,
+        mark,
+        suggestions,
+    })
+}
+
+/// Render a suggestion against regex capture groups (`<match no="N">` / `\N` → group N).
+fn render_regexp_suggestion(sug: &CompiledSuggestion, caps: &regex::Captures) -> Option<String> {
+    let mut out = String::new();
+    for part in &sug.parts {
+        match part {
+            CompiledPart::Text(t) => out.push_str(t),
+            CompiledPart::Token { no, case, regex } => {
+                let surface = caps.get(*no)?.as_str();
+                let transformed = match regex {
+                    Some((re, rep)) => re.replace_all(surface, rep.as_str()).into_owned(),
+                    None => surface.to_owned(),
+                };
+                out.push_str(&apply_case(&transformed, *case));
+            }
+        }
+    }
+    Some(out)
 }
 
 /// Compile a construct list (antipattern body) into matchable elements; `None` if it contains an
@@ -507,7 +668,7 @@ fn marker_token_range(
 /// Render one suggestion template against the captured tokens, or `None` if a token reference is
 /// missing.
 fn render_suggestion(
-    sug: &IrSuggestion,
+    sug: &CompiledSuggestion,
     text: &str,
     tokens: &[Token],
     captures: &[Option<(usize, usize)>],
@@ -515,14 +676,16 @@ fn render_suggestion(
     let mut out = String::new();
     for part in &sug.parts {
         match part {
-            SugPart::Text(t) => out.push_str(t),
-            SugPart::Token { no, case } => {
+            CompiledPart::Text(t) => out.push_str(t),
+            CompiledPart::Token { no, case, regex } => {
                 let (ts, te) = captures.get(no.checked_sub(1)?).copied().flatten()?;
                 let surface = text.get(tokens[ts].span.start..tokens[te - 1].span.end)?;
-                out.push_str(&apply_case(surface, *case));
+                let transformed = match regex {
+                    Some((re, rep)) => re.replace_all(surface, rep.as_str()).into_owned(),
+                    None => surface.to_owned(),
+                };
+                out.push_str(&apply_case(&transformed, *case));
             }
-            // An unknown suggestion part can't be rendered — drop the whole suggestion.
-            _ => return None,
         }
     }
     Some(out)
@@ -639,6 +802,7 @@ mod tests {
                 parts: vec![SugPart::Token {
                     no: 1,
                     case: Case::StartUpper,
+                    transform: None,
                 }],
             }],
         };
@@ -778,6 +942,69 @@ mod tests {
                 .grammar_diagnostics("fish", &analyze("fish", &[("fish", &[], &[])]))
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn match_regexp_replace_transforms_surface() {
+        // <marker>cats</marker> -> <match no="1" regexp_match="s$" regexp_replace=""/> (strip plural)
+        let rule = Rule {
+            id: "DEPLURAL".to_owned(),
+            pattern: vec![
+                Construct::MarkerStart,
+                Construct::Token(TokenPat {
+                    text: Some(r"\w+s".to_owned()),
+                    regexp: true,
+                    ..Default::default()
+                }),
+                Construct::MarkerEnd,
+            ],
+            antipatterns: vec![],
+            message: String::new(),
+            suggestions: vec![IrSuggestion {
+                parts: vec![SugPart::Token {
+                    no: 1,
+                    case: Case::Keep,
+                    transform: Some(("s$".to_owned(), String::new())),
+                }],
+            }],
+        };
+        let matcher = IrMatcher::new(&[rule]);
+        let diags =
+            matcher.grammar_diagnostics("cats", &analyze("cats", &[("cats", &["NNS"], &[])]));
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert_eq!(diags[0].suggestions[0].replacement, "cat");
+    }
+
+    #[test]
+    fn regexp_rule_matches_over_text_and_renders_groups() {
+        // Rule-level <regexp> "(\d+) dollars" → suggest "$<group 1>".
+        let rule = Rule {
+            id: "DOLLARS".to_owned(),
+            pattern: vec![Construct::Regexp {
+                pattern: r"(\d+) dollars".to_owned(),
+                mark: None,
+                case_sensitive: false,
+            }],
+            antipatterns: vec![],
+            message: "Use the $ sign.".to_owned(),
+            suggestions: vec![IrSuggestion {
+                parts: vec![
+                    SugPart::Text("$".to_owned()),
+                    SugPart::Token {
+                        no: 1,
+                        case: Case::Keep,
+                        transform: None,
+                    },
+                ],
+            }],
+        };
+        let matcher = IrMatcher::new(&[rule]);
+        let text = "I have 50 dollars left";
+        // Regexp rules match over text, not tokens, so the token graph is irrelevant.
+        let diags = matcher.grammar_diagnostics(text, &Analysis { tokens: vec![] });
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert_eq!(diags[0].suggestions[0].replacement, "$50");
+        assert_eq!(&text[diags[0].span.start..diags[0].span.end], "50 dollars");
     }
 
     #[test]
