@@ -29,6 +29,10 @@ pub struct Rule {
     pub id: String,
     /// The ordered sequence of pattern elements this rule matches against the token graph.
     pub pattern: Vec<Construct>,
+    /// `<antipattern>`s: token sequences that, when one matches overlapping the rule's match,
+    /// suppress the rule (LT's exception-by-context mechanism). Each is its own construct list.
+    /// Includes the enclosing `<rulegroup>`'s antipatterns, which apply to every member rule.
+    pub antipatterns: Vec<Vec<Construct>>,
     /// Human-readable message shown when the rule fires (plain text; embedded markup dropped).
     pub message: String,
     /// Correction templates rendered against the matched tokens to produce replacements.
@@ -89,6 +93,39 @@ impl Rule {
 /// Returns an error if `bytes` is not a valid archived `Vec<Rule>`.
 pub fn deserialize_rules(bytes: &[u8]) -> Result<Vec<Rule>, rkyv::rancor::Error> {
     rkyv::from_bytes::<Vec<Rule>, rkyv::rancor::Error>(bytes)
+}
+
+/// The L3 confusion-pair model: easily-confused word pairs plus the pruned n-gram counts used to
+/// pick the contextually-more-probable member (real-word error detection, e.g. their/there).
+#[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
+pub struct ConfusionModel {
+    /// Easily-confused word pairs (from LanguageTool's `confusion_sets.txt`).
+    pub pairs: Vec<ConfusionPair>,
+    /// Unigram counts for confusion words (lower-cased) — context-free backoff.
+    pub unigrams: Vec<(String, u32)>,
+    /// Bigram counts (`"w1 w2"`, lower-cased) pruned to those touching a confusion word.
+    pub bigrams: Vec<(String, u32)>,
+}
+
+/// One easily-confused pair. `symmetric` pairs are checked both ways; directional ones only `a→b`.
+#[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
+pub struct ConfusionPair {
+    /// The first (or, for directional pairs, the "from") word — lower-cased.
+    pub a: String,
+    /// The second (or "to") word — lower-cased.
+    pub b: String,
+    /// LanguageTool's confidence factor: how much more probable the alternative must be.
+    pub factor: f32,
+    /// Whether the pair is bidirectional (`a; b`) rather than directional (`a -> b`).
+    pub symmetric: bool,
+}
+
+/// Deserialize a [`ConfusionModel`] from its rkyv artifact.
+///
+/// # Errors
+/// Returns an error if `bytes` is not a valid archived [`ConfusionModel`].
+pub fn deserialize_confusion(bytes: &[u8]) -> Result<ConfusionModel, rkyv::rancor::Error> {
+    rkyv::from_bytes::<ConfusionModel, rkyv::rancor::Error>(bytes)
 }
 
 /// One element of a rule's pattern. Known constructs get explicit variants; the `<filter>` escape
@@ -205,6 +242,10 @@ mod tests {
                     args: "field:foo".to_owned(),
                 },
             ],
+            antipatterns: vec![vec![Construct::Token(TokenPat {
+                text: Some("colour".to_owned()),
+                ..Default::default()
+            })]],
             message: "Use the American spelling.".to_owned(),
             suggestions: vec![Suggestion {
                 parts: vec![SugPart::Text("color".to_owned())],

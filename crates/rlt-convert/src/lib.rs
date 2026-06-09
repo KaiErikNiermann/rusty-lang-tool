@@ -30,6 +30,150 @@ use lt_schema::{pattern, rules};
 pub const DEFAULT_GRAMMAR: &str = "resources/lt/_repo/languagetool-language-modules/en/src/main/resources/org/languagetool/rules/en/grammar.xml";
 /// Default output path for the compiled runtime artifact.
 pub const DEFAULT_OUT: &str = "resources/en.rkyv";
+/// Default location of LanguageTool's English confusion sets after `cargo xtask fetch-lt`.
+pub const DEFAULT_CONFUSION_SETS: &str = "resources/lt/_repo/languagetool-language-modules/en/src/main/resources/org/languagetool/resource/en/confusion_sets.txt";
+/// Default location of Norvig's unigram counts after `cargo xtask fetch-ngrams`.
+pub const DEFAULT_UNIGRAMS: &str = "resources/ngrams/count_1w.txt";
+/// Default location of Norvig's bigram counts after `cargo xtask fetch-ngrams`.
+pub const DEFAULT_BIGRAMS: &str = "resources/ngrams/count_2w.txt";
+/// Default output path for the compiled L3 confusion model.
+pub const DEFAULT_CONFUSION_OUT: &str = "resources/confusion.rkyv";
+
+/// Counts from building the L3 confusion model.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ConfusionReport {
+    /// Easily-confused pairs parsed from `confusion_sets.txt`.
+    pub pairs: usize,
+    /// Bigrams retained after pruning to confusion words.
+    pub bigrams: usize,
+}
+
+/// Build the L3 confusion model: parse LanguageTool's confusion sets, prune Norvig's unigram and
+/// bigram counts to those touching a confusion word, and serialize to an rkyv artifact at `out`.
+///
+/// # Errors
+/// Returns an error if any input file is missing/unreadable or the artifact cannot be written.
+pub fn build_confusion_model(
+    confusion_sets: &Path,
+    unigrams: &Path,
+    bigrams: &Path,
+    out: &Path,
+) -> Result<ConfusionReport> {
+    let pairs = parse_confusion_sets(confusion_sets)?;
+
+    // The set of confusion words to prune the n-grams against.
+    let words: std::collections::HashSet<String> = pairs
+        .iter()
+        .flat_map(|p| [p.a.clone(), p.b.clone()])
+        .collect();
+
+    let unigrams = prune_unigrams(unigrams, &words)
+        .with_context(|| format!("reading {}", unigrams.display()))?;
+    let bigrams =
+        prune_bigrams(bigrams, &words).with_context(|| format!("reading {}", bigrams.display()))?;
+
+    let report = ConfusionReport {
+        pairs: pairs.len(),
+        bigrams: bigrams.len(),
+    };
+    let model = rlt_ir::ConfusionModel {
+        pairs,
+        unigrams,
+        bigrams,
+    };
+    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&model)
+        .map_err(|e| anyhow!("rkyv serialize: {e}"))?;
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(out, &bytes).with_context(|| format!("writing {}", out.display()))?;
+    tracing::info!(pairs = report.pairs, bigrams = report.bigrams, out = %out.display(), "wrote confusion model");
+    Ok(report)
+}
+
+/// Parse `confusion_sets.txt` into [`rlt_ir::ConfusionPair`]s. Lines are `a; b; factor` (symmetric)
+/// or `a -> b; factor` (directional), with `#` comments; multi-word entries are skipped.
+fn parse_confusion_sets(path: &Path) -> Result<Vec<rlt_ir::ConfusionPair>> {
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut pairs = Vec::new();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let symmetric = !line.contains("->");
+        let fields: Vec<String> = line
+            .replace("->", ";")
+            .split(';')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect();
+        let [a, b, factor] = &fields[..] else {
+            continue;
+        };
+        if a.contains(' ') || b.contains(' ') {
+            continue; // single-word confusion pairs only
+        }
+        let Ok(factor) = factor.parse::<f32>() else {
+            continue;
+        };
+        pairs.push(rlt_ir::ConfusionPair {
+            a: a.to_ascii_lowercase(),
+            b: b.to_ascii_lowercase(),
+            factor,
+            symmetric,
+        });
+    }
+    Ok(pairs)
+}
+
+/// Keep `word\tcount` unigram lines whose word is a confusion word (lower-cased).
+fn prune_unigrams(
+    path: &Path,
+    words: &std::collections::HashSet<String>,
+) -> Result<Vec<(String, u32)>> {
+    let text = std::fs::read_to_string(path)?;
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let Some((w, c)) = line.split_once('\t') else {
+            continue;
+        };
+        let w = w.to_ascii_lowercase();
+        if words.contains(&w) {
+            if let Ok(count) = c.trim().parse::<u32>() {
+                out.push((w, count));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Keep `"w1 w2"\tcount` bigram lines where either word is a confusion word (lower-cased).
+fn prune_bigrams(
+    path: &Path,
+    words: &std::collections::HashSet<String>,
+) -> Result<Vec<(String, u32)>> {
+    let text = std::fs::read_to_string(path)?;
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let Some((gram, c)) = line.split_once('\t') else {
+            continue;
+        };
+        let gram = gram.to_ascii_lowercase();
+        let Some((w1, w2)) = gram.split_once(' ') else {
+            continue;
+        };
+        if words.contains(w1) || words.contains(w2) {
+            if let Ok(count) = c.trim().parse::<u32>() {
+                out.push((gram, count));
+            }
+        }
+    }
+    Ok(out)
+}
 
 /// Outcome of a conversion run: the counts the converter prints and the oracle later tracks.
 #[derive(Debug, Clone, Copy, Default)]
@@ -126,12 +270,18 @@ pub fn extract_examples(grammar_path: &Path) -> Result<Vec<Example>> {
         };
         for c in &cat.content {
             match c {
-                rules::CategoryElementTypeContent::Rule(r) => collect_examples(r, None, &mut out),
-                rules::CategoryElementTypeContent::Rulegroup(g) => {
-                    for r in &g.rule {
+                rules::CategoryElementTypeContent::Rule(r) if rule_enabled(r.default.as_ref()) => {
+                    collect_examples(r, None, &mut out);
+                }
+                rules::CategoryElementTypeContent::Rulegroup(g)
+                    if group_enabled(g.default.as_ref()) =>
+                {
+                    for r in g.rule.iter().filter(|r| rule_enabled(r.default.as_ref())) {
                         collect_examples(r, Some(&g.id), &mut out);
                     }
                 }
+                // Disabled rules/groups don't fire by default — exclude their examples too.
+                _ => {}
             }
         }
     }
@@ -192,18 +342,53 @@ fn lower_document(doc: &rules::RulesElementType) -> Vec<Rule> {
         };
         for c in &cat.content {
             match c {
-                rules::CategoryElementTypeContent::Rule(r) => out.push(lower_rule(r, None)),
-                rules::CategoryElementTypeContent::Rulegroup(g) => {
-                    out.extend(g.rule.iter().map(|r| lower_rule(r, Some(&g.id))));
+                rules::CategoryElementTypeContent::Rule(r) if rule_enabled(r.default.as_ref()) => {
+                    out.push(lower_rule(r, None, &[]));
                 }
+                rules::CategoryElementTypeContent::Rulegroup(g)
+                    if group_enabled(g.default.as_ref()) =>
+                {
+                    // Group-level antipatterns apply to every member rule.
+                    let group_aps: Vec<Vec<Construct>> =
+                        g.antipattern.iter().map(lower_antipattern).collect();
+                    out.extend(
+                        g.rule
+                            .iter()
+                            .filter(|r| rule_enabled(r.default.as_ref()))
+                            .map(|r| lower_rule(r, Some(&g.id), &group_aps)),
+                    );
+                }
+                // `default="off"`/`"temp_off"` rules and groups are disabled in LT — skip them.
+                _ => {}
             }
         }
     }
     out
 }
 
-/// Lower one `<rule>`; anonymous rules inside a `<rulegroup>` inherit the group id.
-fn lower_rule(r: &rules::RuleElementType, group_id: Option<&str>) -> Rule {
+/// Whether a `<rule>` is enabled (not `default="off"`/`"temp_off"`).
+fn rule_enabled(default: Option<&rules::RuleDefaultType>) -> bool {
+    !matches!(
+        default,
+        Some(rules::RuleDefaultType::Off | rules::RuleDefaultType::TempOff)
+    )
+}
+
+/// Whether a `<rulegroup>` is enabled (not `default="off"`/`"temp_off"`).
+fn group_enabled(default: Option<&rules::RulegroupDefaultType>) -> bool {
+    !matches!(
+        default,
+        Some(rules::RulegroupDefaultType::Off | rules::RulegroupDefaultType::TempOff)
+    )
+}
+
+/// Lower one `<rule>`; anonymous rules inside a `<rulegroup>` inherit the group id and its
+/// `group_antipatterns`.
+fn lower_rule(
+    r: &rules::RuleElementType,
+    group_id: Option<&str>,
+    group_antipatterns: &[Vec<Construct>],
+) -> Rule {
     let id =
         r.id.clone()
             .or_else(|| group_id.map(str::to_owned))
@@ -212,9 +397,13 @@ fn lower_rule(r: &rules::RuleElementType, group_id: Option<&str>) -> Rule {
     let mut pattern = Vec::new();
     let mut message = String::new();
     let mut suggestions = Vec::new();
+    let mut antipatterns: Vec<Vec<Construct>> = group_antipatterns.to_vec();
     for c in &r.content {
         match c {
             rules::RuleElementTypeContent::Pattern(p) => lower_pattern(&p.content, &mut pattern),
+            rules::RuleElementTypeContent::Antipattern(a) => {
+                antipatterns.push(lower_antipattern(a));
+            }
             rules::RuleElementTypeContent::Filter(f) => pattern.push(Construct::Opaque {
                 class: f.class.clone(),
                 args: f.args.clone(),
@@ -232,16 +421,47 @@ fn lower_rule(r: &rules::RuleElementType, group_id: Option<&str>) -> Rule {
                 suggestions.extend(sugs);
             }
             rules::RuleElementTypeContent::Suggestion(s) => suggestions.push(lower_suggestion(s)),
-            // Antipattern/Url/Short/Example are not part of the match-and-suggest path here.
+            // Url/Short/Example are not part of the match-and-suggest path here.
             _ => {}
         }
     }
     Rule {
         id,
         pattern,
+        antipatterns,
         message,
         suggestions,
     }
+}
+
+/// Lower an `<antipattern>` into a construct list (the same token vocabulary as a `<pattern>`;
+/// `<example>` children and unsupported sub-constructs are dropped/kept as `Unsupported`).
+fn lower_antipattern(a: &rules::AntipatternElementType) -> Vec<Construct> {
+    let mut out = Vec::new();
+    for item in &a.content {
+        match item {
+            rules::AntipatternElementTypeContent::Token(t) => {
+                push_token(t, &mut out);
+            }
+            rules::AntipatternElementTypeContent::Marker(m) => {
+                out.push(Construct::MarkerStart);
+                lower_marker(&m.content, &mut out);
+                out.push(Construct::MarkerEnd);
+            }
+            rules::AntipatternElementTypeContent::And(_) => {
+                out.push(Construct::Unsupported {
+                    kind: "and".to_owned(),
+                });
+            }
+            rules::AntipatternElementTypeContent::Unify(_) => {
+                out.push(Construct::Unsupported {
+                    kind: "unify".to_owned(),
+                });
+            }
+            rules::AntipatternElementTypeContent::Example(_) => {}
+        }
+    }
+    out
 }
 
 /// Lower a `<message>` into its display text plus the corrections (`<suggestion>`s) it embeds.
@@ -336,7 +556,7 @@ fn lower_pattern(content: &[rules::PatternElementTypeContent], out: &mut Vec<Con
     for item in content {
         match item {
             rules::PatternElementTypeContent::Token(t) => {
-                out.push(Construct::Token(lower_token(t)));
+                push_token(t, out);
             }
             rules::PatternElementTypeContent::Marker(m) => {
                 out.push(Construct::MarkerStart);
@@ -372,7 +592,7 @@ fn lower_marker(content: &[pattern::MarkerElementTypeContent], out: &mut Vec<Con
     for item in content {
         match item {
             pattern::MarkerElementTypeContent::Token(t) => {
-                out.push(Construct::Token(lower_token(t)));
+                push_token(t, out);
             }
             pattern::MarkerElementTypeContent::Or(_) => {
                 out.push(Construct::Unsupported {
@@ -400,6 +620,23 @@ fn lower_marker(content: &[pattern::MarkerElementTypeContent], out: &mut Vec<Con
                 });
             }
         }
+    }
+}
+
+/// Push a `<token>` as a construct. A token containing a `<match>` child is a back-reference
+/// matcher (its value depends on another captured token) we can't faithfully match, so it becomes
+/// `Unsupported` — which makes the enclosing rule skip rather than match too loosely.
+fn push_token(t: &pattern::TokenElementType, out: &mut Vec<Construct>) {
+    let has_match = t
+        .content
+        .iter()
+        .any(|c| matches!(c, pattern::TokenElementTypeContent::Match(_)));
+    if has_match {
+        out.push(Construct::Unsupported {
+            kind: "token-match".to_owned(),
+        });
+    } else {
+        out.push(Construct::Token(lower_token(t)));
     }
 }
 
