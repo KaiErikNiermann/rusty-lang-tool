@@ -200,11 +200,13 @@ pub struct TokenPat {
     /// The token's literal surface text, or — when [`regexp`](Self::regexp) is set — a regex over
     /// the surface form. `None` for tokens matched purely by POS tag.
     pub text: Option<String>,
-    /// A part-of-speech constraint (LT tagset); may itself be a regex when the source token had
-    /// `postag_regexp="yes"`.
+    /// A part-of-speech constraint (LT tagset); a regex when [`postag_regexp`](Self::postag_regexp)
+    /// is set, otherwise a literal tag.
     pub postag: Option<String>,
     /// `regexp="yes"`: [`text`](Self::text) is a regular expression, not a literal.
     pub regexp: bool,
+    /// `postag_regexp="yes"`: [`postag`](Self::postag) is a regular expression, not a literal tag.
+    pub postag_regexp: bool,
     /// `negate="yes"`: the token matches when it does *not* satisfy the constraint.
     pub negate: bool,
     /// `inflected="yes"`: match any inflected form of [`text`](Self::text) as a lemma.
@@ -233,10 +235,12 @@ pub struct TokenPat {
 pub struct ExceptionPat {
     /// Literal surface text, or a regex when [`regexp`](Self::regexp) is set.
     pub text: Option<String>,
-    /// A part-of-speech constraint (possibly a regex).
+    /// A part-of-speech constraint; a regex when [`postag_regexp`](Self::postag_regexp) is set.
     pub postag: Option<String>,
     /// `regexp="yes"`: [`text`](Self::text) is a regular expression.
     pub regexp: bool,
+    /// `postag_regexp="yes"`: [`postag`](Self::postag) is a regular expression, not a literal tag.
+    pub postag_regexp: bool,
     /// `inflected="yes"`: match [`text`](Self::text) against the candidate's lemmas.
     pub inflected: bool,
     /// `negate="yes"`: the exception is satisfied when it does *not* match.

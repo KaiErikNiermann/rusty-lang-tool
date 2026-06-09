@@ -24,6 +24,24 @@ pub use matcher::IrMatcher;
 
 use serde::{Deserialize, Serialize};
 
+/// Upper-case the first character of `s`, leaving the rest unchanged (`receive` → `Receive`).
+pub(crate) fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    chars.next().map_or_else(String::new, |c| {
+        c.to_uppercase().collect::<String>() + chars.as_str()
+    })
+}
+
+/// Re-case `candidate` to match `source`'s leading capitalization (so `Recieve` → `Receive`, not
+/// `receive`); leaves it untouched when `source` starts lower-case.
+pub(crate) fn recase(source: &str, candidate: &str) -> String {
+    if source.chars().next().is_some_and(char::is_uppercase) {
+        capitalize_first(candidate)
+    } else {
+        candidate.to_owned()
+    }
+}
+
 /// A half-open byte range `[start, end)` into the checked text.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Span {

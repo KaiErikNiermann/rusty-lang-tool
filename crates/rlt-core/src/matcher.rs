@@ -83,15 +83,20 @@ impl IrMatcher {
 
     fn diagnostics(&self, text: &str, tokens: &[Token]) -> Vec<Diagnostic> {
         let mut out: Vec<Diagnostic> = Vec::new();
-        for start in 0..tokens.len() {
-            let key = tokens[start].text.to_ascii_lowercase();
+        // Lower-case each surface once for the first-literal index probe, not once per start.
+        let lower: Vec<String> = tokens.iter().map(|t| t.text.to_ascii_lowercase()).collect();
+        // Reused across every (start, rule) pair so the per-element capture slots are not
+        // reallocated for each of the thousands of rule attempts per token.
+        let mut captures: Vec<Option<(usize, usize)>> = Vec::new();
+        for (start, key) in lower.iter().enumerate() {
             let literal = self
                 .by_first_literal
-                .get(&key)
+                .get(key)
                 .map_or(&[][..], Vec::as_slice);
             for &ri in self.general.iter().chain(literal) {
                 let rule = &self.rules[ri];
-                let mut captures = vec![None; rule.elements.len()];
+                captures.clear();
+                captures.resize(rule.elements.len(), None);
                 if let Some(end) = match_elements(&rule.elements, 0, tokens, start, &mut captures) {
                     if suppressed(rule, tokens, start, end) {
                         continue;
@@ -205,14 +210,7 @@ enum TagMatch {
 fn compile_rule(r: &Rule) -> Option<CompiledRule> {
     // Compile suggestions up front (pre-compiling regex transforms); a rule with no renderable
     // suggestion cannot produce a correction, so skip it.
-    let suggestions: Vec<CompiledSuggestion> = r
-        .suggestions
-        .iter()
-        .filter_map(compile_suggestion)
-        .collect();
-    if suggestions.is_empty() {
-        return None;
-    }
+    let suggestions = compile_suggestions(&r.suggestions)?;
     let mut elements = Vec::new();
     let mut marker_start = None;
     let mut marker = None;
@@ -245,6 +243,14 @@ fn compile_rule(r: &Rule) -> Option<CompiledRule> {
         suggestions,
         antipatterns,
     })
+}
+
+/// Pre-compile a rule's suggestion templates, or `None` if none render — a rule with no renderable
+/// correction cannot produce a fix, so the caller skips it.
+fn compile_suggestions(suggestions: &[IrSuggestion]) -> Option<Vec<CompiledSuggestion>> {
+    let compiled: Vec<CompiledSuggestion> =
+        suggestions.iter().filter_map(compile_suggestion).collect();
+    (!compiled.is_empty()).then_some(compiled)
 }
 
 /// Pre-compile a suggestion's parts (compiling any `regexp_replace`); `None` if a transform regex
@@ -291,16 +297,11 @@ impl CompiledRegexpRule {
             let Some(m) = self.mark.and_then(|g| caps.get(g)).or_else(|| caps.get(0)) else {
                 continue;
             };
-            let mut seen = Vec::new();
-            let mut suggestions = Vec::new();
-            for s in &self.suggestions {
-                if let Some(rep) = render_regexp_suggestion(s, &caps) {
-                    if !rep.is_empty() && !seen.contains(&rep) {
-                        seen.push(rep.clone());
-                        suggestions.push(Suggestion { replacement: rep });
-                    }
-                }
-            }
+            let suggestions = dedup_suggestions(
+                self.suggestions
+                    .iter()
+                    .map(|s| render_regexp_suggestion(s, &caps)),
+            );
             if suggestions.is_empty() {
                 continue;
             }
@@ -335,14 +336,7 @@ fn compile_regexp_rule(r: &Rule) -> Option<CompiledRegexpRule> {
         format!("(?i){pattern}")
     };
     let regex = Regex::new(&src).ok()?;
-    let suggestions: Vec<CompiledSuggestion> = r
-        .suggestions
-        .iter()
-        .filter_map(compile_suggestion)
-        .collect();
-    if suggestions.is_empty() {
-        return None;
-    }
+    let suggestions = compile_suggestions(&r.suggestions)?;
     Some(CompiledRegexpRule {
         id: r.id.clone(),
         message: r.message.clone(),
@@ -369,6 +363,20 @@ fn render_regexp_suggestion(sug: &CompiledSuggestion, caps: &regex::Captures) ->
         }
     }
     Some(out)
+}
+
+/// Collect rendered suggestion strings into [`Suggestion`]s, dropping empties and duplicates
+/// (order-preserving) — the same templates can render to the same correction.
+fn dedup_suggestions(rendered: impl Iterator<Item = Option<String>>) -> Vec<Suggestion> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for rep in rendered.flatten() {
+        if !rep.is_empty() && !seen.contains(&rep) {
+            seen.push(rep.clone());
+            out.push(Suggestion { replacement: rep });
+        }
+    }
+    out
 }
 
 /// Compile a construct list (antipattern body) into matchable elements; `None` if it contains an
@@ -429,20 +437,13 @@ fn quantifiers(t: &TokenPat) -> (usize, usize, usize) {
 
 /// Compile a [`TokenPat`] into a single [`TokenMatcher`]; `None` if a regex does not compile.
 fn compile_token(t: &TokenPat) -> Option<TokenMatcher> {
-    let text = match t.text.as_deref() {
-        Some(s) if t.regexp => Some(TextMatch::Regex(anchored(s, !t.case_sensitive)?)),
-        Some(s) => Some(TextMatch::Literal {
-            value: s.to_owned(),
-            case_sensitive: t.case_sensitive,
-        }),
-        None => None,
-    };
-    // postag_regexp is folded into the source `postag` string; treat any regex metachar as a regex.
-    let postag = match t.postag.as_deref() {
-        Some(p) if is_regexish(p) => Some(TagMatch::Regex(anchored(p, false)?)),
-        Some(p) => Some(TagMatch::Literal(p.to_owned())),
-        None => None,
-    };
+    let (text, postag) = compile_constraint(
+        t.text.as_deref(),
+        t.postag.as_deref(),
+        t.regexp,
+        t.postag_regexp,
+        t.case_sensitive,
+    )?;
     // Exceptions: drop any whose regex fails to compile rather than discard the whole rule.
     let exceptions = t.exceptions.iter().filter_map(compile_exception).collect();
     Some(TokenMatcher {
@@ -455,19 +456,13 @@ fn compile_token(t: &TokenPat) -> Option<TokenMatcher> {
 }
 
 fn compile_exception(e: &ExceptionPat) -> Option<TokenMatcher> {
-    let text = match e.text.as_deref() {
-        Some(t) if e.regexp => Some(TextMatch::Regex(anchored(t, !e.case_sensitive)?)),
-        Some(t) => Some(TextMatch::Literal {
-            value: t.to_owned(),
-            case_sensitive: e.case_sensitive,
-        }),
-        None => None,
-    };
-    let postag = match e.postag.as_deref() {
-        Some(p) if is_regexish(p) => Some(TagMatch::Regex(anchored(p, false)?)),
-        Some(p) => Some(TagMatch::Literal(p.to_owned())),
-        None => None,
-    };
+    let (text, postag) = compile_constraint(
+        e.text.as_deref(),
+        e.postag.as_deref(),
+        e.regexp,
+        e.postag_regexp,
+        e.case_sensitive,
+    )?;
     Some(TokenMatcher {
         text,
         postag,
@@ -477,20 +472,36 @@ fn compile_exception(e: &ExceptionPat) -> Option<TokenMatcher> {
     })
 }
 
+/// Compile the text + POS-tag constraints shared by tokens and exceptions. `text`/`postag` are
+/// regexes when their respective `regexp` flag is set (the converter carries `postag_regexp`
+/// explicitly, so the runtime never guesses). `None` if a regex fails to compile.
+fn compile_constraint(
+    text: Option<&str>,
+    postag: Option<&str>,
+    regexp: bool,
+    postag_regexp: bool,
+    case_sensitive: bool,
+) -> Option<(Option<TextMatch>, Option<TagMatch>)> {
+    let text = match text {
+        Some(s) if regexp => Some(TextMatch::Regex(anchored(s, !case_sensitive)?)),
+        Some(s) => Some(TextMatch::Literal {
+            value: s.to_owned(),
+            case_sensitive,
+        }),
+        None => None,
+    };
+    let postag = match postag {
+        Some(p) if postag_regexp => Some(TagMatch::Regex(anchored(p, false)?)),
+        Some(p) => Some(TagMatch::Literal(p.to_owned())),
+        None => None,
+    };
+    Some((text, postag))
+}
+
 /// Compile a whole-token-anchored regex (optionally case-insensitive). `None` on regex error.
 fn anchored(pattern: &str, case_insensitive: bool) -> Option<Regex> {
     let prefix = if case_insensitive { "(?i)" } else { "" };
     Regex::new(&format!("{prefix}^(?:{pattern})$")).ok()
-}
-
-/// Heuristic: does this POS string look like a regex (so it should be compiled, not compared)?
-fn is_regexish(p: &str) -> bool {
-    p.bytes().any(|b| {
-        matches!(
-            b,
-            b'.' | b'*' | b'+' | b'?' | b'(' | b')' | b'[' | b']' | b'|' | b'^' | b'$' | b'\\'
-        )
-    })
 }
 
 impl Matcher {
@@ -623,16 +634,11 @@ fn render(
         end: tokens[mtok_end - 1].span.end,
     };
 
-    let mut seen = Vec::new();
-    let mut suggestions = Vec::new();
-    for s in &rule.suggestions {
-        if let Some(r) = render_suggestion(s, text, tokens, captures) {
-            if !r.is_empty() && !seen.contains(&r) {
-                seen.push(r.clone());
-                suggestions.push(Suggestion { replacement: r });
-            }
-        }
-    }
+    let suggestions = dedup_suggestions(
+        rule.suggestions
+            .iter()
+            .map(|s| render_suggestion(s, text, tokens, captures)),
+    );
     if suggestions.is_empty() {
         return None;
     }
@@ -697,12 +703,7 @@ fn apply_case(s: &str, case: Case) -> String {
         Case::Keep => s.to_owned(),
         Case::Upper => s.to_uppercase(),
         Case::Lower => s.to_lowercase(),
-        Case::StartUpper => {
-            let mut chars = s.chars();
-            chars.next().map_or_else(String::new, |c| {
-                c.to_uppercase().collect::<String>() + chars.as_str()
-            })
-        }
+        Case::StartUpper => crate::capitalize_first(s),
     }
 }
 

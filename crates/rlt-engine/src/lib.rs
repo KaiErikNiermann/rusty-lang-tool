@@ -91,12 +91,17 @@ impl VendoredEngine {
     pub fn pos_tags(&self, word: &str) -> Vec<String> {
         let mut tags = Vec::new();
         for d in self.tokenizer.tagger().get_tags(word) {
-            let pos = d.pos().as_str();
-            if !pos.is_empty() && !tags.iter().any(|t| t == pos) {
-                tags.push(pos.to_owned());
-            }
+            push_unique(&mut tags, d.pos().as_str());
         }
         tags
+    }
+}
+
+/// Append `value` to `out` iff it is non-empty and not already present (order-preserving unique) —
+/// the tagger yields the same POS/lemma across a word's analyses, and downstream wants each once.
+fn push_unique(out: &mut Vec<String>, value: &str) {
+    if !value.is_empty() && !out.iter().any(|v| v == value) {
+        out.push(value.to_owned());
     }
 }
 
@@ -149,14 +154,8 @@ impl Engine for VendoredEngine {
                 let mut tags = Vec::new();
                 let mut lemmas = Vec::new();
                 for d in word.tags() {
-                    let pos = d.pos().as_str();
-                    if !pos.is_empty() && !tags.iter().any(|t| t == pos) {
-                        tags.push(pos.to_owned());
-                    }
-                    let lemma = d.lemma().as_str();
-                    if !lemma.is_empty() && !lemmas.iter().any(|l| l == lemma) {
-                        lemmas.push(lemma.to_owned());
-                    }
+                    push_unique(&mut tags, d.pos().as_str());
+                    push_unique(&mut lemmas, d.lemma().as_str());
                 }
                 tokens.push(Token {
                     text: surface.to_owned(),

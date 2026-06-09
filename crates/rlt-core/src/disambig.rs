@@ -19,7 +19,7 @@ use std::collections::HashMap;
 
 use rlt_ir::ConfusionModel;
 
-use crate::{Analysis, Diagnostic, GrammarChecker, Source, Suggestion};
+use crate::{Analysis, Diagnostic, GrammarChecker, Source, Suggestion, recase};
 
 /// LanguageTool `factor` exponents (`log10`) span ~1e3..1e12; clamp to this for the threshold map.
 const LF_MIN: f64 = 3.0;
@@ -145,26 +145,27 @@ impl ConfusionChecker {
 impl GrammarChecker for ConfusionChecker {
     fn grammar_diagnostics(&self, _text: &str, analysis: &Analysis) -> Vec<Diagnostic> {
         let tokens = &analysis.tokens;
+        // Lower-case every surface once; each token is otherwise re-lowercased up to three times
+        // (as the current word, then as the next token's left neighbour, then the right neighbour).
+        let lower: Vec<String> = tokens.iter().map(|t| t.text.to_ascii_lowercase()).collect();
         let mut out = Vec::new();
         for i in 0..tokens.len() {
-            let word = tokens[i].text.to_ascii_lowercase();
-            let Some(alts) = self.alternatives.get(&word) else {
+            let word = &lower[i];
+            let Some(alts) = self.alternatives.get(word) else {
                 continue;
             };
             // Only plain words, and skip contraction heads (the "they" of a "they"+"'re" split).
-            if !is_word(&word) || tokens.get(i + 1).is_some_and(|t| t.text.starts_with('\'')) {
+            if !is_word(word) || tokens.get(i + 1).is_some_and(|t| t.text.starts_with('\'')) {
                 continue;
             }
             // Word-only neighbours (punctuation contributes no usable word context).
             let left = i
                 .checked_sub(1)
-                .map(|j| tokens[j].text.to_ascii_lowercase())
+                .map(|j| lower[j].as_str())
                 .filter(|w| is_word(w));
-            let right = tokens
-                .get(i + 1)
-                .map(|t| t.text.to_ascii_lowercase())
+            let right = (i + 1 < lower.len())
+                .then(|| lower[i + 1].as_str())
                 .filter(|w| is_word(w));
-            let (left, right) = (left.as_deref(), right.as_deref());
             // Neighbours' context-disambiguated primary POS, for the POS-generalised score.
             let lpos = i
                 .checked_sub(1)
@@ -175,22 +176,21 @@ impl GrammarChecker for ConfusionChecker {
                 .and_then(|t| t.tags.first())
                 .map(String::as_str);
 
+            // Evidence-gate first: most candidates lack the bigram support to fire, and the gate is
+            // far cheaper than the two log-ratios — so skip those before scoring them.
             let best = alts
                 .iter()
-                .map(|(alt, factor)| {
-                    let lr = self.log_ratio(left, &word, right, alt)
-                        + self.pos_log_ratio(lpos, &word, rpos, alt);
-                    (
-                        alt,
-                        lr,
-                        self.evidence(left, alt, right),
-                        log_threshold(*factor),
-                    )
+                .filter_map(|(alt, factor)| {
+                    if self.evidence(left, alt, right) < MIN_EVIDENCE {
+                        return None;
+                    }
+                    let lr = self.log_ratio(left, word, right, alt)
+                        + self.pos_log_ratio(lpos, word, rpos, alt);
+                    (lr >= log_threshold(*factor)).then_some((alt, lr))
                 })
-                .filter(|&(_, lr, ev, thr)| ev >= MIN_EVIDENCE && lr >= thr)
                 .max_by(|a, b| a.1.total_cmp(&b.1));
 
-            if let Some((alt, _, _, _)) = best {
+            if let Some((alt, _)) = best {
                 out.push(Diagnostic {
                     span: tokens[i].span,
                     code: "CONFUSION".to_owned(),
@@ -216,18 +216,6 @@ fn log_threshold(factor: f32) -> f64 {
     let lf = f64::from(factor).log10().clamp(LF_MIN, LF_MAX);
     let t = (lf - LF_MIN) / (LF_MAX - LF_MIN);
     LOGR_MIN + t * (LOGR_MAX - LOGR_MIN)
-}
-
-/// Apply `source`'s leading capitalization to `candidate`.
-fn recase(source: &str, candidate: &str) -> String {
-    if source.chars().next().is_some_and(char::is_uppercase) {
-        let mut c = candidate.chars();
-        c.next().map_or_else(String::new, |first| {
-            first.to_uppercase().collect::<String>() + c.as_str()
-        })
-    } else {
-        candidate.to_owned()
-    }
 }
 
 #[cfg(test)]

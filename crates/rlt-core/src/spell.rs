@@ -8,7 +8,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::{Analysis, Diagnostic, Engine, Source, Suggestion};
+use crate::{Analysis, Diagnostic, Engine, Source, Suggestion, recase};
 
 /// Lower-case ASCII alphabet used to generate replacement/insertion edits.
 const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
@@ -56,20 +56,6 @@ fn suggestions<E: Engine>(engine: &E, word: &str) -> Vec<Suggestion> {
             replacement: recase(word, &cand),
         })
         .collect()
-}
-
-/// Apply `source`'s leading capitalization to `candidate` (so `Recieve` → `Receive`, not
-/// `receive`).
-fn recase(source: &str, candidate: &str) -> String {
-    if source.chars().next().is_some_and(char::is_uppercase) {
-        let mut c = candidate.chars();
-        match c.next() {
-            Some(first) => first.to_ascii_uppercase().to_string() + c.as_str(),
-            None => candidate.to_owned(),
-        }
-    } else {
-        candidate.to_owned()
-    }
 }
 
 /// All strings one edit (delete / transpose / replace / insert) away from `word` (ASCII).
