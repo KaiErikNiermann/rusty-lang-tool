@@ -19,14 +19,19 @@ pub struct RltChecker {
 
 #[wasm_bindgen]
 impl RltChecker {
-    /// Construct a checker. Installs a panic hook so Rust panics surface as JS console errors.
+    /// Construct a checker from the bytes of an nlprule `en_tokenizer.bin` (supplied by JS, e.g.
+    /// fetched or bundled). Installs a panic hook so Rust panics surface as JS console errors.
+    ///
+    /// # Errors
+    /// Returns a JS error if the bytes are not a valid nlprule tokenizer binary.
     #[wasm_bindgen(constructor)]
-    #[must_use]
-    pub fn new() -> Self {
+    pub fn new(tokenizer_bin: &[u8]) -> Result<RltChecker, JsValue> {
         console_error_panic_hook::set_once();
-        Self {
-            inner: Checker::new(VendoredEngine::new()),
-        }
+        let engine = VendoredEngine::from_reader(tokenizer_bin)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(Self {
+            inner: Checker::new(engine),
+        })
     }
 
     /// Check `text` and return the diagnostics as a JS array of plain objects.
@@ -36,11 +41,5 @@ impl RltChecker {
     pub fn check(&self, text: &str) -> Result<JsValue, JsValue> {
         let diagnostics = self.inner.check(text);
         serde_wasm_bindgen::to_value(&diagnostics).map_err(|e| JsValue::from_str(&e.to_string()))
-    }
-}
-
-impl Default for RltChecker {
-    fn default() -> Self {
-        Self::new()
     }
 }
