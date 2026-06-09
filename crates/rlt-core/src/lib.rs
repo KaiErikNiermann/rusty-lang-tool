@@ -92,26 +92,38 @@ pub trait Engine {
     fn is_known(&self, word: &str) -> bool;
 }
 
-/// Wires an [`Engine`] with the L1 spelling and L2 rule layers and runs the cascade over text.
+/// L2 — rule-based grammar/style checking seam.
 ///
-/// Generic over the engine so the concrete type is a compile-time choice at the binary, with no
-/// dynamic dispatch on the hot path.
-pub struct Checker<E: Engine> {
-    engine: E,
+/// The baseline (`rlt-engine`) wraps nlprule's rule engine; the on-thesis swap walks `rlt-ir`
+/// rules (compiled from current LT) over the token graph. Either way it emits [`Source::Grammar`]
+/// diagnostics, so the cascade and the example oracle are agnostic to which backs it.
+pub trait GrammarChecker {
+    /// Produce grammar/style diagnostics for `text`.
+    fn grammar_diagnostics(&self, text: &str) -> Vec<Diagnostic>;
 }
 
-impl<E: Engine> Checker<E> {
-    /// Construct a checker over the given analysis engine.
-    pub fn new(engine: E) -> Self {
-        Self { engine }
+/// Wires the L1 spelling and L2 grammar layers and runs the cascade over text.
+///
+/// Generic over a backend providing both seams so the concrete type is a compile-time choice at
+/// the binary, with no dynamic dispatch on the hot path.
+pub struct Checker<B: Engine + GrammarChecker> {
+    backend: B,
+}
+
+impl<B: Engine + GrammarChecker> Checker<B> {
+    /// Construct a checker over the given analysis + grammar backend.
+    pub fn new(backend: B) -> Self {
+        Self { backend }
     }
 
-    /// Run the full cascade (L1 spelling + L2 rules) over `text` and return all diagnostics.
-    ///
-    /// L1 spelling is wired here; L2 rule matching lands in M4.
+    /// Run the full cascade (L1 spelling + L2 grammar) over `text` and return all diagnostics,
+    /// ordered by start position.
     #[must_use]
     pub fn check(&self, text: &str) -> Vec<Diagnostic> {
-        let analysis = self.engine.analyze(text);
-        spell::spelling_diagnostics(&self.engine, &analysis)
+        let analysis = self.backend.analyze(text);
+        let mut diagnostics = spell::spelling_diagnostics(&self.backend, &analysis);
+        diagnostics.extend(self.backend.grammar_diagnostics(text));
+        diagnostics.sort_by_key(|d| d.span.start);
+        diagnostics
     }
 }
