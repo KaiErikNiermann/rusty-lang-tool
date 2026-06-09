@@ -45,6 +45,45 @@ fn positive_examples(grammar: &Path) -> Vec<Example> {
         .collect()
 }
 
+/// Load LT's negative examples (no `correction`) — sentences on which the owning rule must NOT
+/// fire. Used as a precision check for the IR matcher, whose diagnostic `code` is the rule id.
+fn negative_examples(grammar: &Path) -> Vec<Example> {
+    rlt_convert::extract_examples(grammar)
+        .expect("extract examples")
+        .into_iter()
+        .filter(|e| e.corrections.is_empty())
+        .collect()
+}
+
+/// Count negative examples on which the owning rule wrongly fires (self-flag = false positive),
+/// and print the rate. Lower is better.
+fn false_positive_rate<B: Engine + GrammarChecker>(
+    checker: &Checker<B>,
+    examples: &[Example],
+) -> usize {
+    let mut flagged = 0usize;
+    for ex in examples {
+        let fires = checker
+            .check(&ex.text)
+            .into_iter()
+            .any(|d| d.source == Source::Grammar && d.code == ex.rule_id);
+        if fires {
+            flagged += 1;
+        }
+    }
+    let total = examples.len();
+    #[allow(clippy::cast_precision_loss)]
+    let pct = if total == 0 {
+        0.0
+    } else {
+        flagged as f64 / total as f64 * 100.0
+    };
+    eprintln!(
+        "ORACLE [ir v6.7] false positives: {flagged}/{total} negative examples self-flag ({pct:.1}%)"
+    );
+    flagged
+}
+
 /// Count examples whose expected correction the checker reproduces, and print the rate.
 fn score<B: Engine + GrammarChecker>(
     label: &str,
@@ -129,10 +168,18 @@ fn ir_matcher_reproduces_examples() {
     let checker = Checker::new(Composite::new(engine, matcher));
 
     let reproduced = score("ir v6.7", &checker, &positive_examples(&grammar));
-    // Floor just below the measured value (4982 = 55.3%, ahead of the nlprule v5.2 baseline's
-    // 52.8%). Raise as the matcher gains construct coverage (antipatterns, and/or/unify, …).
+    let false_positives = false_positive_rate(&checker, &negative_examples(&grammar));
+
+    // Recall floor: measured 4480/8527 = 52.5% (antipatterns trade some recall for precision vs
+    // the pre-antipattern 55.3%). Raise as construct coverage grows (and/or/unify/phraseref).
     assert!(
-        reproduced >= 4800,
-        "IR matcher reproduced only {reproduced}; expected >= 4800"
+        reproduced >= 4200,
+        "IR matcher reproduced only {reproduced}; expected >= 4200"
+    );
+    // Precision ceiling: measured 718/11211 = 6.4% of negatives self-flag. Antipatterns + skipping
+    // disabled/back-ref rules keep this down; lower it as precision improves.
+    assert!(
+        false_positives <= 900,
+        "IR matcher self-flagged {false_positives} negatives; expected <= 900"
     );
 }
