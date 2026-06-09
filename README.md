@@ -17,9 +17,13 @@ MVP complete (English): **L1 spelling + L2 grammar**, as a Rust crate + CLI with
 `wasm32` build that runs in Node. Two L2 backends share one differential oracle over LT's ~9k
 bundled `<example>` sentences:
 
-- **nlprule baseline** (LT v5.2 rules): reproduces **52.8%**.
-- **IR matcher** (our converter's LT **v6.7** rules): reproduces **55.3%** — the on-thesis path,
-  already ahead of the baseline, with antipatterns/`<and>`/`<or>`/`<unify>` still to add.
+- **nlprule baseline** (LT v5.2 rules): reproduces **55.3%**.
+- **IR matcher** (our converter's LT **v6.7** rules): reproduces **58.5%** — the on-thesis path,
+  ahead of the baseline, at 6.2% false-positive rate. Handles tokens/`<or>`/`<and>`/`<marker>`/
+  `<exception>`/`<antipattern>`/`<phraseref>`/rule-level `<regexp>` and `<match>` `regexp_replace`
+  transforms; `<unify>` is unused in English and `postag_replace` synthesis is out of scope.
+- **L3 confusion** (real-word errors, e.g. their/there): **82.6%** recall on perturbed sentences,
+  via a bigram + POS-context likelihood ratio over Norvig's n-grams pruned to LT's confusion sets.
 
 ## Architecture (the cascade)
 
