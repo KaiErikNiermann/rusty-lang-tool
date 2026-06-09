@@ -1,0 +1,31 @@
+[package]
+name = "rlt-convert"
+description = "Offline converter: lowers LanguageTool grammar.xml/disambiguation.xml into the rlt-ir, compiles dictionaries, and emits a zero-copy rkyv artifact."
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "rlt_convert"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rlt-convert"
+path = "src/main.rs"
+
+[dependencies]
+rlt-ir.workspace = true
+quick-xml.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# M1 wires schema-driven codegen here:
+# [build-dependencies]
+# xsd-parser.workspace = true
+
+[lints]
+workspace = true

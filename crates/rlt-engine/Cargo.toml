@@ -1,0 +1,21 @@
+[package]
+name = "rlt-engine"
+description = "Linguistic analysis engine implementing rlt-core's Engine trait. M2 vendors a dependency-bumped nlprule behind this boundary."
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+rlt-core.workspace = true
+
+# Pulled in at M2 when the vendored nlprule engine lands:
+# regex-automata.workspace = true
+# fancy-regex.workspace = true
+# aho-corasick.workspace = true
+# fst.workspace = true
+
+[lints]
+workspace = true

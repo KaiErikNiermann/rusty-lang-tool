@@ -1,0 +1,17 @@
+[package]
+name = "rlt-core"
+description = "Runtime checker: defines the Engine seam and Diagnostic types, wires L1 spelling + L2 rule matching over a token graph."
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+rlt-ir.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

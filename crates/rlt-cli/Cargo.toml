@@ -1,0 +1,25 @@
+[package]
+name = "rlt-cli"
+description = "Command-line surface for rusty-lang-tool: `rlt check <file>` and `rlt convert`."
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "rlt"
+path = "src/main.rs"
+
+[dependencies]
+rlt-core.workspace = true
+rlt-engine.workspace = true
+rlt-convert.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "rlt-ir"
+description = "Sealed intermediate representation for LanguageTool rule constructs, shared by the converter (writer) and core (reader)."
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+rkyv.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

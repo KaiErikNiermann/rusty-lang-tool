@@ -1,0 +1,24 @@
+# Rust build artifacts
+/target
+**/*.rs.bk
+Cargo.lock.orig
+
+# Generated / fetched data — NOT committed (fetched on demand via `cargo xtask fetch-lt`)
+/resources/lt/
+*.rkyv
+*.dict
+
+# wasm-pack output
+/crates/rlt-wasm/pkg/
+
+# Node
+node_modules/
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# insta pending snapshots
+*.snap.new

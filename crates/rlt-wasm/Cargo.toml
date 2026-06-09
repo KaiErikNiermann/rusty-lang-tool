@@ -1,0 +1,22 @@
+[package]
+name = "rlt-wasm"
+description = "WebAssembly surface: exposes rlt-core's checker to JS via wasm-bindgen. Built with wasm-pack."
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rlt-core.workspace = true
+rlt-engine.workspace = true
+wasm-bindgen.workspace = true
+serde-wasm-bindgen.workspace = true
+console_error_panic_hook.workspace = true
+
+[lints]
+workspace = true
