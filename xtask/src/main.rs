@@ -4,6 +4,7 @@
 //! - `fetch-lt` — resumable sparse checkout of just the English resources + XSD schemas at the
 //!   pinned LanguageTool tag (NOT the 274 MB full tree).
 //! - `gen-schema` — regenerate the committed `xsd-parser` bindings from LT's `rules.xsd`.
+//! - `fetch-engine` — download nlprule's prebuilt English tokenizer/rules binaries (resumable).
 //! - `build-blob` — run the offline converter to produce the runtime rkyv artifact.
 //! - `build-wasm` — package the WASM surface via `wasm-pack` (Node target).
 //! - `run-oracle` — run the `<example>` differential-oracle test suite.
@@ -36,6 +37,13 @@ const RULES_XSD: &str =
 /// Where the generated bindings are committed (consumed by `rlt-convert`).
 const SCHEMA_OUT: &str = "crates/rlt-convert/src/lt_schema.rs";
 
+/// nlprule release whose prebuilt English binaries the baseline engine loads (LT v5.2-derived).
+const NLPRULE_VERSION: &str = "0.6.4";
+/// Binaries to fetch (gzipped on the release) into `resources/`.
+const ENGINE_BINARIES: &[&str] = &["en_tokenizer.bin", "en_rules.bin"];
+/// Directory the engine binaries land in (gitignored; the converter artifact lives here too).
+const RESOURCES_DIR: &str = "resources";
+
 #[derive(Debug, Parser)]
 #[command(name = "xtask", about = "rusty-lang-tool build tasks")]
 struct Cli {
@@ -49,6 +57,8 @@ enum Task {
     FetchLt,
     /// Regenerate the committed schema bindings from LT's rules.xsd (run after an LT bump).
     GenSchema,
+    /// Download nlprule's prebuilt English tokenizer/rules binaries into resources/ (resumable).
+    FetchEngine,
     /// Run the offline converter to (re)build the runtime rkyv artifact.
     BuildBlob,
     /// Package the WASM surface with wasm-pack (Node target).
@@ -61,6 +71,7 @@ fn main() -> Result<()> {
     match Cli::parse().task {
         Task::FetchLt => fetch_lt(),
         Task::GenSchema => gen_schema(),
+        Task::FetchEngine => fetch_engine(),
         Task::BuildBlob => run("cargo", &["run", "-p", "rlt-convert"]),
         Task::BuildWasm => run(
             "wasm-pack",
@@ -150,6 +161,30 @@ fn gen_schema() -> Result<()> {
     // Format in place so the committed bindings are reviewable and diff cleanly on the next bump.
     run("rustfmt", &["--edition", "2024", SCHEMA_OUT])?;
     println!("wrote {} ({} bytes pre-format)", SCHEMA_OUT, code.len());
+    Ok(())
+}
+
+/// Download nlprule's prebuilt English binaries (gzipped) into `resources/` and decompress them.
+///
+/// Resumable: each binary that already exists is skipped. The binaries are LT v5.2-derived and
+/// LGPL-2.1; they back the baseline engine until a custom engine consuming current-LT data lands.
+fn fetch_engine() -> Result<()> {
+    std::fs::create_dir_all(RESOURCES_DIR).context("creating resources dir")?;
+    for name in ENGINE_BINARIES {
+        let dest = format!("{RESOURCES_DIR}/{name}");
+        if Path::new(&dest).exists() {
+            println!("{dest} exists — skipping (resume)");
+            continue;
+        }
+        let url = format!(
+            "https://github.com/bminixhofer/nlprule/releases/download/{NLPRULE_VERSION}/{name}.gz"
+        );
+        let gz = format!("{dest}.gz");
+        run("curl", &["-sSL", "-o", &gz, &url])?;
+        run("gunzip", &["-f", &gz])?;
+        println!("fetched {dest}");
+    }
+    println!("engine binaries ready in {RESOURCES_DIR}/");
     Ok(())
 }
 
