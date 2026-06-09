@@ -13,11 +13,11 @@ fn main() -> Result<()> {
         )
         .init();
 
-    // M0: fixed default paths; M1/M5 add real argument parsing.
-    let lt_dir = PathBuf::from("resources/lt/en");
-    let out = PathBuf::from("resources/en.rkyv");
+    // Fixed default paths; the `rlt convert` CLI subcommand exposes overridable arguments.
+    let grammar = PathBuf::from(rlt_convert::DEFAULT_GRAMMAR);
+    let out = PathBuf::from(rlt_convert::DEFAULT_OUT);
 
-    let report = rlt_convert::convert(&lt_dir, &out)?;
+    let report = rlt_convert::convert(&grammar, &out)?;
     tracing::info!(
         rules_total = report.rules_total,
         rules_opaque = report.rules_opaque,

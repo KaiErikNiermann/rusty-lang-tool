@@ -18,14 +18,15 @@ path = "src/main.rs"
 
 [dependencies]
 rlt-ir.workspace = true
+# Generated bindings (src/lt_schema.rs) deserialize via these; quick-xml is referenced by the
+# generated deserializer impls. The heavy `xsd-parser` generator lives in xtask, not here.
+xsd-parser-types.workspace = true
 quick-xml.workspace = true
+regex.workspace = true
+rkyv.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-
-# M1 wires schema-driven codegen here:
-# [build-dependencies]
-# xsd-parser.workspace = true
 
 [lints]
 workspace = true

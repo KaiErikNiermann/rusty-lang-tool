@@ -26,6 +26,9 @@ zerocopy = "0.8"
 # XML + schema codegen (converter)
 quick-xml = "0.40"
 xsd-parser = "1.5"
+# `quick-xml` feature enables the quick_xml + xml modules the generated deserializers use.
+xsd-parser-types = { version = "0.2", features = ["quick-xml"] }
+regex = "1"
 serde = { version = "1", features = ["derive"] }
 # Pattern matching (engine)
 regex-automata = "0.4"
