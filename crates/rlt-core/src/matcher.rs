@@ -80,7 +80,10 @@ impl IrMatcher {
             for &ri in self.general.iter().chain(literal) {
                 let rule = &self.rules[ri];
                 let mut captures = vec![None; rule.elements.len()];
-                if let Some(end) = match_rule(rule, 0, tokens, start, &mut captures) {
+                if let Some(end) = match_elements(&rule.elements, 0, tokens, start, &mut captures) {
+                    if suppressed(rule, tokens, start, end) {
+                        continue;
+                    }
                     if let Some(d) = render(rule, text, tokens, start, end, &captures) {
                         out.push(d);
                     }
@@ -102,13 +105,16 @@ impl GrammarChecker for IrMatcher {
     }
 }
 
-/// A compiled rule: pattern elements, the marker element-range, and correction templates.
+/// A compiled rule: pattern elements, the marker element-range, correction templates, and the
+/// antipatterns that suppress it.
 struct CompiledRule {
     id: String,
     message: String,
     elements: Vec<Elem>,
     marker: Option<(usize, usize)>,
     suggestions: Vec<IrSuggestion>,
+    /// Antipattern element sequences; if any matches overlapping the rule's match, suppress it.
+    antipatterns: Vec<Vec<Elem>>,
 }
 
 impl CompiledRule {
@@ -173,13 +179,35 @@ fn compile_rule(r: &Rule) -> Option<CompiledRule> {
     if elements.is_empty() {
         return None;
     }
+    // Compile antipatterns; drop (rather than skip the rule for) any that cannot be matched —
+    // a missing antipattern only costs precision, whereas dropping the rule costs recall.
+    let antipatterns = r
+        .antipatterns
+        .iter()
+        .filter_map(|ap| compile_elements(ap))
+        .collect();
     Some(CompiledRule {
         id: r.id.clone(),
         message: r.message.clone(),
         elements,
         marker,
         suggestions: r.suggestions.clone(),
+        antipatterns,
     })
+}
+
+/// Compile a construct list (antipattern body) into matchable elements; `None` if it contains an
+/// unsupported construct or an uncompilable regex (so it cannot suppress). Markers are ignored.
+fn compile_elements(constructs: &[Construct]) -> Option<Vec<Elem>> {
+    let mut elements = Vec::new();
+    for c in constructs {
+        match c {
+            Construct::Token(t) => elements.push(compile_elem(t)?),
+            Construct::MarkerStart | Construct::MarkerEnd => {}
+            _ => return None,
+        }
+    }
+    (!elements.is_empty()).then_some(elements)
 }
 
 /// Compile a `<token>` into an [`Elem`]; `None` if its main text/POS regex does not compile.
@@ -344,19 +372,19 @@ fn eq(a: &str, b: &str, case_sensitive: bool) -> bool {
     }
 }
 
-/// Backtracking match of `rule.elements[ei..]` against `tokens[ti..]`; returns the end token index
-/// on success and records each element's captured token range in `captures`.
-fn match_rule(
-    rule: &CompiledRule,
+/// Backtracking match of `elements[ei..]` against `tokens[ti..]`; returns the end token index on
+/// success and records each element's captured token range in `captures`.
+fn match_elements(
+    elements: &[Elem],
     ei: usize,
     tokens: &[Token],
     ti: usize,
     captures: &mut [Option<(usize, usize)>],
 ) -> Option<usize> {
-    if ei == rule.elements.len() {
+    if ei == elements.len() {
         return Some(ti);
     }
-    let elem = &rule.elements[ei];
+    let elem = &elements[ei];
     let remaining = tokens.len() - ti;
     let max = elem.max.min(remaining);
 
@@ -368,13 +396,29 @@ fn match_rule(
         let base = ti + count;
         let skip_end = (base + elem.skip).min(tokens.len());
         for next in base..=skip_end {
-            if let Some(end) = match_rule(rule, ei + 1, tokens, next, captures) {
+            if let Some(end) = match_elements(elements, ei + 1, tokens, next, captures) {
                 return Some(end);
             }
         }
     }
     captures[ei] = None;
     None
+}
+
+/// Whether any of `rule`'s antipatterns matches a token range overlapping the rule's match
+/// `[start, end)` — in which case the rule is suppressed.
+fn suppressed(rule: &CompiledRule, tokens: &[Token], start: usize, end: usize) -> bool {
+    rule.antipatterns.iter().any(|ap| {
+        let mut caps = vec![None; ap.len()];
+        // Overlap requires the antipattern to start before the rule match ends.
+        (0..end).any(|from| {
+            caps.fill(None);
+            matches!(
+                match_elements(ap, 0, tokens, from, &mut caps),
+                Some(stop) if stop > from && start < stop
+            )
+        })
+    })
 }
 
 /// Build a diagnostic from a successful match, or `None` if the marker is empty or no suggestion
@@ -519,6 +563,7 @@ mod tests {
                 lit("of"),
                 Construct::MarkerEnd,
             ],
+            antipatterns: vec![],
             message: "Did you mean “should have”?".to_owned(),
             suggestions: vec![IrSuggestion {
                 parts: vec![SugPart::Text("should have".to_owned())],
@@ -563,6 +608,7 @@ mod tests {
                     ..Default::default()
                 }),
             ],
+            antipatterns: vec![],
             message: String::new(),
             suggestions: vec![IrSuggestion {
                 parts: vec![SugPart::Token {
@@ -605,6 +651,7 @@ mod tests {
                 }],
                 ..Default::default()
             })],
+            antipatterns: vec![],
             message: String::new(),
             suggestions: vec![IrSuggestion {
                 parts: vec![SugPart::Text("x".to_owned())],
@@ -623,6 +670,43 @@ mod tests {
             matcher.grammar_diagnostics("run", &verb).len(),
             1,
             "VB is not excepted"
+        );
+    }
+
+    #[test]
+    fn antipattern_suppresses_overlapping_match() {
+        // Rule fires on the word "lead"; antipattern "lead singer" suppresses it.
+        let rule = Rule {
+            id: "LEAD".to_owned(),
+            pattern: vec![lit("lead")],
+            antipatterns: vec![vec![lit("lead"), lit("singer")]],
+            message: String::new(),
+            suggestions: vec![IrSuggestion {
+                parts: vec![SugPart::Text("led".to_owned())],
+            }],
+        };
+        let matcher = IrMatcher::new(&[rule]);
+
+        // "lead role" → fires (antipattern doesn't match).
+        let fires_on = analyze(
+            "lead role",
+            &[("lead", &["NN"], &["lead"]), ("role", &["NN"], &["role"])],
+        );
+        assert_eq!(matcher.grammar_diagnostics("lead role", &fires_on).len(), 1);
+
+        // "lead singer" → suppressed by the antipattern.
+        let singer = analyze(
+            "lead singer",
+            &[
+                ("lead", &["NN"], &["lead"]),
+                ("singer", &["NN"], &["singer"]),
+            ],
+        );
+        assert!(
+            matcher
+                .grammar_diagnostics("lead singer", &singer)
+                .is_empty(),
+            "antipattern suppresses"
         );
     }
 }
