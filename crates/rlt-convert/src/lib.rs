@@ -58,6 +58,7 @@ pub fn build_confusion_model(
     unigrams: &Path,
     bigrams: &Path,
     out: &Path,
+    pos_tags: impl Fn(&str) -> Vec<String>,
 ) -> Result<ConfusionReport> {
     let pairs = parse_confusion_sets(confusion_sets)?;
 
@@ -69,8 +70,12 @@ pub fn build_confusion_model(
 
     let unigrams = prune_unigrams(unigrams, &words)
         .with_context(|| format!("reading {}", unigrams.display()))?;
-    let bigrams =
-        prune_bigrams(bigrams, &words).with_context(|| format!("reading {}", bigrams.display()))?;
+    let Bigrams {
+        counts: bigrams,
+        left_pos,
+        right_pos,
+    } = prune_bigrams(bigrams, &words, &pos_tags)
+        .with_context(|| format!("reading {}", bigrams.display()))?;
 
     let report = ConfusionReport {
         pairs: pairs.len(),
@@ -80,6 +85,8 @@ pub fn build_confusion_model(
         pairs,
         unigrams,
         bigrams,
+        left_pos,
+        right_pos,
     };
     let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&model)
         .map_err(|e| anyhow!("rkyv serialize: {e}"))?;
@@ -151,13 +158,34 @@ fn prune_unigrams(
     Ok(out)
 }
 
-/// Keep `"w1 w2"\tcount` bigram lines where either word is a confusion word (lower-cased).
+/// The pruned bigrams plus the POS-context aggregations derived from them.
+struct Bigrams {
+    counts: Vec<(String, u32)>,
+    left_pos: Vec<(String, u32)>,
+    right_pos: Vec<(String, u32)>,
+}
+
+/// Keep `"w1 w2"\tcount` bigram lines touching a confusion word, and aggregate POS-context counts:
+/// when the member is on the right, accumulate the left word's primary POS; when on the left,
+/// the right word's primary POS. `pos_tags` is cached so each neighbour is tagged once.
 fn prune_bigrams(
     path: &Path,
     words: &std::collections::HashSet<String>,
-) -> Result<Vec<(String, u32)>> {
+    pos_tags: &impl Fn(&str) -> Vec<String>,
+) -> Result<Bigrams> {
+    use std::collections::HashMap;
     let text = std::fs::read_to_string(path)?;
     let mut out = Vec::new();
+    let mut left_pos: HashMap<String, u32> = HashMap::new();
+    let mut right_pos: HashMap<String, u32> = HashMap::new();
+    let mut pos_cache: HashMap<String, Option<String>> = HashMap::new();
+    let mut primary_pos = |w: &str| -> Option<String> {
+        pos_cache
+            .entry(w.to_owned())
+            .or_insert_with(|| pos_tags(w).into_iter().next())
+            .clone()
+    };
+
     for line in text.lines() {
         let Some((gram, c)) = line.split_once('\t') else {
             continue;
@@ -166,13 +194,32 @@ fn prune_bigrams(
         let Some((w1, w2)) = gram.split_once(' ') else {
             continue;
         };
-        if words.contains(w1) || words.contains(w2) {
-            if let Ok(count) = c.trim().parse::<u32>() {
-                out.push((gram, count));
+        let (w1, w2) = (w1.to_owned(), w2.to_owned());
+        if !(words.contains(&w1) || words.contains(&w2)) {
+            continue;
+        }
+        let Ok(count) = c.trim().parse::<u32>() else {
+            continue;
+        };
+        if words.contains(&w2) {
+            if let Some(p1) = primary_pos(&w1) {
+                let e = left_pos.entry(format!("{p1} {w2}")).or_default();
+                *e = e.saturating_add(count);
             }
         }
+        if words.contains(&w1) {
+            if let Some(p2) = primary_pos(&w2) {
+                let e = right_pos.entry(format!("{w1} {p2}")).or_default();
+                *e = e.saturating_add(count);
+            }
+        }
+        out.push((gram, count));
     }
-    Ok(out)
+    Ok(Bigrams {
+        counts: out,
+        left_pos: left_pos.into_iter().collect(),
+        right_pos: right_pos.into_iter().collect(),
+    })
 }
 
 /// Outcome of a conversion run: the counts the converter prints and the oracle later tracks.
@@ -333,33 +380,76 @@ fn lower_example(rule_id: &str, ex: &rules::ExampleElementType) -> Example {
     }
 }
 
+/// Named `<phrase>` definitions (`id` → lowered constructs), for resolving `<phraseref>`.
+type Phrases = std::collections::HashMap<String, Vec<Construct>>;
+
 /// Walk the parsed document into a flat list of lowered rules.
 fn lower_document(doc: &rules::RulesElementType) -> Vec<Rule> {
+    let phrases = collect_phrases(doc);
     let mut out = Vec::new();
     for item in &doc.content {
         let rules::RulesElementTypeContent::Category(cat) = item else {
-            continue; // <unification>/<phrases> at the top level carry no rules.
+            continue; // <unification> at the top level carries no rules.
         };
         for c in &cat.content {
             match c {
                 rules::CategoryElementTypeContent::Rule(r) if rule_enabled(r.default.as_ref()) => {
-                    out.push(lower_rule(r, None, &[]));
+                    out.push(lower_rule(r, None, &[], &phrases));
                 }
                 rules::CategoryElementTypeContent::Rulegroup(g)
                     if group_enabled(g.default.as_ref()) =>
                 {
                     // Group-level antipatterns apply to every member rule.
-                    let group_aps: Vec<Vec<Construct>> =
-                        g.antipattern.iter().map(lower_antipattern).collect();
+                    let group_aps: Vec<Vec<Construct>> = g
+                        .antipattern
+                        .iter()
+                        .map(|a| lower_antipattern(a, &phrases))
+                        .collect();
                     out.extend(
                         g.rule
                             .iter()
                             .filter(|r| rule_enabled(r.default.as_ref()))
-                            .map(|r| lower_rule(r, Some(&g.id), &group_aps)),
+                            .map(|r| lower_rule(r, Some(&g.id), &group_aps, &phrases)),
                     );
                 }
                 // `default="off"`/`"temp_off"` rules and groups are disabled in LT — skip them.
                 _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// Collect all top-level `<phrases>`/`<phrase>` definitions into a lookup map.
+fn collect_phrases(doc: &rules::RulesElementType) -> Phrases {
+    let mut phrases = Phrases::new();
+    for item in &doc.content {
+        if let rules::RulesElementTypeContent::Phrases(ps) = item {
+            for p in &ps.phrase {
+                phrases.insert(p.id.clone(), lower_phrase(p));
+            }
+        }
+    }
+    phrases
+}
+
+/// Lower a `<phrase>`'s body into constructs (token vocabulary; `<unify>`/`<includephrases>` become
+/// `Unsupported`). Phrases do not contain `<phraseref>`s, so no recursion is needed.
+fn lower_phrase(p: &pattern::PhraseElementType) -> Vec<Construct> {
+    let mut out = Vec::new();
+    for c in &p.content {
+        match c {
+            pattern::PhraseElementTypeContent::Token(t) => push_token(t, &mut out),
+            pattern::PhraseElementTypeContent::And(a) => push_and(a, &mut out),
+            pattern::PhraseElementTypeContent::Unify(_) => {
+                out.push(Construct::Unsupported {
+                    kind: "unify".to_owned(),
+                });
+            }
+            pattern::PhraseElementTypeContent::Includephrases(_) => {
+                out.push(Construct::Unsupported {
+                    kind: "includephrases".to_owned(),
+                });
             }
         }
     }
@@ -388,6 +478,7 @@ fn lower_rule(
     r: &rules::RuleElementType,
     group_id: Option<&str>,
     group_antipatterns: &[Vec<Construct>],
+    phrases: &Phrases,
 ) -> Rule {
     let id =
         r.id.clone()
@@ -400,9 +491,11 @@ fn lower_rule(
     let mut antipatterns: Vec<Vec<Construct>> = group_antipatterns.to_vec();
     for c in &r.content {
         match c {
-            rules::RuleElementTypeContent::Pattern(p) => lower_pattern(&p.content, &mut pattern),
+            rules::RuleElementTypeContent::Pattern(p) => {
+                lower_pattern(&p.content, &mut pattern, phrases);
+            }
             rules::RuleElementTypeContent::Antipattern(a) => {
-                antipatterns.push(lower_antipattern(a));
+                antipatterns.push(lower_antipattern(a, phrases));
             }
             rules::RuleElementTypeContent::Filter(f) => pattern.push(Construct::Opaque {
                 class: f.class.clone(),
@@ -436,7 +529,7 @@ fn lower_rule(
 
 /// Lower an `<antipattern>` into a construct list (the same token vocabulary as a `<pattern>`;
 /// `<example>` children and unsupported sub-constructs are dropped/kept as `Unsupported`).
-fn lower_antipattern(a: &rules::AntipatternElementType) -> Vec<Construct> {
+fn lower_antipattern(a: &rules::AntipatternElementType, phrases: &Phrases) -> Vec<Construct> {
     let mut out = Vec::new();
     for item in &a.content {
         match item {
@@ -445,14 +538,10 @@ fn lower_antipattern(a: &rules::AntipatternElementType) -> Vec<Construct> {
             }
             rules::AntipatternElementTypeContent::Marker(m) => {
                 out.push(Construct::MarkerStart);
-                lower_marker(&m.content, &mut out);
+                lower_marker(&m.content, &mut out, phrases);
                 out.push(Construct::MarkerEnd);
             }
-            rules::AntipatternElementTypeContent::And(_) => {
-                out.push(Construct::Unsupported {
-                    kind: "and".to_owned(),
-                });
-            }
+            rules::AntipatternElementTypeContent::And(a) => push_and(a, &mut out),
             rules::AntipatternElementTypeContent::Unify(_) => {
                 out.push(Construct::Unsupported {
                     kind: "unify".to_owned(),
@@ -552,7 +641,11 @@ fn map_case(c: Option<&pattern::MatchCaseConversionType>) -> Case {
 }
 
 /// Lower the contents of a `<pattern>` into IR constructs.
-fn lower_pattern(content: &[rules::PatternElementTypeContent], out: &mut Vec<Construct>) {
+fn lower_pattern(
+    content: &[rules::PatternElementTypeContent],
+    out: &mut Vec<Construct>,
+    phrases: &Phrases,
+) {
     for item in content {
         match item {
             rules::PatternElementTypeContent::Token(t) => {
@@ -560,24 +653,14 @@ fn lower_pattern(content: &[rules::PatternElementTypeContent], out: &mut Vec<Con
             }
             rules::PatternElementTypeContent::Marker(m) => {
                 out.push(Construct::MarkerStart);
-                lower_marker(&m.content, out);
+                lower_marker(&m.content, out, phrases);
                 out.push(Construct::MarkerEnd);
             }
-            rules::PatternElementTypeContent::Phraseref(_) => {
-                out.push(Construct::Unsupported {
-                    kind: "phraseref".to_owned(),
-                });
+            rules::PatternElementTypeContent::Phraseref(p) => {
+                push_phraseref(&p.idref, out, phrases);
             }
-            rules::PatternElementTypeContent::And(_) => {
-                out.push(Construct::Unsupported {
-                    kind: "and".to_owned(),
-                });
-            }
-            rules::PatternElementTypeContent::Or(_) => {
-                out.push(Construct::Unsupported {
-                    kind: "or".to_owned(),
-                });
-            }
+            rules::PatternElementTypeContent::And(a) => push_and(a, out),
+            rules::PatternElementTypeContent::Or(o) => push_or(o, out),
             rules::PatternElementTypeContent::Unify(_) => {
                 out.push(Construct::Unsupported {
                     kind: "unify".to_owned(),
@@ -588,30 +671,24 @@ fn lower_pattern(content: &[rules::PatternElementTypeContent], out: &mut Vec<Con
 }
 
 /// Lower the contents of a `<marker>` (the same construct vocabulary as `<pattern>`) into `out`.
-fn lower_marker(content: &[pattern::MarkerElementTypeContent], out: &mut Vec<Construct>) {
+fn lower_marker(
+    content: &[pattern::MarkerElementTypeContent],
+    out: &mut Vec<Construct>,
+    phrases: &Phrases,
+) {
     for item in content {
         match item {
             pattern::MarkerElementTypeContent::Token(t) => {
                 push_token(t, out);
             }
-            pattern::MarkerElementTypeContent::Or(_) => {
-                out.push(Construct::Unsupported {
-                    kind: "or".to_owned(),
-                });
-            }
-            pattern::MarkerElementTypeContent::And(_) => {
-                out.push(Construct::Unsupported {
-                    kind: "and".to_owned(),
-                });
+            pattern::MarkerElementTypeContent::Or(o) => push_or(o, out),
+            pattern::MarkerElementTypeContent::And(a) => push_and(a, out),
+            pattern::MarkerElementTypeContent::Phraseref(p) => {
+                push_phraseref(&p.idref, out, phrases);
             }
             pattern::MarkerElementTypeContent::Unify(_) => {
                 out.push(Construct::Unsupported {
                     kind: "unify".to_owned(),
-                });
-            }
-            pattern::MarkerElementTypeContent::Phraseref(_) => {
-                out.push(Construct::Unsupported {
-                    kind: "phraseref".to_owned(),
                 });
             }
             pattern::MarkerElementTypeContent::UnifyIgnore(_) => {
@@ -623,21 +700,85 @@ fn lower_marker(content: &[pattern::MarkerElementTypeContent], out: &mut Vec<Con
     }
 }
 
+/// Resolve a `<phraseref idref="…">` by inlining the named phrase's constructs (or `Unsupported`
+/// if the phrase is undefined).
+fn push_phraseref(idref: &str, out: &mut Vec<Construct>, phrases: &Phrases) {
+    match phrases.get(idref) {
+        Some(constructs) => out.extend(constructs.iter().cloned()),
+        None => out.push(Construct::Unsupported {
+            kind: "phraseref".to_owned(),
+        }),
+    }
+}
+
 /// Push a `<token>` as a construct. A token containing a `<match>` child is a back-reference
 /// matcher (its value depends on another captured token) we can't faithfully match, so it becomes
 /// `Unsupported` — which makes the enclosing rule skip rather than match too loosely.
 fn push_token(t: &pattern::TokenElementType, out: &mut Vec<Construct>) {
-    let has_match = t
-        .content
-        .iter()
-        .any(|c| matches!(c, pattern::TokenElementTypeContent::Match(_)));
-    if has_match {
+    if token_has_match(t) {
         out.push(Construct::Unsupported {
             kind: "token-match".to_owned(),
         });
     } else {
         out.push(Construct::Token(lower_token(t)));
     }
+}
+
+/// Whether a `<token>` carries a `<match>` back-reference child (which we cannot match faithfully).
+fn token_has_match(t: &pattern::TokenElementType) -> bool {
+    t.content
+        .iter()
+        .any(|c| matches!(c, pattern::TokenElementTypeContent::Match(_)))
+}
+
+/// Push an `<or>` as `Construct::Or` (alternatives), or `Unsupported` if any alternative is not a
+/// plain token.
+fn push_or(o: &pattern::OrElementType, out: &mut Vec<Construct>) {
+    let mut alts = Vec::new();
+    for c in &o.content {
+        // `OrElementTypeContent` has a single `Token` variant, so this is irrefutable.
+        let pattern::OrElementTypeContent::Token(t) = c;
+        if token_has_match(t) {
+            out.push(Construct::Unsupported {
+                kind: "or".to_owned(),
+            });
+            return;
+        }
+        alts.push(lower_token(t));
+    }
+    out.push(if alts.is_empty() {
+        Construct::Unsupported {
+            kind: "or".to_owned(),
+        }
+    } else {
+        Construct::Or(alts)
+    });
+}
+
+/// Push an `<and>` as `Construct::And` (constraints that must all hold), or `Unsupported` if it
+/// contains a non-token child (e.g. a nested `<marker>`).
+fn push_and(a: &pattern::AndElementType, out: &mut Vec<Construct>) {
+    let mut alts = Vec::new();
+    for c in &a.content {
+        match c {
+            pattern::AndElementTypeContent::Token(t) if !token_has_match(t) => {
+                alts.push(lower_token(t));
+            }
+            _ => {
+                out.push(Construct::Unsupported {
+                    kind: "and".to_owned(),
+                });
+                return;
+            }
+        }
+    }
+    out.push(if alts.is_empty() {
+        Construct::Unsupported {
+            kind: "and".to_owned(),
+        }
+    } else {
+        Construct::And(alts)
+    });
 }
 
 /// Lower a `<token>`'s declarative attributes, literal/regex text and `<exception>`s.

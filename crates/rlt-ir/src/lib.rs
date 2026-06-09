@@ -105,6 +105,12 @@ pub struct ConfusionModel {
     pub unigrams: Vec<(String, u32)>,
     /// Bigram counts (`"w1 w2"`, lower-cased) pruned to those touching a confusion word.
     pub bigrams: Vec<(String, u32)>,
+    /// Left-POS context: `"POS member"` → summed count of bigrams whose left word has that primary
+    /// POS and whose right word is the confusion member. Generalises sparse word bigrams.
+    pub left_pos: Vec<(String, u32)>,
+    /// Right-POS context: `"member POS"` → summed count of bigrams whose left word is the member
+    /// and whose right word has that primary POS.
+    pub right_pos: Vec<(String, u32)>,
 }
 
 /// One easily-confused pair. `symmetric` pairs are checked both ways; directional ones only `a→b`.
@@ -135,6 +141,10 @@ pub fn deserialize_confusion(bytes: &[u8]) -> Result<ConfusionModel, rkyv::ranco
 pub enum Construct {
     /// A `<token>` matcher.
     Token(TokenPat),
+    /// An `<or>` group: one token position that matches if **any** alternative matches.
+    Or(Vec<TokenPat>),
+    /// An `<and>` group: one token position that matches if **all** constraints hold on it.
+    And(Vec<TokenPat>),
     /// Opening boundary of a `<marker>…</marker>` (the span a diagnostic applies to). Markers
     /// delimit a contiguous run, so a flat start/end pair represents them without recursion.
     MarkerStart,
