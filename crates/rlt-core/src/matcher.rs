@@ -4,12 +4,12 @@
 //! rules our converter compiled from LT v6.7. It is scored by the same example oracle as the
 //! nlprule baseline, so the two are directly comparable.
 //!
-//! Scope (v1): literal/regex/POS token matching with `inflected`, `negate`, `case_sensitive`,
-//! `<exception>`s, `min`/`max`/`skip` quantifiers, `<marker>` spans and suggestion rendering
-//! (literal text + `<match no>` token copies with case conversion). Rules whose pattern contains
-//! a not-yet-supported construct (`<and>`/`<or>`/`<unify>`/`<phraseref>`/`<filter>`) are skipped
-//! rather than matched wrongly. Antipatterns are not yet applied — a known false-positive source
-//! on negative inputs, but it does not affect positive-example reproduction.
+//! Scope: literal/regex/POS token matching with `inflected`, `negate`, `case_sensitive`,
+//! `<exception>`s, `min`/`max`/`skip` quantifiers, `<or>`/`<and>` groups, `<marker>` spans,
+//! `<antipattern>` suppression and suggestion rendering (literal text + `<match no>`/`\N` token
+//! copies with case conversion). `<phraseref>`s are inlined at convert time. Rules whose pattern
+//! still contains an unsupported construct (`<unify>` — unused in English — or `<filter>`) are
+//! skipped rather than matched wrongly.
 
 use std::collections::HashMap;
 
@@ -121,7 +121,9 @@ impl CompiledRule {
     /// The first element's literal lower-cased word, if it is an un-negated literal-text token —
     /// used to index the rule so it is only attempted where that word occurs.
     fn first_literal(&self) -> Option<String> {
-        let m = &self.elements.first()?.matcher;
+        let Matcher::One(m) = &self.elements.first()?.matcher else {
+            return None; // or/and groups are tried at every position
+        };
         match (&m.text, m.negate, &m.postag) {
             (Some(TextMatch::Literal { value, .. }), false, None) if !m.inflected => {
                 Some(value.to_ascii_lowercase())
@@ -139,13 +141,23 @@ struct Elem {
     skip: usize,
 }
 
-/// A token constraint: text and/or POS, with `inflected`/`negate`/exceptions.
-struct Matcher {
+/// How a single token position is matched.
+enum Matcher {
+    /// A single `<token>` constraint.
+    One(TokenMatcher),
+    /// `<or>`: the position matches if **any** alternative matches.
+    Or(Vec<TokenMatcher>),
+    /// `<and>`: the position matches if **all** constraints hold on the token.
+    And(Vec<TokenMatcher>),
+}
+
+/// A single token constraint: text and/or POS, with `inflected`/`negate`/exceptions.
+struct TokenMatcher {
     text: Option<TextMatch>,
     postag: Option<TagMatch>,
     inflected: bool,
     negate: bool,
-    exceptions: Vec<Matcher>,
+    exceptions: Vec<TokenMatcher>,
 }
 
 enum TextMatch {
@@ -169,9 +181,11 @@ fn compile_rule(r: &Rule) -> Option<CompiledRule> {
     let mut marker = None;
     for c in &r.pattern {
         match c {
-            Construct::Token(t) => elements.push(compile_elem(t)?),
             Construct::MarkerStart => marker_start = Some(elements.len()),
             Construct::MarkerEnd => marker = marker_start.map(|s| (s, elements.len())),
+            Construct::Token(_) | Construct::Or(_) | Construct::And(_) => {
+                elements.push(compile_construct(c)?);
+            }
             // Unsupported/Opaque (and any future construct) can't be matched faithfully — skip.
             _ => return None,
         }
@@ -202,7 +216,9 @@ fn compile_elements(constructs: &[Construct]) -> Option<Vec<Elem>> {
     let mut elements = Vec::new();
     for c in constructs {
         match c {
-            Construct::Token(t) => elements.push(compile_elem(t)?),
+            Construct::Token(_) | Construct::Or(_) | Construct::And(_) => {
+                elements.push(compile_construct(c)?);
+            }
             Construct::MarkerStart | Construct::MarkerEnd => {}
             _ => return None,
         }
@@ -210,17 +226,32 @@ fn compile_elements(constructs: &[Construct]) -> Option<Vec<Elem>> {
     (!elements.is_empty()).then_some(elements)
 }
 
-/// Compile a `<token>` into an [`Elem`]; `None` if its main text/POS regex does not compile.
-fn compile_elem(t: &TokenPat) -> Option<Elem> {
-    let matcher = compile_matcher(
-        t.text.as_deref(),
-        t.postag.as_deref(),
-        t.regexp,
-        t.inflected,
-        t.negate,
-        t.case_sensitive,
-        &t.exceptions,
-    )?;
+/// Compile a single-position construct (`<token>`/`<or>`/`<and>`) into an [`Elem`]; `None` if a
+/// regex fails to compile. Group elements (`<or>`/`<and>`) occupy exactly one token position.
+fn compile_construct(c: &Construct) -> Option<Elem> {
+    let (matcher, quant) = match c {
+        Construct::Token(t) => (Matcher::One(compile_token(t)?), Some(t)),
+        Construct::Or(alts) => (
+            Matcher::Or(alts.iter().map(compile_token).collect::<Option<_>>()?),
+            None,
+        ),
+        Construct::And(alts) => (
+            Matcher::And(alts.iter().map(compile_token).collect::<Option<_>>()?),
+            None,
+        ),
+        _ => return None,
+    };
+    let (min, max, skip) = quant.map_or((1, 1, 0), quantifiers);
+    Some(Elem {
+        matcher,
+        min,
+        max,
+        skip,
+    })
+}
+
+/// The `min`/`max`/`skip` quantifiers of a token (unbounded `-1` capped at [`UNBOUNDED_CAP`]).
+fn quantifiers(t: &TokenPat) -> (usize, usize, usize) {
     let min = usize::try_from(t.min.unwrap_or(1)).unwrap_or(1);
     let max = match t.max {
         Some(-1) => UNBOUNDED_CAP,
@@ -232,54 +263,37 @@ fn compile_elem(t: &TokenPat) -> Option<Elem> {
         Some(s) => usize::try_from(s).unwrap_or(0),
         None => 0,
     };
-    Some(Elem {
-        matcher,
-        min,
-        max,
-        skip,
-    })
+    (min, max, skip)
 }
 
-#[allow(clippy::fn_params_excessive_bools)]
-fn compile_matcher(
-    text: Option<&str>,
-    postag: Option<&str>,
-    regexp: bool,
-    inflected: bool,
-    negate: bool,
-    case_sensitive: bool,
-    exceptions: &[ExceptionPat],
-) -> Option<Matcher> {
-    let text = match text {
-        Some(t) if regexp => Some(TextMatch::Regex(anchored(t, !case_sensitive)?)),
-        Some(t) => Some(TextMatch::Literal {
-            value: t.to_owned(),
-            case_sensitive,
+/// Compile a [`TokenPat`] into a single [`TokenMatcher`]; `None` if a regex does not compile.
+fn compile_token(t: &TokenPat) -> Option<TokenMatcher> {
+    let text = match t.text.as_deref() {
+        Some(s) if t.regexp => Some(TextMatch::Regex(anchored(s, !t.case_sensitive)?)),
+        Some(s) => Some(TextMatch::Literal {
+            value: s.to_owned(),
+            case_sensitive: t.case_sensitive,
         }),
         None => None,
     };
     // postag_regexp is folded into the source `postag` string; treat any regex metachar as a regex.
-    let postag = match postag {
+    let postag = match t.postag.as_deref() {
         Some(p) if is_regexish(p) => Some(TagMatch::Regex(anchored(p, false)?)),
         Some(p) => Some(TagMatch::Literal(p.to_owned())),
         None => None,
     };
-    if text.is_none() && postag.is_none() {
-        // A constraint-free token matches anything — only meaningful when negated (never matches)
-        // or as a filler; keep it as an always-true matcher.
-    }
     // Exceptions: drop any whose regex fails to compile rather than discard the whole rule.
-    let exceptions = exceptions.iter().filter_map(compile_exception).collect();
-    Some(Matcher {
+    let exceptions = t.exceptions.iter().filter_map(compile_exception).collect();
+    Some(TokenMatcher {
         text,
         postag,
-        inflected,
-        negate,
+        inflected: t.inflected,
+        negate: t.negate,
         exceptions,
     })
 }
 
-fn compile_exception(e: &ExceptionPat) -> Option<Matcher> {
+fn compile_exception(e: &ExceptionPat) -> Option<TokenMatcher> {
     let text = match e.text.as_deref() {
         Some(t) if e.regexp => Some(TextMatch::Regex(anchored(t, !e.case_sensitive)?)),
         Some(t) => Some(TextMatch::Literal {
@@ -293,7 +307,7 @@ fn compile_exception(e: &ExceptionPat) -> Option<Matcher> {
         Some(p) => Some(TagMatch::Literal(p.to_owned())),
         None => None,
     };
-    Some(Matcher {
+    Some(TokenMatcher {
         text,
         postag,
         inflected: e.inflected,
@@ -319,6 +333,17 @@ fn is_regexish(p: &str) -> bool {
 }
 
 impl Matcher {
+    /// Whether this position-matcher accepts `token`.
+    fn matches(&self, token: &Token) -> bool {
+        match self {
+            Matcher::One(m) => m.matches(token),
+            Matcher::Or(ms) => ms.iter().any(|m| m.matches(token)),
+            Matcher::And(ms) => ms.iter().all(|m| m.matches(token)),
+        }
+    }
+}
+
+impl TokenMatcher {
     /// Whether this matcher accepts `token` (applying negation and exceptions).
     fn matches(&self, token: &Token) -> bool {
         let mut hit = self.constraint(token);
@@ -707,6 +732,87 @@ mod tests {
                 .grammar_diagnostics("lead singer", &singer)
                 .is_empty(),
             "antipattern suppresses"
+        );
+    }
+
+    #[test]
+    fn or_matches_any_alternative() {
+        // <marker><or>cat|dog</or></marker> -> "pet"
+        let rule = Rule {
+            id: "OR".to_owned(),
+            pattern: vec![
+                Construct::MarkerStart,
+                Construct::Or(vec![
+                    TokenPat {
+                        text: Some("cat".to_owned()),
+                        ..Default::default()
+                    },
+                    TokenPat {
+                        text: Some("dog".to_owned()),
+                        ..Default::default()
+                    },
+                ]),
+                Construct::MarkerEnd,
+            ],
+            antipatterns: vec![],
+            message: String::new(),
+            suggestions: vec![IrSuggestion {
+                parts: vec![SugPart::Text("pet".to_owned())],
+            }],
+        };
+        let matcher = IrMatcher::new(&[rule]);
+        assert_eq!(
+            matcher
+                .grammar_diagnostics("dog", &analyze("dog", &[("dog", &[], &[])]))
+                .len(),
+            1
+        );
+        assert_eq!(
+            matcher
+                .grammar_diagnostics("cat", &analyze("cat", &[("cat", &[], &[])]))
+                .len(),
+            1
+        );
+        assert!(
+            matcher
+                .grammar_diagnostics("fish", &analyze("fish", &[("fish", &[], &[])]))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn and_requires_all_constraints() {
+        // <and>: token must be "run" AND tagged VB (not the noun "run").
+        let rule = Rule {
+            id: "AND".to_owned(),
+            pattern: vec![Construct::And(vec![
+                TokenPat {
+                    text: Some("run".to_owned()),
+                    ..Default::default()
+                },
+                TokenPat {
+                    postag: Some("VB".to_owned()),
+                    ..Default::default()
+                },
+            ])],
+            antipatterns: vec![],
+            message: String::new(),
+            suggestions: vec![IrSuggestion {
+                parts: vec![SugPart::Text("x".to_owned())],
+            }],
+        };
+        let matcher = IrMatcher::new(&[rule]);
+        // "run" tagged VB → matches; tagged NN → does not.
+        assert_eq!(
+            matcher
+                .grammar_diagnostics("run", &analyze("run", &[("run", &["VB"], &[])]))
+                .len(),
+            1
+        );
+        assert!(
+            matcher
+                .grammar_diagnostics("run", &analyze("run", &[("run", &["NN"], &[])]))
+                .is_empty()
         );
     }
 }
