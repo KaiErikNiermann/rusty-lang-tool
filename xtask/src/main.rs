@@ -6,7 +6,7 @@
 //! - `gen-schema` — regenerate the committed `xsd-parser` bindings from LT's `rules.xsd`.
 //! - `fetch-engine` — download nlprule's prebuilt English tokenizer/rules binaries (resumable).
 //! - `build-blob` — run the offline converter to produce the runtime rkyv artifact.
-//! - `build-wasm` — package the WASM surface via `wasm-pack` (Node target).
+//! - `build-wasm` — package the WASM surface via `wasm-pack` (Node target) + run the Node smoke test.
 //! - `run-oracle` — run the `<example>` differential-oracle test suite.
 
 use std::path::Path;
@@ -73,17 +73,7 @@ fn main() -> Result<()> {
         Task::GenSchema => gen_schema(),
         Task::FetchEngine => fetch_engine(),
         Task::BuildBlob => run("cargo", &["run", "-p", "rlt-convert"]),
-        Task::BuildWasm => run(
-            "wasm-pack",
-            &[
-                "build",
-                "crates/rlt-wasm",
-                "--target",
-                "nodejs",
-                "--out-dir",
-                "pkg",
-            ],
-        ),
+        Task::BuildWasm => build_wasm(),
         Task::RunOracle => run(
             "cargo",
             &[
@@ -198,6 +188,22 @@ fn fetch_engine() -> Result<()> {
     }
     println!("engine binaries ready in {RESOURCES_DIR}/");
     Ok(())
+}
+
+/// Package the WASM surface (nodejs target) and run the Node smoke test against it.
+fn build_wasm() -> Result<()> {
+    run(
+        "wasm-pack",
+        &[
+            "build",
+            "crates/rlt-wasm",
+            "--target",
+            "nodejs",
+            "--out-dir",
+            "pkg",
+        ],
+    )?;
+    run("node", &["scripts/smoke_node.mjs"])
 }
 
 /// Run an external command, inheriting stdio, failing loudly on non-zero exit.

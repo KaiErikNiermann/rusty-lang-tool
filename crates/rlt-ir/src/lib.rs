@@ -132,7 +132,10 @@ impl Construct {
 #[derive(
     Debug, Clone, Default, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize,
 )]
-#[allow(clippy::struct_excessive_bools, reason = "fields mirror LT's token attributes 1:1")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "fields mirror LT's token attributes 1:1"
+)]
 pub struct TokenPat {
     /// The token's literal surface text, or — when [`regexp`](Self::regexp) is set — a regex over
     /// the surface form. `None` for tokens matched purely by POS tag.
@@ -163,7 +166,10 @@ pub struct TokenPat {
 #[derive(
     Debug, Clone, Default, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize,
 )]
-#[allow(clippy::struct_excessive_bools, reason = "fields mirror LT's exception attributes 1:1")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "fields mirror LT's exception attributes 1:1"
+)]
 pub struct ExceptionPat {
     /// Literal surface text, or a regex when [`regexp`](Self::regexp) is set.
     pub text: Option<String>,

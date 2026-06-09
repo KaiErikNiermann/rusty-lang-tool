@@ -129,10 +129,10 @@ fn ir_matcher_reproduces_examples() {
     let checker = Checker::new(Composite::new(engine, matcher));
 
     let reproduced = score("ir v6.7", &checker, &positive_examples(&grammar));
-    // Foundational floor just below the measured baseline (3309); raise as the matcher gains
-    // construct coverage (antipatterns, and/or/unify, advanced match transforms).
+    // Floor just below the measured value (4982 = 55.3%, ahead of the nlprule v5.2 baseline's
+    // 52.8%). Raise as the matcher gains construct coverage (antipatterns, and/or/unify, …).
     assert!(
-        reproduced >= 3200,
-        "IR matcher reproduced only {reproduced}; expected >= 3200"
+        reproduced >= 4800,
+        "IR matcher reproduced only {reproduced}; expected >= 4800"
     );
 }
