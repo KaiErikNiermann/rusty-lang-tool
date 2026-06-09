@@ -21,7 +21,7 @@
 
 use rkyv::{Archive, Deserialize, Serialize};
 
-/// A single compiled grammar rule: an ordered pattern plus its identity.
+/// A single compiled grammar rule: an ordered pattern plus the message/corrections it emits.
 #[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
 pub struct Rule {
     /// Stable LT rule id (e.g. `"A_INFINITIVE"`); falls back to the enclosing group id for
@@ -29,6 +29,49 @@ pub struct Rule {
     pub id: String,
     /// The ordered sequence of pattern elements this rule matches against the token graph.
     pub pattern: Vec<Construct>,
+    /// Human-readable message shown when the rule fires (plain text; embedded markup dropped).
+    pub message: String,
+    /// Correction templates rendered against the matched tokens to produce replacements.
+    pub suggestions: Vec<Suggestion>,
+}
+
+/// A correction template: an ordered sequence of literal text and back-references to matched
+/// tokens, rendered into a replacement string when the rule fires.
+#[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
+pub struct Suggestion {
+    /// The parts concatenated (after rendering token references) to form the replacement.
+    pub parts: Vec<SugPart>,
+}
+
+/// One piece of a [`Suggestion`].
+#[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub enum SugPart {
+    /// Literal text.
+    Text(String),
+    /// `<match no="N"/>` — copy the Nth matched pattern token's surface form (1-indexed over the
+    /// pattern's tokens), applying `case`.
+    Token {
+        /// 1-based index into the pattern's tokens.
+        no: usize,
+        /// Case transform applied to the copied surface.
+        case: Case,
+    },
+}
+
+/// Case transform applied when rendering a [`SugPart::Token`] (LT `case_conversion`).
+#[derive(
+    Debug, Clone, Copy, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize,
+)]
+pub enum Case {
+    /// Copy verbatim.
+    Keep,
+    /// Upper-case the whole token.
+    Upper,
+    /// Lower-case the whole token.
+    Lower,
+    /// Upper-case the first character only.
+    StartUpper,
 }
 
 impl Rule {
@@ -38,6 +81,14 @@ impl Rule {
     pub fn is_opaque(&self) -> bool {
         self.pattern.iter().any(Construct::is_opaque)
     }
+}
+
+/// Deserialize a `Vec<Rule>` from the rkyv artifact the converter produced.
+///
+/// # Errors
+/// Returns an error if `bytes` is not a valid archived `Vec<Rule>`.
+pub fn deserialize_rules(bytes: &[u8]) -> Result<Vec<Rule>, rkyv::rancor::Error> {
+    rkyv::from_bytes::<Vec<Rule>, rkyv::rancor::Error>(bytes)
 }
 
 /// One element of a rule's pattern. Known constructs get explicit variants; the `<filter>` escape
@@ -78,10 +129,10 @@ impl Construct {
 }
 
 /// A `<token>` pattern matcher: the attributes that select which token(s) it matches.
-///
-/// M1 captures the declarative attributes and the literal/regex text; M4 interprets them against
-/// the engine's tagged token graph.
-#[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Default, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize,
+)]
+#[allow(clippy::struct_excessive_bools, reason = "fields mirror LT's token attributes 1:1")]
 pub struct TokenPat {
     /// The token's literal surface text, or — when [`regexp`](Self::regexp) is set — a regex over
     /// the surface form. `None` for tokens matched purely by POS tag.
@@ -101,6 +152,31 @@ pub struct TokenPat {
     pub max: Option<i32>,
     /// `skip`: how many tokens may be skipped before the next element must match.
     pub skip: Option<i32>,
+    /// `case_sensitive="yes"`: match [`text`](Self::text) case-sensitively (default is insensitive).
+    pub case_sensitive: bool,
+    /// `<exception>` children: the token does *not* match if any exception matches it.
+    pub exceptions: Vec<ExceptionPat>,
+}
+
+/// A `<token>`'s `<exception>`: a lighter token-like matcher that, when it matches the candidate,
+/// disqualifies the enclosing token from matching.
+#[derive(
+    Debug, Clone, Default, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize,
+)]
+#[allow(clippy::struct_excessive_bools, reason = "fields mirror LT's exception attributes 1:1")]
+pub struct ExceptionPat {
+    /// Literal surface text, or a regex when [`regexp`](Self::regexp) is set.
+    pub text: Option<String>,
+    /// A part-of-speech constraint (possibly a regex).
+    pub postag: Option<String>,
+    /// `regexp="yes"`: [`text`](Self::text) is a regular expression.
+    pub regexp: bool,
+    /// `inflected="yes"`: match [`text`](Self::text) against the candidate's lemmas.
+    pub inflected: bool,
+    /// `negate="yes"`: the exception is satisfied when it does *not* match.
+    pub negate: bool,
+    /// `case_sensitive="yes"`: match text case-sensitively.
+    pub case_sensitive: bool,
 }
 
 #[cfg(test)]
@@ -115,13 +191,7 @@ mod tests {
                 Construct::MarkerStart,
                 Construct::Token(TokenPat {
                     text: Some("colour".to_owned()),
-                    postag: None,
-                    regexp: false,
-                    negate: false,
-                    inflected: false,
-                    min: None,
-                    max: None,
-                    skip: None,
+                    ..Default::default()
                 }),
                 Construct::MarkerEnd,
                 Construct::Opaque {
@@ -129,6 +199,10 @@ mod tests {
                     args: "field:foo".to_owned(),
                 },
             ],
+            message: "Use the American spelling.".to_owned(),
+            suggestions: vec![Suggestion {
+                parts: vec![SugPart::Text("color".to_owned())],
+            }],
         }];
 
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&rules).expect("serialize");
