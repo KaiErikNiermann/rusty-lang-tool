@@ -44,6 +44,7 @@ pub(crate) fn recase(source: &str, candidate: &str) -> String {
 
 /// A half-open byte range `[start, end)` into the checked text.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Span {
     /// Byte offset of the first byte in the span.
     pub start: usize,
@@ -87,6 +88,7 @@ pub struct Diagnostic {
 
 /// A single analysed token: surface text, its span, POS tags and lemmas.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Token {
     /// The token's surface form as it appears in the source text.
     pub text: String,
@@ -100,6 +102,7 @@ pub struct Token {
 
 /// The result of running an [`Engine`] over a piece of text: the token graph downstream layers walk.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Analysis {
     /// Tokens in source order.
     pub tokens: Vec<Token>,

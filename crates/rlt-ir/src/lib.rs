@@ -23,6 +23,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 
 /// A single compiled grammar rule: an ordered pattern plus the message/corrections it emits.
 #[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Rule {
     /// Stable LT rule id (e.g. `"A_INFINITIVE"`); falls back to the enclosing group id for
     /// anonymous rules in a `<rulegroup>`. Used as the diagnostic's machine-readable code.
@@ -42,6 +43,7 @@ pub struct Rule {
 /// A correction template: an ordered sequence of literal text and back-references to matched
 /// tokens, rendered into a replacement string when the rule fires.
 #[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Suggestion {
     /// The parts concatenated (after rendering token references) to form the replacement.
     pub parts: Vec<SugPart>,
@@ -49,6 +51,7 @@ pub struct Suggestion {
 
 /// One piece of a [`Suggestion`].
 #[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[non_exhaustive]
 pub enum SugPart {
     /// Literal text.
@@ -69,6 +72,7 @@ pub enum SugPart {
 #[derive(
     Debug, Clone, Copy, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize,
 )]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum Case {
     /// Copy verbatim.
     Keep,
@@ -100,6 +104,7 @@ pub fn deserialize_rules(bytes: &[u8]) -> Result<Vec<Rule>, rkyv::rancor::Error>
 /// The L3 confusion-pair model: easily-confused word pairs plus the pruned n-gram counts used to
 /// pick the contextually-more-probable member (real-word error detection, e.g. their/there).
 #[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ConfusionModel {
     /// Easily-confused word pairs (from LanguageTool's `confusion_sets.txt`).
     pub pairs: Vec<ConfusionPair>,
@@ -117,6 +122,7 @@ pub struct ConfusionModel {
 
 /// One easily-confused pair. `symmetric` pairs are checked both ways; directional ones only `a→b`.
 #[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ConfusionPair {
     /// The first (or, for directional pairs, the "from") word — lower-cased.
     pub a: String,
@@ -139,6 +145,7 @@ pub fn deserialize_confusion(bytes: &[u8]) -> Result<ConfusionModel, rkyv::ranco
 /// One element of a rule's pattern. Known constructs get explicit variants; the `<filter>` escape
 /// hatch and not-yet-lowered constructs land in [`Construct::Opaque`] (the coverage-metric tail).
 #[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[non_exhaustive]
 pub enum Construct {
     /// A `<token>` matcher.
@@ -196,6 +203,7 @@ impl Construct {
     clippy::struct_excessive_bools,
     reason = "fields mirror LT's token attributes 1:1"
 )]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct TokenPat {
     /// The token's literal surface text, or — when [`regexp`](Self::regexp) is set — a regex over
     /// the surface form. `None` for tokens matched purely by POS tag.
@@ -232,6 +240,7 @@ pub struct TokenPat {
     clippy::struct_excessive_bools,
     reason = "fields mirror LT's exception attributes 1:1"
 )]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ExceptionPat {
     /// Literal surface text, or a regex when [`regexp`](Self::regexp) is set.
     pub text: Option<String>,

@@ -8,6 +8,7 @@
 //! - `build-blob` — run the offline converter to produce the runtime rkyv artifact.
 //! - `build-wasm` — package the WASM surface via `wasm-pack` (Node target) + run the Node smoke test.
 //! - `run-oracle` — run the `<example>` differential-oracle test suite.
+//! - `fuzz` — run a libFuzzer target via `cargo-fuzz` (thin passthrough; lists targets with no arg).
 
 use std::path::Path;
 use std::process::Command;
@@ -76,6 +77,16 @@ enum Task {
     BuildWasm,
     /// Run the differential `<example>` oracle test suite.
     RunOracle,
+    /// Run a libFuzzer target via cargo-fuzz (`cargo install cargo-fuzz` first). With no target,
+    /// lists the available targets. Args after `--` are forwarded to libFuzzer, e.g.
+    /// `cargo xtask fuzz ir_match -- -max_total_time=60`.
+    Fuzz {
+        /// The fuzz target to run (omit to list available targets).
+        target: Option<String>,
+        /// Extra arguments forwarded to libFuzzer (after `--`).
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -100,7 +111,22 @@ fn main() -> Result<()> {
                 "--nocapture",
             ],
         ),
+        Task::Fuzz { target, args } => run_fuzz(target.as_deref(), &args),
     }
+}
+
+/// Thin wrapper over `cargo fuzz`: `run <target> [-- <libfuzzer args>]`, or `list` when no target
+/// is given. Requires `cargo install cargo-fuzz` and a nightly toolchain.
+fn run_fuzz(target: Option<&str>, extra: &[String]) -> Result<()> {
+    let Some(target) = target else {
+        return run("cargo", &["fuzz", "list"]);
+    };
+    let mut args = vec!["fuzz", "run", target];
+    if !extra.is_empty() {
+        args.push("--");
+        args.extend(extra.iter().map(String::as_str));
+    }
+    run("cargo", &args)
 }
 
 /// Resumable sparse checkout: skips the clone if the repo already exists, just refreshing the

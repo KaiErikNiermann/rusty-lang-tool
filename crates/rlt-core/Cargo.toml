@@ -16,6 +16,12 @@ thiserror.workspace = true
 regex.workspace = true
 # Loading the converter's rkyv rule artifact (error type surfaced by from_rkyv_bytes).
 rkyv.workspace = true
+# Optional: `Arbitrary` impls for Span/Token/Analysis, enabled only by the fuzz crate.
+arbitrary = { workspace = true, optional = true }
+
+[features]
+# Derive `arbitrary::Arbitrary` on the analysis types for structure-aware fuzzing.
+arbitrary = ["dep:arbitrary"]
 
 [lints]
 workspace = true

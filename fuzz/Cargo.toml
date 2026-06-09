@@ -1,0 +1,52 @@
+[package]
+name = "rlt-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Detached from the parent workspace so libfuzzer-sys / sanitizer deps never enter normal builds.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
+arbitrary = { version = "1", features = ["derive"] }
+rlt-ir = { path = "../crates/rlt-ir", features = ["arbitrary"] }
+rlt-core = { path = "../crates/rlt-core", features = ["arbitrary"] }
+
+[profile.release]
+debug = 1
+
+# Untrusted-input targets: the runtime loads these rkyv blobs from disk/network, so malformed
+# bytes must fail gracefully (the validated `from_bytes` path), never panic or corrupt memory.
+[[bin]]
+name = "ir_rkyv"
+path = "fuzz_targets/ir_rkyv.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "confusion_rkyv"
+path = "fuzz_targets/confusion_rkyv.rs"
+test = false
+doc = false
+bench = false
+
+# Structure-aware targets: exercise the matcher / confusion logic (regex compile, backtracking,
+# byte-offset suggestion rendering) over arbitrary rules + token graphs.
+[[bin]]
+name = "ir_match"
+path = "fuzz_targets/ir_match.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "confusion_check"
+path = "fuzz_targets/confusion_check.rs"
+test = false
+doc = false
+bench = false

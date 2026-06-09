@@ -53,6 +53,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Test oracle
 datatest-stable = "0.3"
 insta = "1"
+# Structure-aware fuzzing (optional `arbitrary` feature on rlt-ir / rlt-core; used by `fuzz/`).
+arbitrary = { version = "1", features = ["derive"] }
 # Internal crates
 rlt-ir = { path = "crates/rlt-ir" }
 rlt-engine = { path = "crates/rlt-engine" }

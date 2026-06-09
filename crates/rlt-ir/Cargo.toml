@@ -11,6 +11,13 @@ authors.workspace = true
 [dependencies]
 rkyv.workspace = true
 serde.workspace = true
+# Optional: `Arbitrary` impls for the IR types, enabled only by the fuzz crate (structure-aware
+# fuzzing of the matcher / confusion checker). Kept out of normal/runtime builds.
+arbitrary = { workspace = true, optional = true }
+
+[features]
+# Derive `arbitrary::Arbitrary` on the IR types for structure-aware fuzzing.
+arbitrary = ["dep:arbitrary"]
 
 [lints]
 workspace = true
