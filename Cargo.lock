@@ -933,6 +933,8 @@ dependencies = [
 name = "rlt-core"
 version = "0.0.0"
 dependencies = [
+ "regex",
+ "rkyv",
  "rlt-ir",
  "serde",
  "thiserror 2.0.18",
