@@ -44,6 +44,13 @@ const ENGINE_BINARIES: &[&str] = &["en_tokenizer.bin", "en_rules.bin"];
 /// Directory the engine binaries land in (gitignored; the converter artifact lives here too).
 const RESOURCES_DIR: &str = "resources";
 
+/// Norvig's Google-corpus n-gram subsets (small, fetchable) backing the L3 confusion model.
+const NGRAM_DIR: &str = "resources/ngrams";
+const NGRAM_FILES: &[(&str, &str)] = &[
+    ("count_1w.txt", "https://norvig.com/ngrams/count_1w.txt"),
+    ("count_2w.txt", "https://norvig.com/ngrams/count_2w.txt"),
+];
+
 #[derive(Debug, Parser)]
 #[command(name = "xtask", about = "rusty-lang-tool build tasks")]
 struct Cli {
@@ -61,6 +68,10 @@ enum Task {
     FetchEngine,
     /// Run the offline converter to (re)build the runtime rkyv artifact.
     BuildBlob,
+    /// Download Norvig's n-gram subsets for the L3 confusion model (resumable).
+    FetchNgrams,
+    /// Build the L3 confusion model from LT's confusion sets + the n-gram subsets.
+    BuildConfusion,
     /// Package the WASM surface with wasm-pack (Node target).
     BuildWasm,
     /// Run the differential `<example>` oracle test suite.
@@ -73,6 +84,8 @@ fn main() -> Result<()> {
         Task::GenSchema => gen_schema(),
         Task::FetchEngine => fetch_engine(),
         Task::BuildBlob => run("cargo", &["run", "-p", "rlt-convert"]),
+        Task::FetchNgrams => fetch_ngrams(),
+        Task::BuildConfusion => run("cargo", &["run", "-p", "rlt-cli", "--", "build-confusion"]),
         Task::BuildWasm => build_wasm(),
         Task::RunOracle => run(
             "cargo",
@@ -204,6 +217,22 @@ fn build_wasm() -> Result<()> {
         ],
     )?;
     run("node", &["scripts/smoke_node.mjs"])
+}
+
+/// Download Norvig's unigram/bigram count files into `resources/ngrams/` (resumable, ~10 MB).
+fn fetch_ngrams() -> Result<()> {
+    std::fs::create_dir_all(NGRAM_DIR).context("creating ngram dir")?;
+    for (name, url) in NGRAM_FILES {
+        let dest = format!("{NGRAM_DIR}/{name}");
+        if Path::new(&dest).exists() {
+            println!("{dest} exists — skipping (resume)");
+            continue;
+        }
+        run("curl", &["-sSL", "-o", &dest, url])?;
+        println!("fetched {dest}");
+    }
+    println!("next: `cargo xtask build-confusion` to compile the L3 model");
+    Ok(())
 }
 
 /// Run an external command, inheriting stdio, failing loudly on non-zero exit.

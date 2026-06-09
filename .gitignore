@@ -10,6 +10,8 @@ Cargo.lock.orig
 # nlprule engine binaries (fetched via `cargo xtask fetch-engine`)
 /resources/*.bin
 /resources/*.bin.gz
+# Norvig n-gram subsets (fetched via `cargo xtask fetch-ngrams`)
+/resources/ngrams/
 
 # wasm-pack output
 /crates/rlt-wasm/pkg/

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand, ValueEnum};
-use rlt_core::{Checker, Composite, Diagnostic, IrMatcher};
+use rlt_core::{Checker, Composite, ConfusionChecker, Diagnostic, IrMatcher, WithConfusion};
 use rlt_engine::VendoredEngine;
 
 /// Which L2 grammar backend to use.
@@ -48,6 +48,21 @@ enum Command {
         #[arg(long, default_value = rlt_convert::DEFAULT_OUT)]
         out: PathBuf,
     },
+    /// Build the L3 confusion model from LT's confusion sets + Norvig's n-gram counts.
+    BuildConfusion {
+        /// LanguageTool confusion sets.
+        #[arg(long, default_value = rlt_convert::DEFAULT_CONFUSION_SETS)]
+        confusion_sets: PathBuf,
+        /// Norvig unigram counts.
+        #[arg(long, default_value = rlt_convert::DEFAULT_UNIGRAMS)]
+        unigrams: PathBuf,
+        /// Norvig bigram counts.
+        #[arg(long, default_value = rlt_convert::DEFAULT_BIGRAMS)]
+        bigrams: PathBuf,
+        /// Output model path.
+        #[arg(long, default_value = rlt_convert::DEFAULT_CONFUSION_OUT)]
+        out: PathBuf,
+    },
     /// Tokenize + POS-tag a sentence and print the engine's analysis (engine smoke test).
     Tokens {
         /// The sentence to analyze.
@@ -75,8 +90,35 @@ fn main() -> Result<()> {
             );
             Ok(())
         }
+        Command::BuildConfusion {
+            confusion_sets,
+            unigrams,
+            bigrams,
+            out,
+        } => {
+            let report =
+                rlt_convert::build_confusion_model(&confusion_sets, &unigrams, &bigrams, &out)?;
+            tracing::info!(
+                pairs = report.pairs,
+                bigrams = report.bigrams,
+                "confusion model built"
+            );
+            Ok(())
+        }
         Command::Tokens { text } => run_tokens(&text),
     }
+}
+
+/// Load the L3 confusion model if present, else an empty (no-op) checker.
+fn load_confusion() -> ConfusionChecker {
+    let path = rlt_convert::DEFAULT_CONFUSION_OUT;
+    std::fs::read(path)
+        .ok()
+        .and_then(|b| ConfusionChecker::from_rkyv_bytes(&b).ok())
+        .unwrap_or_else(|| {
+            tracing::warn!("{path} not found — L3 disabled (run `cargo xtask build-confusion`)");
+            ConfusionChecker::empty()
+        })
 }
 
 /// Load the engine and print the tokenize + POS-tag analysis of `text`.
@@ -104,7 +146,10 @@ fn run_check(file: &std::path::Path, matcher: Matcher) -> Result<()> {
     let engine = VendoredEngine::from_path(std::path::Path::new(tok))
         .with_context(|| format!("loading engine from {tok} (run `cargo xtask fetch-engine`?)"))?;
 
-    // L1 spelling runs for both backends; L2 grammar differs by `matcher`.
+    // L3 confusion checking wraps either backend (no-op when the model is absent).
+    let confusion = load_confusion();
+
+    // L1 spelling runs for both backends; L2 grammar differs by `matcher`; L3 wraps both.
     let diagnostics = match matcher {
         Matcher::Nlprule => {
             let rules = rlt_engine::DEFAULT_RULES_BIN;
@@ -118,7 +163,7 @@ fn run_check(file: &std::path::Path, matcher: Matcher) -> Result<()> {
                 );
                 engine
             };
-            Checker::new(engine).check(&text)
+            Checker::new(WithConfusion::new(engine, confusion)).check(&text)
         }
         Matcher::Ir => {
             let blob = rlt_convert::DEFAULT_OUT;
@@ -126,7 +171,7 @@ fn run_check(file: &std::path::Path, matcher: Matcher) -> Result<()> {
                 .with_context(|| format!("reading {blob} (run `cargo xtask build-blob`?)"))?;
             let ir = IrMatcher::from_rkyv_bytes(&bytes)
                 .map_err(|e| anyhow!("compiling IR rules from {blob}: {e}"))?;
-            Checker::new(Composite::new(engine, ir)).check(&text)
+            Checker::new(WithConfusion::new(Composite::new(engine, ir), confusion)).check(&text)
         }
     };
 
