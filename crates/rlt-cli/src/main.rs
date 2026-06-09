@@ -26,13 +26,13 @@ enum Command {
         /// Path to the UTF-8 text file to check.
         file: PathBuf,
     },
-    /// Convert an unpacked LanguageTool language directory into the runtime rkyv artifact.
+    /// Convert a LanguageTool grammar.xml into the runtime rkyv artifact.
     Convert {
-        /// LanguageTool language directory (defaults to `resources/lt/en`).
-        #[arg(long, default_value = "resources/lt/en")]
-        lt_dir: PathBuf,
-        /// Output artifact path (defaults to `resources/en.rkyv`).
-        #[arg(long, default_value = "resources/en.rkyv")]
+        /// Path to LanguageTool's English `grammar.xml`.
+        #[arg(long, default_value = rlt_convert::DEFAULT_GRAMMAR)]
+        grammar: PathBuf,
+        /// Output artifact path.
+        #[arg(long, default_value = rlt_convert::DEFAULT_OUT)]
         out: PathBuf,
     },
 }
@@ -47,8 +47,8 @@ fn main() -> Result<()> {
 
     match Cli::parse().command {
         Command::Check { file } => run_check(&file),
-        Command::Convert { lt_dir, out } => {
-            let report = rlt_convert::convert(&lt_dir, &out)?;
+        Command::Convert { grammar, out } => {
+            let report = rlt_convert::convert(&grammar, &out)?;
             tracing::info!(
                 rules_total = report.rules_total,
                 rules_opaque = report.rules_opaque,
