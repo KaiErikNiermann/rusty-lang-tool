@@ -62,15 +62,7 @@ impl ConversionReport {
 /// Returns an error if the grammar file is missing, fails to parse, or the artifact cannot be
 /// serialized or written.
 pub fn convert(grammar_path: &Path, out: &Path) -> Result<ConversionReport> {
-    let raw = std::fs::read_to_string(grammar_path)
-        .with_context(|| format!("reading {}", grammar_path.display()))?;
-    let xml = expand_entities(&raw)
-        .with_context(|| format!("preprocessing {}", grammar_path.display()))?;
-
-    let mut reader = SliceReader::new(&xml).with_error_info();
-    let doc: rules::RulesElementType = DeserializeSync::deserialize(&mut reader)
-        .map_err(|e| anyhow!("deserializing {}: {e:?}", grammar_path.display()))?;
-
+    let doc = parse_grammar(grammar_path)?;
     let rules = lower_document(&doc);
     let rules_opaque = rules.iter().filter(|r| r.is_opaque()).count();
     let report = ConversionReport {
@@ -94,6 +86,101 @@ pub fn convert(grammar_path: &Path, out: &Path) -> Result<ConversionReport> {
         "wrote rkyv artifact",
     );
     Ok(report)
+}
+
+/// Read, entity-expand and deserialize a `grammar.xml` into the typed tree.
+fn parse_grammar(grammar_path: &Path) -> Result<rules::RulesElementType> {
+    let raw = std::fs::read_to_string(grammar_path)
+        .with_context(|| format!("reading {}", grammar_path.display()))?;
+    let xml = expand_entities(&raw)
+        .with_context(|| format!("preprocessing {}", grammar_path.display()))?;
+    let mut reader = SliceReader::new(&xml).with_error_info();
+    DeserializeSync::deserialize(&mut reader)
+        .map_err(|e| anyhow!("deserializing {}: {e:?}", grammar_path.display()))
+}
+
+/// A bundled `<example>` sentence: the differential-oracle unit. Positive examples carry the
+/// expected `corrections` and a `marker` span; negative examples have neither.
+#[derive(Debug, Clone)]
+pub struct Example {
+    /// The rule (or enclosing group) the example belongs to.
+    pub rule_id: String,
+    /// The plain sentence, with `<marker>` tags removed.
+    pub text: String,
+    /// Byte span of the marked (erroneous) region within [`text`](Self::text), if any.
+    pub marker: Option<(usize, usize)>,
+    /// Expected correction alternatives (from `correction="a|b"`); empty for negative examples.
+    pub corrections: Vec<String>,
+}
+
+/// Extract every `<example>` sentence from a LanguageTool `grammar.xml` — the oracle corpus.
+///
+/// # Errors
+/// Returns an error if the grammar file is missing or fails to parse.
+pub fn extract_examples(grammar_path: &Path) -> Result<Vec<Example>> {
+    let doc = parse_grammar(grammar_path)?;
+    let mut out = Vec::new();
+    for item in &doc.content {
+        let rules::RulesElementTypeContent::Category(cat) = item else {
+            continue;
+        };
+        for c in &cat.content {
+            match c {
+                rules::CategoryElementTypeContent::Rule(r) => collect_examples(r, None, &mut out),
+                rules::CategoryElementTypeContent::Rulegroup(g) => {
+                    for r in &g.rule {
+                        collect_examples(r, Some(&g.id), &mut out);
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Gather the `<example>`s of a single `<rule>` into `out`.
+fn collect_examples(r: &rules::RuleElementType, group_id: Option<&str>, out: &mut Vec<Example>) {
+    let rule_id =
+        r.id.clone()
+            .or_else(|| group_id.map(str::to_owned))
+            .unwrap_or_else(|| "<anon>".to_owned());
+    for c in &r.content {
+        if let rules::RuleElementTypeContent::Example(ex) = c {
+            out.push(lower_example(&rule_id, ex));
+        }
+    }
+}
+
+/// Reconstruct an example's plain text and marker span from its mixed content.
+fn lower_example(rule_id: &str, ex: &rules::ExampleElementType) -> Example {
+    let corrections = ex
+        .correction
+        .as_deref()
+        .map(|c| c.split('|').map(str::to_owned).collect())
+        .unwrap_or_default();
+
+    let mut text = ex
+        .text_before
+        .as_ref()
+        .map_or_else(String::new, |t| t.0.clone());
+    let mut marker = None;
+    for item in &ex.content {
+        // `ExampleElementTypeContent` has a single `Marker` variant, so this is irrefutable.
+        let rules::ExampleElementTypeContent::Marker(m) = item;
+        let start = text.len();
+        text.push_str(&m.value.content);
+        marker = Some((start, text.len()));
+        if let Some(after) = &m.text_after {
+            text.push_str(&after.0);
+        }
+    }
+
+    Example {
+        rule_id: rule_id.to_owned(),
+        text,
+        marker,
+        corrections,
+    }
 }
 
 /// Walk the parsed document into a flat list of lowered rules.
