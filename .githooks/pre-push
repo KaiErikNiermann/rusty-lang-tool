@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Pre-push gate: formatting, lints, and tests must pass before anything leaves the machine.
+# Activated via `git config core.hooksPath .githooks` (run once after cloning).
+set -euo pipefail
+
+echo "[pre-push] cargo fmt --check"
+cargo fmt --all --check
+
+echo "[pre-push] cargo clippy (warnings = errors)"
+cargo clippy --workspace --all-targets -- -D warnings
+
+echo "[pre-push] cargo test"
+cargo test --workspace
+
+echo "[pre-push] ok"
