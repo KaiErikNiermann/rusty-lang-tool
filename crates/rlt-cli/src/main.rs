@@ -96,8 +96,19 @@ fn main() -> Result<()> {
             bigrams,
             out,
         } => {
-            let report =
-                rlt_convert::build_confusion_model(&confusion_sets, &unigrams, &bigrams, &out)?;
+            // The POS-context aggregation needs the tagger; load the engine for it.
+            let tok = rlt_engine::DEFAULT_TOKENIZER_BIN;
+            let engine =
+                VendoredEngine::from_path(std::path::Path::new(tok)).with_context(|| {
+                    format!("loading engine from {tok} (run `cargo xtask fetch-engine`?)")
+                })?;
+            let report = rlt_convert::build_confusion_model(
+                &confusion_sets,
+                &unigrams,
+                &bigrams,
+                &out,
+                |w| engine.pos_tags(w),
+            )?;
             tracing::info!(
                 pairs = report.pairs,
                 bigrams = report.bigrams,

@@ -84,6 +84,20 @@ impl VendoredEngine {
         self.rules = Some(Rules::from_reader(reader)?);
         Ok(self)
     }
+
+    /// The distinct lexical POS tags the tagger assigns to `word` (the first is the primary form).
+    /// Used at build time to derive the L3 POS-context statistics; empty for unknown words.
+    #[must_use]
+    pub fn pos_tags(&self, word: &str) -> Vec<String> {
+        let mut tags = Vec::new();
+        for d in self.tokenizer.tagger().get_tags(word) {
+            let pos = d.pos().as_str();
+            if !pos.is_empty() && !tags.iter().any(|t| t == pos) {
+                tags.push(pos.to_owned());
+            }
+        }
+        tags
+    }
 }
 
 impl GrammarChecker for VendoredEngine {

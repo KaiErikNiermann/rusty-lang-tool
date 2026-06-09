@@ -6,12 +6,14 @@
 //! is sufficiently more probable it is suggested — catching real-word errors L1 (the word is valid)
 //! and L2 (no rule fires) miss.
 //!
-//! The decision is a bigram log-likelihood ratio `log P(alt | context) − log P(word | context)`
-//! with add-one smoothing, compared against a threshold derived from LanguageTool's per-pair
-//! `factor`. LT's factors are calibrated for its richer (trigram, full-corpus) model, so they do
-//! not transfer literally; we map them *log-relatively* — aggressive pairs (low factor) need only
-//! a modest ratio, conservative ones (high factor, e.g. the/to) need a large one — preserving their
-//! relative aggressiveness while staying in the regime bigram counts can express.
+//! The decision combines two bigram log-likelihood ratios `log P(alt | context) − log P(word |
+//! context)` with add-one smoothing — one over the neighbours' surface words, one over their
+//! context-disambiguated POS (which generalises when the exact word bigram is unseen, e.g.
+//! "the/to before a noun"). No fetchable trigram data exists, so the POS view is the available
+//! widening of context. The combined ratio is compared against a threshold derived from LT's
+//! per-pair `factor`: LT's factors are calibrated for its richer model so they do not transfer
+//! literally; we map them *log-relatively* — aggressive pairs (low factor) need only a modest
+//! ratio, conservative ones (high factor, e.g. the/to) a large one.
 
 use std::collections::HashMap;
 
@@ -22,10 +24,11 @@ use crate::{Analysis, Diagnostic, GrammarChecker, Source, Suggestion};
 /// LanguageTool `factor` exponents (`log10`) span ~1e3..1e12; clamp to this for the threshold map.
 const LF_MIN: f64 = 3.0;
 const LF_MAX: f64 = 12.0;
-/// Corresponding log-likelihood-ratio thresholds the bigram model can plausibly reach: aggressive
-/// pairs need the alternative ~3x more probable (`ln 3`), conservative ones ~100x (`ln 100`).
-const LOGR_MIN: f64 = 1.099;
-const LOGR_MAX: f64 = 4.605;
+/// Corresponding log-likelihood-ratio thresholds (word + POS context) the model can plausibly
+/// reach: aggressive pairs need the alternative clearly favoured, conservative ones (high factor,
+/// e.g. the/to) far more strongly.
+const LOGR_MIN: f64 = 2.0;
+const LOGR_MAX: f64 = 6.5;
 /// Minimum bigram evidence (summed alt-context counts) to fire — never decide on smoothing alone.
 const MIN_EVIDENCE: u32 = 5000;
 /// Add-one (Laplace) smoothing for bigram and unigram counts.
@@ -37,6 +40,9 @@ pub struct ConfusionChecker {
     alternatives: HashMap<String, Vec<(String, f32)>>,
     unigrams: HashMap<String, u32>,
     bigrams: HashMap<String, u32>,
+    /// `"leftPOS member"` → count, and `"member rightPOS"` → count (POS-generalised context).
+    left_pos: HashMap<String, u32>,
+    right_pos: HashMap<String, u32>,
 }
 
 impl ConfusionChecker {
@@ -61,6 +67,8 @@ impl ConfusionChecker {
             alternatives,
             unigrams: model.unigrams.iter().cloned().collect(),
             bigrams: model.bigrams.iter().cloned().collect(),
+            left_pos: model.left_pos.iter().cloned().collect(),
+            right_pos: model.right_pos.iter().cloned().collect(),
         }
     }
 
@@ -72,6 +80,8 @@ impl ConfusionChecker {
             alternatives: HashMap::new(),
             unigrams: HashMap::new(),
             bigrams: HashMap::new(),
+            left_pos: HashMap::new(),
+            right_pos: HashMap::new(),
         }
     }
 
@@ -112,6 +122,24 @@ impl ConfusionChecker {
         left.map_or(0, |l| self.bigram(l, alt))
             .saturating_add(right.map_or(0, |r| self.bigram(alt, r)))
     }
+
+    /// POS-context log-ratio: the same `log P(alt) − log P(word)` form but over the neighbours'
+    /// (context-disambiguated) POS instead of their surface words — so it still discriminates even
+    /// when the exact word bigram was unseen. Generalises e.g. "the/to before a noun".
+    fn pos_log_ratio(&self, lpos: Option<&str>, word: &str, rpos: Option<&str>, alt: &str) -> f64 {
+        let count =
+            |map: &HashMap<String, u32>, key: String| f64::from(*map.get(&key).unwrap_or(&0));
+        let mut lr = 0.0;
+        if let Some(p) = lpos {
+            lr += (count(&self.left_pos, format!("{p} {alt}")) + SMOOTH).ln()
+                - (count(&self.left_pos, format!("{p} {word}")) + SMOOTH).ln();
+        }
+        if let Some(p) = rpos {
+            lr += (count(&self.right_pos, format!("{alt} {p}")) + SMOOTH).ln()
+                - (count(&self.right_pos, format!("{word} {p}")) + SMOOTH).ln();
+        }
+        lr
+    }
 }
 
 impl GrammarChecker for ConfusionChecker {
@@ -127,7 +155,7 @@ impl GrammarChecker for ConfusionChecker {
             if !is_word(&word) || tokens.get(i + 1).is_some_and(|t| t.text.starts_with('\'')) {
                 continue;
             }
-            // Word-only neighbours (punctuation contributes no usable context).
+            // Word-only neighbours (punctuation contributes no usable word context).
             let left = i
                 .checked_sub(1)
                 .map(|j| tokens[j].text.to_ascii_lowercase())
@@ -137,13 +165,24 @@ impl GrammarChecker for ConfusionChecker {
                 .map(|t| t.text.to_ascii_lowercase())
                 .filter(|w| is_word(w));
             let (left, right) = (left.as_deref(), right.as_deref());
+            // Neighbours' context-disambiguated primary POS, for the POS-generalised score.
+            let lpos = i
+                .checked_sub(1)
+                .and_then(|j| tokens[j].tags.first())
+                .map(String::as_str);
+            let rpos = tokens
+                .get(i + 1)
+                .and_then(|t| t.tags.first())
+                .map(String::as_str);
 
             let best = alts
                 .iter()
                 .map(|(alt, factor)| {
+                    let lr = self.log_ratio(left, &word, right, alt)
+                        + self.pos_log_ratio(lpos, &word, rpos, alt);
                     (
                         alt,
-                        self.log_ratio(left, &word, right, alt),
+                        lr,
                         self.evidence(left, alt, right),
                         log_threshold(*factor),
                     )
@@ -215,6 +254,8 @@ mod tests {
                 ("over there".to_owned(), 50000),
                 ("their car".to_owned(), 40000),
             ],
+            left_pos: vec![],
+            right_pos: vec![],
         }
     }
 
