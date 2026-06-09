@@ -1,14 +1,17 @@
 //! L3 — statistical confusion-pair disambiguation (real-word errors).
 //!
 //! For each token that is a member of a confusion pair (their/there, affect/effect, …), this
-//! compares how well the token vs. its alternative fits the local context, using bigram counts
-//! pruned to confusion words (Norvig's Google-corpus subset). When the alternative is sufficiently
-//! more probable in context it is suggested. This catches errors L1 (valid word) and L2 (no rule)
-//! miss.
+//! compares the contextual probability of the token vs. its alternative under a bigram language
+//! model (Norvig's Google-corpus n-gram subset, pruned to confusion words). When the alternative
+//! is sufficiently more probable it is suggested — catching real-word errors L1 (the word is valid)
+//! and L2 (no rule fires) miss.
 //!
-//! v1 uses a context-bigram ratio test rather than LanguageTool's full probabilistic n-gram model,
-//! so the per-pair `factor` thresholds (calibrated for that model) are approximated by a global
-//! ratio. It fires only when bigram evidence clearly favours the alternative — favouring precision.
+//! The decision is a bigram log-likelihood ratio `log P(alt | context) − log P(word | context)`
+//! with add-one smoothing, compared against a threshold derived from LanguageTool's per-pair
+//! `factor`. LT's factors are calibrated for its richer (trigram, full-corpus) model, so they do
+//! not transfer literally; we map them *log-relatively* — aggressive pairs (low factor) need only
+//! a modest ratio, conservative ones (high factor, e.g. the/to) need a large one — preserving their
+//! relative aggressiveness while staying in the regime bigram counts can express.
 
 use std::collections::HashMap;
 
@@ -16,21 +19,23 @@ use rlt_ir::ConfusionModel;
 
 use crate::{Analysis, Diagnostic, GrammarChecker, Source, Suggestion};
 
-/// Floor / ceiling on how many times more probable (in context) the alternative must be. The
-/// actual ratio is scaled from LT's per-pair `factor` between these bounds: conservative pairs
-/// (high factor, error-prone like the/to) demand much stronger evidence.
-const MIN_RATIO: f64 = 10.0;
-const MAX_RATIO: f64 = 1000.0;
-/// Divisor mapping LT's probabilistic `factor` onto a raw-count ratio threshold.
-const FACTOR_SCALE: f64 = 1_000_000.0;
-/// Minimum bigram evidence for the alternative, to avoid firing on sparse/noisy contexts.
+/// LanguageTool `factor` exponents (`log10`) span ~1e3..1e12; clamp to this for the threshold map.
+const LF_MIN: f64 = 3.0;
+const LF_MAX: f64 = 12.0;
+/// Corresponding log-likelihood-ratio thresholds the bigram model can plausibly reach: aggressive
+/// pairs need the alternative ~3x more probable (`ln 3`), conservative ones ~100x (`ln 100`).
+const LOGR_MIN: f64 = 1.099;
+const LOGR_MAX: f64 = 4.605;
+/// Minimum bigram evidence (summed alt-context counts) to fire — never decide on smoothing alone.
 const MIN_EVIDENCE: u32 = 5000;
+/// Add-one (Laplace) smoothing for bigram and unigram counts.
+const SMOOTH: f64 = 1.0;
 
 /// L3 confusion-pair checker, compiled from a [`ConfusionModel`].
 pub struct ConfusionChecker {
-    /// Confusion word (lower-cased) → the alternatives to test (with each pair's factor) when it
-    /// occurs.
+    /// Confusion word (lower-cased) → alternatives to test (with each pair's factor) when it occurs.
     alternatives: HashMap<String, Vec<(String, f32)>>,
+    unigrams: HashMap<String, u32>,
     bigrams: HashMap<String, u32>,
 }
 
@@ -54,6 +59,7 @@ impl ConfusionChecker {
         }
         Self {
             alternatives,
+            unigrams: model.unigrams.iter().cloned().collect(),
             bigrams: model.bigrams.iter().cloned().collect(),
         }
     }
@@ -64,6 +70,7 @@ impl ConfusionChecker {
     pub fn empty() -> Self {
         Self {
             alternatives: HashMap::new(),
+            unigrams: HashMap::new(),
             bigrams: HashMap::new(),
         }
     }
@@ -76,29 +83,35 @@ impl ConfusionChecker {
         Ok(Self::new(&rlt_ir::deserialize_confusion(bytes)?))
     }
 
-    /// Context-fit score for `mid` given its lower-cased neighbours: the bigram counts joining it
-    /// to each *alphabetic* neighbour (punctuation neighbours are skipped — their bigrams are noisy
-    /// and dilute the signal). 0 when a context bigram is absent.
-    fn score(&self, left: Option<&str>, mid: &str, right: Option<&str>) -> u32 {
-        let mut s = 0u32;
-        if let Some(l) = left.filter(|w| is_word(w)) {
-            s = s.saturating_add(*self.bigrams.get(&format!("{l} {mid}")).unwrap_or(&0));
-        }
-        if let Some(r) = right.filter(|w| is_word(w)) {
-            s = s.saturating_add(*self.bigrams.get(&format!("{mid} {r}")).unwrap_or(&0));
-        }
-        s
+    fn bigram(&self, a: &str, b: &str) -> u32 {
+        *self.bigrams.get(&format!("{a} {b}")).unwrap_or(&0)
     }
-}
 
-/// Whether a token is a plain alphabetic word (usable as confusion context).
-fn is_word(w: &str) -> bool {
-    !w.is_empty() && w.bytes().all(|b| b.is_ascii_alphabetic())
-}
+    fn unigram_smoothed(&self, w: &str) -> f64 {
+        f64::from(*self.unigrams.get(w).unwrap_or(&0)) + SMOOTH
+    }
 
-/// Map LT's per-pair `factor` to a raw-count ratio threshold, clamped to `[MIN_RATIO, MAX_RATIO]`.
-fn required_ratio(factor: f32) -> f64 {
-    (f64::from(factor) / FACTOR_SCALE).clamp(MIN_RATIO, MAX_RATIO)
+    /// `log P(alt | context) − log P(word | context)` under a bigram model with add-one smoothing.
+    /// On the left side `count(left)` cancels; on the right side the conditionals normalise by the
+    /// candidates' unigram counts (so a generally-common word does not win on raw frequency).
+    fn log_ratio(&self, left: Option<&str>, word: &str, right: Option<&str>, alt: &str) -> f64 {
+        let mut lr = 0.0;
+        if let Some(l) = left {
+            lr += (f64::from(self.bigram(l, alt)) + SMOOTH).ln()
+                - (f64::from(self.bigram(l, word)) + SMOOTH).ln();
+        }
+        if let Some(r) = right {
+            lr += ((f64::from(self.bigram(alt, r)) + SMOOTH) / self.unigram_smoothed(alt)).ln()
+                - ((f64::from(self.bigram(word, r)) + SMOOTH) / self.unigram_smoothed(word)).ln();
+        }
+        lr
+    }
+
+    /// Raw bigram count of the alternative actually appearing in this context.
+    fn evidence(&self, left: Option<&str>, alt: &str, right: Option<&str>) -> u32 {
+        left.map_or(0, |l| self.bigram(l, alt))
+            .saturating_add(right.map_or(0, |r| self.bigram(alt, r)))
+    }
 }
 
 impl GrammarChecker for ConfusionChecker {
@@ -110,30 +123,35 @@ impl GrammarChecker for ConfusionChecker {
             let Some(alts) = self.alternatives.get(&word) else {
                 continue;
             };
-            // Only consider purely-alphabetic tokens, and skip ones that are the head of a
-            // contraction (e.g. the "they" of "they're", split off by the tokenizer).
+            // Only plain words, and skip contraction heads (the "they" of a "they"+"'re" split).
             if !is_word(&word) || tokens.get(i + 1).is_some_and(|t| t.text.starts_with('\'')) {
                 continue;
             }
+            // Word-only neighbours (punctuation contributes no usable context).
             let left = i
                 .checked_sub(1)
-                .map(|j| tokens[j].text.to_ascii_lowercase());
-            let right = tokens.get(i + 1).map(|t| t.text.to_ascii_lowercase());
-            let left = left.as_deref();
-            let right = right.as_deref();
+                .map(|j| tokens[j].text.to_ascii_lowercase())
+                .filter(|w| is_word(w));
+            let right = tokens
+                .get(i + 1)
+                .map(|t| t.text.to_ascii_lowercase())
+                .filter(|w| is_word(w));
+            let (left, right) = (left.as_deref(), right.as_deref());
 
-            let s_word = self.score(left, &word, right);
-            // Suggest the best-scoring alternative that beats the original by the pair's
-            // factor-scaled ratio in context.
             let best = alts
                 .iter()
-                .map(|(alt, factor)| (alt, self.score(left, alt, right), required_ratio(*factor)))
-                .filter(|&(_, s, ratio)| {
-                    s >= MIN_EVIDENCE && f64::from(s) > f64::from(s_word) * ratio
+                .map(|(alt, factor)| {
+                    (
+                        alt,
+                        self.log_ratio(left, &word, right, alt),
+                        self.evidence(left, alt, right),
+                        log_threshold(*factor),
+                    )
                 })
-                .max_by_key(|&(_, s, _)| s);
+                .filter(|&(_, lr, ev, thr)| ev >= MIN_EVIDENCE && lr >= thr)
+                .max_by(|a, b| a.1.total_cmp(&b.1));
 
-            if let Some((alt, _, _)) = best {
+            if let Some((alt, _, _, _)) = best {
                 out.push(Diagnostic {
                     span: tokens[i].span,
                     code: "CONFUSION".to_owned(),
@@ -147,6 +165,18 @@ impl GrammarChecker for ConfusionChecker {
         }
         out
     }
+}
+
+/// Whether a token is a plain alphabetic word (usable as confusion context).
+fn is_word(w: &str) -> bool {
+    !w.is_empty() && w.bytes().all(|b| b.is_ascii_alphabetic())
+}
+
+/// Threshold on the log-likelihood ratio, mapped log-relatively from LT's `factor`.
+fn log_threshold(factor: f32) -> f64 {
+    let lf = f64::from(factor).log10().clamp(LF_MIN, LF_MAX);
+    let t = (lf - LF_MIN) / (LF_MAX - LF_MIN);
+    LOGR_MIN + t * (LOGR_MAX - LOGR_MIN)
 }
 
 /// Apply `source`'s leading capitalization to `candidate`.
@@ -176,7 +206,10 @@ mod tests {
                 factor: 10.0,
                 symmetric: true,
             }],
-            unigrams: vec![("their".to_owned(), 100), ("there".to_owned(), 100)],
+            unigrams: vec![
+                ("their".to_owned(), 5_000_000),
+                ("there".to_owned(), 5_000_000),
+            ],
             // "over there" is common; "over their" is not — context favours "there".
             bigrams: vec![
                 ("over there".to_owned(), 50000),
@@ -219,6 +252,17 @@ mod tests {
         assert!(
             checker
                 .grammar_diagnostics("", &analysis(&["their", "car"]))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn no_evidence_no_flag() {
+        let checker = ConfusionChecker::new(&model());
+        // Neither "blorp their" nor "blorp there" is attested → no decision.
+        assert!(
+            checker
+                .grammar_diagnostics("", &analysis(&["blorp", "their"]))
                 .is_empty()
         );
     }
