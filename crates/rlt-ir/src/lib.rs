@@ -54,12 +54,14 @@ pub enum SugPart {
     /// Literal text.
     Text(String),
     /// `<match no="N"/>` — copy the Nth matched pattern token's surface form (1-indexed over the
-    /// pattern's tokens), applying `case`.
+    /// pattern's tokens), applying `case` (and an optional regex substitution first).
     Token {
         /// 1-based index into the pattern's tokens.
         no: usize,
         /// Case transform applied to the copied surface.
         case: Case,
+        /// `(regexp_match, regexp_replace)` applied to the copied surface before `case`, if any.
+        transform: Option<(String, String)>,
     },
 }
 
@@ -150,9 +152,20 @@ pub enum Construct {
     MarkerStart,
     /// Closing boundary of a `<marker>`. See [`Construct::MarkerStart`].
     MarkerEnd,
+    /// A rule-level `<regexp>`: the whole rule matches a regex over the sentence text (rather than
+    /// the token sequence). `mark` is the 1-based capture group delimiting the error span (the whole
+    /// match when `None`); suggestions reference capture groups by `\N`.
+    Regexp {
+        /// The regular expression source.
+        pattern: String,
+        /// The capture group to mark as the error span (1-based), or the whole match.
+        mark: Option<usize>,
+        /// `case_sensitive="yes"`.
+        case_sensitive: bool,
+    },
     /// A structurally-recognized construct whose matching semantics are not yet lowered
-    /// (`<and>`, `<or>`, `<unify>`, `<phraseref>`, rule-level `<regexp>`). The `kind` is the LT
-    /// element name, preserved so coverage gaps are named rather than silent.
+    /// (`<unify>`, `<phraseref>` to an undefined phrase). The `kind` is the LT element name,
+    /// preserved so coverage gaps are named rather than silent.
     Unsupported {
         /// The LT element name this stands in for.
         kind: String,

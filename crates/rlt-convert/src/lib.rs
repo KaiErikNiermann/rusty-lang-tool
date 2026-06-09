@@ -501,9 +501,11 @@ fn lower_rule(
                 class: f.class.clone(),
                 args: f.args.clone(),
             }),
-            rules::RuleElementTypeContent::Regexp(_) => {
-                pattern.push(Construct::Unsupported {
-                    kind: "regexp".to_owned(),
+            rules::RuleElementTypeContent::Regexp(re) => {
+                pattern.push(Construct::Regexp {
+                    pattern: re.content.clone(),
+                    mark: re.mark.and_then(|m| usize::try_from(m).ok()),
+                    case_sensitive: re.case_sensitive.as_ref().is_some_and(is_yes),
                 });
             }
             rules::RuleElementTypeContent::Message(m) => {
@@ -513,7 +515,7 @@ fn lower_rule(
                 }
                 suggestions.extend(sugs);
             }
-            rules::RuleElementTypeContent::Suggestion(s) => suggestions.push(lower_suggestion(s)),
+            rules::RuleElementTypeContent::Suggestion(s) => suggestions.extend(lower_suggestion(s)),
             // Url/Short/Example are not part of the match-and-suggest path here.
             _ => {}
         }
@@ -563,7 +565,7 @@ fn lower_message(m: &rules::MessageElementType) -> (String, Vec<Suggestion>) {
     for item in &m.content {
         match item {
             rules::MessageElementTypeContent::Suggestion(s) => {
-                suggestions.push(lower_suggestion(&s.value));
+                suggestions.extend(lower_suggestion(&s.value));
                 if let Some(after) = &s.text_after {
                     text.push_str(&after.0);
                 }
@@ -578,23 +580,33 @@ fn lower_message(m: &rules::MessageElementType) -> (String, Vec<Suggestion>) {
     (text.trim().to_owned(), suggestions)
 }
 
-/// Lower a `<suggestion>` into a correction template (literal text + `<match no>` token refs).
-fn lower_suggestion(s: &rules::SuggestionElementType) -> Suggestion {
+/// Lower a `<suggestion>` into a correction template (literal text + `<match no>` token refs, with
+/// optional `regexp_replace`). Returns `None` when a `<match>` needs morphological synthesis
+/// (`postag_replace`), which we cannot perform — better to drop the suggestion than render it wrong.
+fn lower_suggestion(s: &rules::SuggestionElementType) -> Option<Suggestion> {
     let mut parts = Vec::new();
     if let Some(t) = &s.text_before {
         push_text(&mut parts, &t.0);
     }
     for item in &s.content {
         let m = &item.match_.value;
+        if m.postag_replace.is_some() {
+            return None; // synthesis (generate an inflected form) — unsupported
+        }
+        let transform = match (m.regexp_match.as_ref(), m.regexp_replace.as_ref()) {
+            (Some(rm), Some(rr)) => Some((rm.clone(), rr.clone())),
+            _ => None,
+        };
         parts.push(SugPart::Token {
             no: m.no,
             case: map_case(m.case_conversion.as_ref()),
+            transform,
         });
         if let Some(after) = &item.match_.text_after {
             push_text(&mut parts, &after.0);
         }
     }
-    Suggestion { parts }
+    Some(Suggestion { parts })
 }
 
 /// Append suggestion text, splitting LT's `\N` backreference shorthand (e.g. `\2`, equivalent to
@@ -614,6 +626,7 @@ fn push_text(parts: &mut Vec<SugPart>, text: &str) {
                     parts.push(SugPart::Token {
                         no,
                         case: Case::Keep,
+                        transform: None,
                     });
                 }
                 // `\\` → literal backslash; any other escape → keep the next char literally.
