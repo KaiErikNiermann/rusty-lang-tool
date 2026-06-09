@@ -59,6 +59,13 @@ impl VendoredEngine {
 }
 
 impl Engine for VendoredEngine {
+    fn is_known(&self, word: &str) -> bool {
+        // get_tags does the lexicon lookup (trying lower-case and a compound-split heuristic
+        // internally) and yields nothing for genuinely-unknown words; the pipeline's UNKNOWN tag
+        // is added downstream, not here.
+        self.tokenizer.tagger().get_tags(word).next().is_some()
+    }
+
     fn analyze(&self, text: &str) -> Analysis {
         let mut tokens = Vec::new();
         for sentence in self.tokenizer.pipe(text) {

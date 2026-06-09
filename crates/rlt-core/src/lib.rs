@@ -15,6 +15,8 @@
 
 #![forbid(unsafe_code)]
 
+mod spell;
+
 use serde::{Deserialize, Serialize};
 
 /// A half-open byte range `[start, end)` into the checked text.
@@ -83,6 +85,11 @@ pub struct Analysis {
 pub trait Engine {
     /// Tokenize, tag, chunk and disambiguate `text` into the token graph the cascade walks.
     fn analyze(&self, text: &str) -> Analysis;
+
+    /// Whether `word` is in the engine's lexicon (any inflected form / casing). This is the L1
+    /// spelling membership oracle and the validity filter for correction candidates. The future
+    /// custom engine answers it from its own FSA dictionary.
+    fn is_known(&self, word: &str) -> bool;
 }
 
 /// Wires an [`Engine`] with the L1 spelling and L2 rule layers and runs the cascade over text.
@@ -101,10 +108,10 @@ impl<E: Engine> Checker<E> {
 
     /// Run the full cascade (L1 spelling + L2 rules) over `text` and return all diagnostics.
     ///
-    /// M0 returns the analysed-but-unchecked result (no findings yet); L1 lands in M3, L2 in M4.
+    /// L1 spelling is wired here; L2 rule matching lands in M4.
     #[must_use]
     pub fn check(&self, text: &str) -> Vec<Diagnostic> {
-        let _analysis = self.engine.analyze(text);
-        Vec::new()
+        let analysis = self.engine.analyze(text);
+        spell::spelling_diagnostics(&self.engine, &analysis)
     }
 }
