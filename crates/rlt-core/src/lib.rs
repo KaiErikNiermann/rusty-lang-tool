@@ -15,12 +15,15 @@
 
 #![forbid(unsafe_code)]
 
+mod matcher;
 mod spell;
+
+pub use matcher::IrMatcher;
 
 use serde::{Deserialize, Serialize};
 
 /// A half-open byte range `[start, end)` into the checked text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Span {
     /// Byte offset of the first byte in the span.
     pub start: usize,
@@ -60,8 +63,8 @@ pub struct Diagnostic {
     pub source: Source,
 }
 
-/// A single analysed token: surface text, its span, and the POS tags assigned to it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A single analysed token: surface text, its span, POS tags and lemmas.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Token {
     /// The token's surface form as it appears in the source text.
     pub text: String,
@@ -69,6 +72,8 @@ pub struct Token {
     pub span: Span,
     /// Part-of-speech tags from the engine's tagger (LT tagset).
     pub tags: Vec<String>,
+    /// Lemmas (base forms) the tagger assigned — used by L2 `inflected` token matching.
+    pub lemmas: Vec<String>,
 }
 
 /// The result of running an [`Engine`] over a piece of text: the token graph downstream layers walk.
@@ -98,8 +103,9 @@ pub trait Engine {
 /// rules (compiled from current LT) over the token graph. Either way it emits [`Source::Grammar`]
 /// diagnostics, so the cascade and the example oracle are agnostic to which backs it.
 pub trait GrammarChecker {
-    /// Produce grammar/style diagnostics for `text`.
-    fn grammar_diagnostics(&self, text: &str) -> Vec<Diagnostic>;
+    /// Produce grammar/style diagnostics for `text`, given its already-computed [`Analysis`] (the
+    /// IR matcher walks the token graph; the nlprule baseline uses `text` directly).
+    fn grammar_diagnostics(&self, text: &str, analysis: &Analysis) -> Vec<Diagnostic>;
 }
 
 /// Wires the L1 spelling and L2 grammar layers and runs the cascade over text.
@@ -122,8 +128,37 @@ impl<B: Engine + GrammarChecker> Checker<B> {
     pub fn check(&self, text: &str) -> Vec<Diagnostic> {
         let analysis = self.backend.analyze(text);
         let mut diagnostics = spell::spelling_diagnostics(&self.backend, &analysis);
-        diagnostics.extend(self.backend.grammar_diagnostics(text));
+        diagnostics.extend(self.backend.grammar_diagnostics(text, &analysis));
         diagnostics.sort_by_key(|d| d.span.start);
         diagnostics
+    }
+}
+
+/// Composes a separate [`Engine`] and [`GrammarChecker`] into one backend — e.g. nlprule for
+/// analysis (L0/L1) plus the IR matcher for L2 — so [`Checker`] can drive both.
+pub struct Composite<E: Engine, G: GrammarChecker> {
+    engine: E,
+    grammar: G,
+}
+
+impl<E: Engine, G: GrammarChecker> Composite<E, G> {
+    /// Combine an analysis engine with a grammar checker.
+    pub fn new(engine: E, grammar: G) -> Self {
+        Self { engine, grammar }
+    }
+}
+
+impl<E: Engine, G: GrammarChecker> Engine for Composite<E, G> {
+    fn analyze(&self, text: &str) -> Analysis {
+        self.engine.analyze(text)
+    }
+    fn is_known(&self, word: &str) -> bool {
+        self.engine.is_known(word)
+    }
+}
+
+impl<E: Engine, G: GrammarChecker> GrammarChecker for Composite<E, G> {
+    fn grammar_diagnostics(&self, text: &str, analysis: &Analysis) -> Vec<Diagnostic> {
+        self.grammar.grammar_diagnostics(text, analysis)
     }
 }

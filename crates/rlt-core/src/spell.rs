@@ -142,7 +142,7 @@ mod tests {
                 start: 0,
                 end: text.len(),
             },
-            tags: vec![],
+            ..Default::default()
         }
     }
 
