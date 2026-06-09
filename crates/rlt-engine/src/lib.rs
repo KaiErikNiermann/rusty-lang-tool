@@ -17,6 +17,8 @@ use std::path::Path;
 use nlprule::{Rules, Tokenizer};
 use rlt_core::{Analysis, Diagnostic, Engine, GrammarChecker, Source, Span, Suggestion, Token};
 
+// The nlprule baseline runs its own pipeline from `text`, so it ignores the precomputed analysis.
+
 /// Default on-disk location of the nlprule English tokenizer binary (`cargo xtask fetch-engine`).
 pub const DEFAULT_TOKENIZER_BIN: &str = "resources/en_tokenizer.bin";
 /// Default on-disk location of the nlprule English grammar-rules binary.
@@ -85,7 +87,7 @@ impl VendoredEngine {
 }
 
 impl GrammarChecker for VendoredEngine {
-    fn grammar_diagnostics(&self, text: &str) -> Vec<Diagnostic> {
+    fn grammar_diagnostics(&self, text: &str, _analysis: &Analysis) -> Vec<Diagnostic> {
         let Some(rules) = &self.rules else {
             return Vec::new();
         };
@@ -130,12 +132,18 @@ impl Engine for VendoredEngine {
                     continue; // skip nlprule's sentence-boundary sentinels
                 }
                 let byte = token.span().byte();
-                let tags = word
-                    .tags()
-                    .iter()
-                    .map(|d| d.pos().as_str().to_owned())
-                    .filter(|p| !p.is_empty())
-                    .collect();
+                let mut tags = Vec::new();
+                let mut lemmas = Vec::new();
+                for d in word.tags() {
+                    let pos = d.pos().as_str();
+                    if !pos.is_empty() && !tags.iter().any(|t| t == pos) {
+                        tags.push(pos.to_owned());
+                    }
+                    let lemma = d.lemma().as_str();
+                    if !lemma.is_empty() && !lemmas.iter().any(|l| l == lemma) {
+                        lemmas.push(lemma.to_owned());
+                    }
+                }
                 tokens.push(Token {
                     text: surface.to_owned(),
                     span: Span {
@@ -143,6 +151,7 @@ impl Engine for VendoredEngine {
                         end: byte.end,
                     },
                     tags,
+                    lemmas,
                 });
             }
         }
