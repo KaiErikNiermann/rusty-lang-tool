@@ -35,6 +35,11 @@ enum Command {
         #[arg(long, default_value = rlt_convert::DEFAULT_OUT)]
         out: PathBuf,
     },
+    /// Tokenize + POS-tag a sentence and print the engine's analysis (engine smoke test).
+    Tokens {
+        /// The sentence to analyze.
+        text: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -57,14 +62,35 @@ fn main() -> Result<()> {
             );
             Ok(())
         }
+        Command::Tokens { text } => run_tokens(&text),
     }
+}
+
+/// Load the engine and print the tokenize + POS-tag analysis of `text`.
+fn run_tokens(text: &str) -> Result<()> {
+    let bin = rlt_engine::DEFAULT_TOKENIZER_BIN;
+    let engine = VendoredEngine::from_path(std::path::Path::new(bin))
+        .with_context(|| format!("loading engine from {bin} (run `cargo xtask fetch-engine`?)"))?;
+    for token in rlt_core::Engine::analyze(&engine, text).tokens {
+        println!(
+            "{:>3}..{:<3} {:<14} [{}]",
+            token.span.start,
+            token.span.end,
+            token.text,
+            token.tags.join(", "),
+        );
+    }
+    Ok(())
 }
 
 fn run_check(file: &std::path::Path) -> Result<()> {
     let text =
         std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
 
-    let checker = Checker::new(VendoredEngine::new());
+    let bin = rlt_engine::DEFAULT_TOKENIZER_BIN;
+    let engine = VendoredEngine::from_path(std::path::Path::new(bin))
+        .with_context(|| format!("loading engine from {bin} (run `cargo xtask fetch-engine`?)"))?;
+    let checker = Checker::new(engine);
     let diagnostics = checker.check(&text);
 
     for d in &diagnostics {
