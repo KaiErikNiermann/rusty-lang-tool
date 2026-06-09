@@ -288,10 +288,35 @@ fn lower_suggestion(s: &rules::SuggestionElementType) -> Suggestion {
     Suggestion { parts }
 }
 
-/// Append a literal text part, preserving internal whitespace (significant when joining matches).
+/// Append suggestion text, splitting LT's `\N` backreference shorthand (e.g. `\2`, equivalent to
+/// `<match no="2"/>`) into [`SugPart::Token`] parts and preserving the literal text around them.
 fn push_text(parts: &mut Vec<SugPart>, text: &str) {
-    if !text.is_empty() {
-        parts.push(SugPart::Text(text.to_owned()));
+    let mut literal = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.peek() {
+                Some(d) if d.is_ascii_digit() => {
+                    if !literal.is_empty() {
+                        parts.push(SugPart::Text(std::mem::take(&mut literal)));
+                    }
+                    let no = (*d as u8 - b'0') as usize;
+                    chars.next();
+                    parts.push(SugPart::Token {
+                        no,
+                        case: Case::Keep,
+                    });
+                }
+                // `\\` → literal backslash; any other escape → keep the next char literally.
+                Some(_) => literal.push(chars.next().unwrap_or('\\')),
+                None => literal.push('\\'),
+            }
+        } else {
+            literal.push(c);
+        }
+    }
+    if !literal.is_empty() {
+        parts.push(SugPart::Text(literal));
     }
 }
 
