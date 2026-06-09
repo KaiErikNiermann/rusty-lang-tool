@@ -15,9 +15,11 @@
 
 #![forbid(unsafe_code)]
 
+mod disambig;
 mod matcher;
 mod spell;
 
+pub use disambig::ConfusionChecker;
 pub use matcher::IrMatcher;
 
 use serde::{Deserialize, Serialize};
@@ -46,6 +48,8 @@ pub enum Source {
     Spelling,
     /// L2 — LanguageTool rule grammar.
     Grammar,
+    /// L3 — statistical confusion-pair disambiguation (real-word errors, e.g. their/there).
+    Statistical,
 }
 
 /// One finding: a span, the rule/source that flagged it, a human message, and ordered fixes.
@@ -160,5 +164,36 @@ impl<E: Engine, G: GrammarChecker> Engine for Composite<E, G> {
 impl<E: Engine, G: GrammarChecker> GrammarChecker for Composite<E, G> {
     fn grammar_diagnostics(&self, text: &str, analysis: &Analysis) -> Vec<Diagnostic> {
         self.grammar.grammar_diagnostics(text, analysis)
+    }
+}
+
+/// Adds the L3 [`ConfusionChecker`] on top of any [`Engine`] + [`GrammarChecker`] backend, so the
+/// cascade gains real-word-error detection. With an empty model it is a no-op.
+pub struct WithConfusion<B: Engine + GrammarChecker> {
+    inner: B,
+    confusion: ConfusionChecker,
+}
+
+impl<B: Engine + GrammarChecker> WithConfusion<B> {
+    /// Wrap `inner`, adding L3 confusion checking.
+    pub fn new(inner: B, confusion: ConfusionChecker) -> Self {
+        Self { inner, confusion }
+    }
+}
+
+impl<B: Engine + GrammarChecker> Engine for WithConfusion<B> {
+    fn analyze(&self, text: &str) -> Analysis {
+        self.inner.analyze(text)
+    }
+    fn is_known(&self, word: &str) -> bool {
+        self.inner.is_known(word)
+    }
+}
+
+impl<B: Engine + GrammarChecker> GrammarChecker for WithConfusion<B> {
+    fn grammar_diagnostics(&self, text: &str, analysis: &Analysis) -> Vec<Diagnostic> {
+        let mut diagnostics = self.inner.grammar_diagnostics(text, analysis);
+        diagnostics.extend(self.confusion.grammar_diagnostics(text, analysis));
+        diagnostics
     }
 }
