@@ -9,10 +9,11 @@
 //! Requires the engine binaries and the fetched grammar (and, for the IR test, the rkyv blob);
 //! each test skips (not fails) when its inputs are absent. Run `cargo xtask run-oracle`.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use rlt_convert::Example;
-use rlt_core::{Checker, Composite, Engine, GrammarChecker, IrMatcher, Source};
+use rlt_core::{Checker, Composite, ConfusionChecker, Engine, GrammarChecker, IrMatcher, Source};
 use rlt_engine::VendoredEngine;
 
 /// Resolve a workspace-root-relative path from this crate's manifest dir.
@@ -181,5 +182,114 @@ fn ir_matcher_reproduces_examples() {
     assert!(
         false_positives <= 900,
         "IR matcher self-flagged {false_positives} negatives; expected <= 900"
+    );
+}
+
+/// Correct English sentences from LT's examples: negative examples verbatim, positive examples
+/// with their correction applied at the marker.
+fn correct_sentences(grammar: &Path) -> Vec<String> {
+    rlt_convert::extract_examples(grammar)
+        .expect("extract examples")
+        .into_iter()
+        .filter_map(|e| {
+            if e.corrections.is_empty() {
+                return Some(e.text);
+            }
+            let (start, end) = e.marker?;
+            let mut s = e.text;
+            if s.is_char_boundary(start) && s.is_char_boundary(end) && end <= s.len() {
+                s.replace_range(start..end, &e.corrections[0]);
+                Some(s)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// L3 quality via synthetic perturbation: take correct sentences, swap each confusion-set word for
+/// a plausible alternative (introducing a real-word error), and measure whether L3 recovers the
+/// original (recall) while not flagging the unperturbed correct words (precision).
+#[test]
+#[ignore = "slow and needs fetched data + confusion.rkyv; run via `cargo xtask run-oracle`"]
+fn l3_confusion_precision_recall() {
+    let tokenizer = root("resources/en_tokenizer.bin");
+    let model_path = root("resources/confusion.rkyv");
+    let grammar = root(rlt_convert::DEFAULT_GRAMMAR);
+    if missing(&[
+        ("tokenizer", &tokenizer),
+        ("confusion.rkyv", &model_path),
+        ("grammar", &grammar),
+    ]) {
+        return;
+    }
+
+    let engine = VendoredEngine::from_path(&tokenizer).expect("load tokenizer");
+    let model_bytes = std::fs::read(&model_path).expect("read confusion model");
+    let model = rlt_ir::deserialize_confusion(&model_bytes).expect("deserialize model");
+    let checker = ConfusionChecker::new(&model);
+
+    // reverse: correct word → error word(s) L3 should map back to it.
+    let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
+    for p in &model.pairs {
+        reverse.entry(p.b.clone()).or_default().push(p.a.clone());
+        if p.symmetric {
+            reverse.entry(p.a.clone()).or_default().push(p.b.clone());
+        }
+    }
+
+    let sentences = correct_sentences(&grammar);
+    let (mut tp, mut fneg, mut fp, mut perturbations) = (0usize, 0usize, 0usize, 0usize);
+
+    for s in &sentences {
+        let analysis = engine.analyze(s);
+        // Precision: any L3 flag on an already-correct sentence is a false positive.
+        fp += checker.grammar_diagnostics(s, &analysis).len();
+
+        for i in 0..analysis.tokens.len() {
+            let word = analysis.tokens[i].text.to_ascii_lowercase();
+            let Some(errors) = reverse.get(&word) else {
+                continue;
+            };
+            let span = analysis.tokens[i].span;
+            for err in errors {
+                perturbations += 1;
+                let mut perturbed = analysis.clone();
+                perturbed.tokens[i].text.clone_from(err);
+                let recovered = checker.grammar_diagnostics(s, &perturbed).iter().any(|d| {
+                    d.span == span
+                        && d.suggestions
+                            .iter()
+                            .any(|sg| sg.replacement.eq_ignore_ascii_case(&word))
+                });
+                if recovered {
+                    tp += 1;
+                } else {
+                    fneg += 1;
+                }
+            }
+        }
+    }
+
+    let total = tp + fneg;
+    #[allow(clippy::cast_precision_loss)]
+    let recall = if total == 0 {
+        0.0
+    } else {
+        tp as f64 / total as f64 * 100.0
+    };
+    eprintln!(
+        "ORACLE [l3]: recall {tp}/{total} ({recall:.1}%) over {} sentences / {perturbations} perturbations; {fp} false positives on correct text",
+        sentences.len(),
+    );
+    // Measured: 94072/114808 = 81.9% recall, 4158 false positives. Floors/ceilings guard against
+    // regressions; the FP rate is bigram-model-structural (POS/trigram context is future work).
+    assert!(
+        tp >= 90_000,
+        "L3 recall regressed: recovered {tp}; expected >= 90000"
+    );
+    assert!(
+        fp <= 5000,
+        "L3 false positives regressed: {fp}; expected <= 5000"
     );
 }

@@ -21,5 +21,9 @@ anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[dev-dependencies]
+# The L3 oracle loads the confusion model directly to drive synthetic perturbations.
+rlt-ir.workspace = true
+
 [lints]
 workspace = true

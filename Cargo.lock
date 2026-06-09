@@ -911,6 +911,7 @@ dependencies = [
  "rlt-convert",
  "rlt-core",
  "rlt-engine",
+ "rlt-ir",
  "tracing",
  "tracing-subscriber",
 ]
