@@ -14,47 +14,101 @@
 use std::io::Read;
 use std::path::Path;
 
-use nlprule::Tokenizer;
-use rlt_core::{Analysis, Engine, Span, Token};
+use nlprule::{Rules, Tokenizer};
+use rlt_core::{Analysis, Diagnostic, Engine, GrammarChecker, Source, Span, Suggestion, Token};
 
 /// Default on-disk location of the nlprule English tokenizer binary (`cargo xtask fetch-engine`).
 pub const DEFAULT_TOKENIZER_BIN: &str = "resources/en_tokenizer.bin";
+/// Default on-disk location of the nlprule English grammar-rules binary.
+pub const DEFAULT_RULES_BIN: &str = "resources/en_rules.bin";
 
 /// Errors constructing a [`VendoredEngine`].
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
-    /// The nlprule tokenizer binary could not be opened or deserialized.
-    #[error("loading nlprule tokenizer: {0}")]
+    /// An nlprule binary could not be opened or deserialized.
+    #[error("loading nlprule binary: {0}")]
     Load(#[from] nlprule::Error),
-    /// The tokenizer binary path could not be read.
-    #[error("reading tokenizer binary: {0}")]
+    /// An nlprule binary path could not be read.
+    #[error("reading nlprule binary: {0}")]
     Io(#[from] std::io::Error),
 }
 
-/// The baseline nlprule-backed analysis engine.
+/// The baseline nlprule-backed engine: tokenizer (L0/L1 analysis) plus optional grammar rules (L2).
+///
+/// Grammar rules are optional so analysis-only uses (`rlt tokens`, the tokenizer test) need not
+/// load the ~7.5 MB rules binary; [`GrammarChecker`] yields nothing until they are attached.
 pub struct VendoredEngine {
     tokenizer: Tokenizer,
+    rules: Option<Rules>,
 }
 
 impl VendoredEngine {
-    /// Load the engine from an `en_tokenizer.bin` on disk (the native path).
+    /// Load the analysis engine from an `en_tokenizer.bin` on disk (the native path).
     ///
     /// # Errors
     /// Returns [`EngineError`] if the file is missing or not a valid nlprule tokenizer binary.
     pub fn from_path(path: &Path) -> Result<Self, EngineError> {
         Ok(Self {
             tokenizer: Tokenizer::new(path)?,
+            rules: None,
         })
     }
 
-    /// Load the engine from an in-memory `en_tokenizer.bin` (the wasm path: bytes supplied by JS).
+    /// Load the analysis engine from an in-memory `en_tokenizer.bin` (the wasm path).
     ///
     /// # Errors
     /// Returns [`EngineError`] if the bytes are not a valid nlprule tokenizer binary.
     pub fn from_reader<R: Read>(reader: R) -> Result<Self, EngineError> {
         Ok(Self {
             tokenizer: Tokenizer::from_reader(reader)?,
+            rules: None,
         })
+    }
+
+    /// Attach grammar rules from an `en_rules.bin` on disk (enables L2).
+    ///
+    /// # Errors
+    /// Returns [`EngineError`] if the file is missing or not a valid nlprule rules binary.
+    pub fn with_rules_path(mut self, path: &Path) -> Result<Self, EngineError> {
+        self.rules = Some(Rules::new(path)?);
+        Ok(self)
+    }
+
+    /// Attach grammar rules from in-memory `en_rules.bin` bytes (the wasm path; enables L2).
+    ///
+    /// # Errors
+    /// Returns [`EngineError`] if the bytes are not a valid nlprule rules binary.
+    pub fn with_rules_reader<R: Read>(mut self, reader: R) -> Result<Self, EngineError> {
+        self.rules = Some(Rules::from_reader(reader)?);
+        Ok(self)
+    }
+}
+
+impl GrammarChecker for VendoredEngine {
+    fn grammar_diagnostics(&self, text: &str) -> Vec<Diagnostic> {
+        let Some(rules) = &self.rules else {
+            return Vec::new();
+        };
+        rules
+            .suggest(text, &self.tokenizer)
+            .into_iter()
+            .map(|s| Diagnostic {
+                span: Span {
+                    start: s.span().byte().start,
+                    end: s.span().byte().end,
+                },
+                code: s.source().to_owned(),
+                message: s.message().to_owned(),
+                suggestions: s
+                    .replacements()
+                    .iter()
+                    .map(|r| Suggestion {
+                        replacement: r.clone(),
+                    })
+                    .collect(),
+                source: Source::Grammar,
+            })
+            .collect()
     }
 }
 
