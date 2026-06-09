@@ -171,11 +171,11 @@ fn ir_matcher_reproduces_examples() {
     let reproduced = score("ir v6.7", &checker, &positive_examples(&grammar));
     let false_positives = false_positive_rate(&checker, &negative_examples(&grammar));
 
-    // Recall floor: measured 4480/8527 = 52.5% (antipatterns trade some recall for precision vs
-    // the pre-antipattern 55.3%). Raise as construct coverage grows (and/or/unify/phraseref).
+    // Recall floor: measured 4547/8527 = 53.3% (with <or>/<and>/<phraseref> implemented, up from
+    // 52.5%). Raise as further construct coverage grows.
     assert!(
-        reproduced >= 4200,
-        "IR matcher reproduced only {reproduced}; expected >= 4200"
+        reproduced >= 4400,
+        "IR matcher reproduced only {reproduced}; expected >= 4400"
     );
     // Precision ceiling: measured 718/11211 = 6.4% of negatives self-flag. Antipatterns + skipping
     // disabled/back-ref rules keep this down; lower it as precision improves.
@@ -282,8 +282,9 @@ fn l3_confusion_precision_recall() {
         "ORACLE [l3]: recall {tp}/{total} ({recall:.1}%) over {} sentences / {perturbations} perturbations; {fp} false positives on correct text",
         sentences.len(),
     );
-    // Measured: 94072/114808 = 81.9% recall, 4158 false positives. Floors/ceilings guard against
-    // regressions; the FP rate is bigram-model-structural (POS/trigram context is future work).
+    // Measured (word + POS context): 94850/114808 = 82.6% recall, 4305 false positives. The
+    // residual FP rate is bigram-structural — no fetchable trigram data exists, and the POS-context
+    // generalisation only nudges the frontier. Floors/ceilings guard against regressions.
     assert!(
         tp >= 90_000,
         "L3 recall regressed: recovered {tp}; expected >= 90000"
