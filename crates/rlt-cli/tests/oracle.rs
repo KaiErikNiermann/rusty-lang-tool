@@ -171,11 +171,12 @@ fn ir_matcher_reproduces_examples() {
     let reproduced = score("ir v6.7", &checker, &positive_examples(&grammar));
     let false_positives = false_positive_rate(&checker, &negative_examples(&grammar));
 
-    // Recall floor: measured 4547/8527 = 53.3% (with <or>/<and>/<phraseref> implemented, up from
-    // 52.5%). Raise as further construct coverage grows.
+    // Recall floor: measured 4985/8527 = 58.5% — ahead of the nlprule v5.2 baseline (55.3%). The
+    // jump from 53.3% is the <match> `regexp_replace` transforms rendering correctly (440 uses)
+    // plus rule-level <regexp> rules. Raise as further coverage grows.
     assert!(
-        reproduced >= 4400,
-        "IR matcher reproduced only {reproduced}; expected >= 4400"
+        reproduced >= 4800,
+        "IR matcher reproduced only {reproduced}; expected >= 4800"
     );
     // Precision ceiling: measured 718/11211 = 6.4% of negatives self-flag. Antipatterns + skipping
     // disabled/back-ref rules keep this down; lower it as precision improves.
