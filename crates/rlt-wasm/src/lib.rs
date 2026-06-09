@@ -19,15 +19,17 @@ pub struct RltChecker {
 
 #[wasm_bindgen]
 impl RltChecker {
-    /// Construct a checker from the bytes of an nlprule `en_tokenizer.bin` (supplied by JS, e.g.
-    /// fetched or bundled). Installs a panic hook so Rust panics surface as JS console errors.
+    /// Construct a checker from the bytes of nlprule's `en_tokenizer.bin` and `en_rules.bin`
+    /// (supplied by JS, e.g. fetched or bundled). Installs a panic hook so Rust panics surface as
+    /// JS console errors.
     ///
     /// # Errors
-    /// Returns a JS error if the bytes are not a valid nlprule tokenizer binary.
+    /// Returns a JS error if either buffer is not a valid nlprule binary.
     #[wasm_bindgen(constructor)]
-    pub fn new(tokenizer_bin: &[u8]) -> Result<RltChecker, JsValue> {
+    pub fn new(tokenizer_bin: &[u8], rules_bin: &[u8]) -> Result<RltChecker, JsValue> {
         console_error_panic_hook::set_once();
         let engine = VendoredEngine::from_reader(tokenizer_bin)
+            .and_then(|e| e.with_rules_reader(rules_bin))
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Self {
             inner: Checker::new(engine),

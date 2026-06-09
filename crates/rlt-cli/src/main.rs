@@ -87,9 +87,22 @@ fn run_check(file: &std::path::Path) -> Result<()> {
     let text =
         std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
 
-    let bin = rlt_engine::DEFAULT_TOKENIZER_BIN;
-    let engine = VendoredEngine::from_path(std::path::Path::new(bin))
-        .with_context(|| format!("loading engine from {bin} (run `cargo xtask fetch-engine`?)"))?;
+    let tok = rlt_engine::DEFAULT_TOKENIZER_BIN;
+    let mut engine = VendoredEngine::from_path(std::path::Path::new(tok))
+        .with_context(|| format!("loading engine from {tok} (run `cargo xtask fetch-engine`?)"))?;
+
+    // Attach L2 grammar rules when available; otherwise run L1-only with a heads-up.
+    let rules = rlt_engine::DEFAULT_RULES_BIN;
+    if std::path::Path::new(rules).exists() {
+        engine = engine
+            .with_rules_path(std::path::Path::new(rules))
+            .with_context(|| format!("loading grammar rules from {rules}"))?;
+    } else {
+        tracing::warn!(
+            "{rules} not found — running spelling only (run `cargo xtask fetch-engine`)"
+        );
+    }
+
     let checker = Checker::new(engine);
     let diagnostics = checker.check(&text);
 
