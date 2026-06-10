@@ -255,16 +255,16 @@ mod tests {
             return;
         }
         let tagger = Tagger::from_dir(&dir).expect("load L4 artifact");
-        let text = "I have a apple .";
+        let text = "They was very happy .";
         let diags = tagger.grammar_diagnostics(text, &Analysis::default());
-        // The article error "a apple" -> "an apple" is a $REPLACE_an the decoder handles directly.
+        // Subject-verb agreement "They was" -> "They were" clears the calibrated default threshold.
         assert!(
             diags.iter().any(|d| {
                 d.source == Source::Neural
-                    && text.get(d.span.start..d.span.end) == Some("a")
-                    && d.suggestions.iter().any(|s| s.replacement == "an")
+                    && text.get(d.span.start..d.span.end) == Some("was")
+                    && d.suggestions.iter().any(|s| s.replacement == "were")
             }),
-            "expected a->an neural correction, got {diags:?}"
+            "expected was->were neural correction, got {diags:?}"
         );
     }
 }

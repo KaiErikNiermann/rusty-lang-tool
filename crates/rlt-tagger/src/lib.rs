@@ -190,6 +190,9 @@ pub struct TaggerConfig {
     /// Confidence floor used as both the sentence gate (some word's detect error probability must
     /// reach this) and the token gate (an edit's own probability must reach this) — GECToR semantics.
     pub min_error_probability: f32,
+    /// Max refinement passes (GECToR re-tags its own output to catch cascading errors). 1 = single
+    /// pass. Each pass re-runs inference, so this trades latency for recall.
+    pub max_iterations: usize,
 }
 
 impl Default for TaggerConfig {
@@ -199,6 +202,7 @@ impl Default for TaggerConfig {
         Self {
             keep_confidence: 0.2,
             min_error_probability: 0.66,
+            max_iterations: 5,
         }
     }
 }
@@ -231,33 +235,74 @@ impl<S: TagSource> Tagger<S> {
         self
     }
 
-    /// Decode predictions into diagnostics — the pure half, independent of how `predict` is backed.
+    /// Iteratively correct `text` (re-tagging its own output, GECToR-style, until it converges or
+    /// hits `max_iterations`), then diff the result against the original to emit span-accurate
+    /// diagnostics into `text`.
     fn decode(&self, text: &str) -> Vec<Diagnostic> {
         let words = split_words(text);
         if words.is_empty() {
             return Vec::new();
         }
-        let preds = self.source.predict(&words, text);
-        // Sentence-level error gate: unless some word is confidently erroneous, emit nothing.
-        if !preds
-            .iter()
-            .any(|p| p.error_prob >= self.config.min_error_probability)
-        {
+        let original: Vec<String> = words.iter().map(|w| text[w.start..w.end].to_owned()).collect();
+
+        let mut tokens = original.clone();
+        for _ in 0..self.config.max_iterations.max(1) {
+            let preds = self.predict_tokens(&tokens);
+            let next = self.apply_edits(&tokens, &preds);
+            if next == tokens {
+                break; // converged — no more corrections
+            }
+            tokens = next;
+        }
+        diff_to_diagnostics(&words, &original, &tokens)
+    }
+
+    /// Predict over the current token sequence by reconstructing a synthetic text + spans the
+    /// backend can tokenize (tokens never contain whitespace, so the split round-trips).
+    fn predict_tokens(&self, tokens: &[String]) -> Vec<WordPred> {
+        if tokens.is_empty() {
             return Vec::new();
         }
-        let mut out = Vec::new();
-        for (word, pred) in words.iter().zip(&preds) {
-            // Keep bias: the edit must beat `$KEEP` by the configured margin to fire.
-            if pred.edit_prob <= pred.keep_prob + self.config.keep_confidence {
+        let text = tokens.join(" ");
+        let words = split_words(&text);
+        self.source.predict(&words, &text)
+    }
+
+    /// Apply one pass of edits to `tokens` (GECToR's `edit_src_by_tags`): gated per the config, with
+    /// `$DELETE` dropping a token and append/replace/split producing one or more.
+    fn apply_edits(&self, tokens: &[String], preds: &[WordPred]) -> Vec<String> {
+        // Sentence-level error gate: unless some token is confidently erroneous, change nothing.
+        if !preds.iter().any(|p| p.error_prob >= self.config.min_error_probability) {
+            return tokens.to_vec();
+        }
+        let mut out: Vec<String> = Vec::with_capacity(tokens.len());
+        for (tok, pred) in tokens.iter().zip(preds) {
+            // Keep unless the edit beats $KEEP by the margin AND clears the token confidence floor.
+            let keep = pred.edit_prob <= pred.keep_prob + self.config.keep_confidence
+                || pred.edit_prob < self.config.min_error_probability;
+            if keep {
+                out.push(tok.clone());
                 continue;
             }
-            // Token-level confidence gate (GECToR): the edit's own probability must clear the bar.
-            if pred.edit_prob < self.config.min_error_probability {
-                continue;
-            }
-            let edit = self.labels.edit(pred.edit_label);
-            if let Some(diag) = edit_to_diagnostic(&edit, *word, text, &self.verb_dict) {
-                out.push(diag);
+            match self.labels.edit(pred.edit_label) {
+                Edit::Delete => {}
+                Edit::Append(t) => {
+                    out.push(tok.clone());
+                    out.extend(t.split_whitespace().map(str::to_owned));
+                }
+                Edit::Replace(t) => out.extend(t.split_whitespace().map(str::to_owned)),
+                Edit::Case(op) => out.push(apply_case(tok, op)),
+                Edit::Pluralize => out.push(format!("{tok}s")),
+                Edit::Singularize => {
+                    let mut s = tok.clone();
+                    s.pop();
+                    out.push(s);
+                }
+                Edit::SplitHyphen => out.extend(tok.split('-').map(str::to_owned)),
+                Edit::Verb(tags) => {
+                    out.push(self.verb_dict.apply(tok, &tags).unwrap_or(tok.as_str()).to_owned());
+                }
+                Edit::Keep | Edit::Unsupported => out.push(tok.clone()),
             }
         }
         out
@@ -270,43 +315,74 @@ impl<S: TagSource> GrammarChecker for Tagger<S> {
     }
 }
 
-/// Turn one decoded edit on `word` into a [`Diagnostic`], or `None` for no-ops/unsupported tags
-/// (incl. a `$TRANSFORM_VERB_*` the dictionary can't resolve).
-fn edit_to_diagnostic(
-    edit: &Edit,
-    word: WordSpan,
-    text: &str,
-    verb_dict: &VerbDict,
-) -> Option<Diagnostic> {
-    let surface = text.get(word.start..word.end)?;
-    let replacement = match edit {
-        Edit::Keep | Edit::Unsupported => return None,
-        Edit::Delete => String::new(),
-        Edit::Append(t) => format!("{surface} {t}"),
-        Edit::Replace(t) => t.clone(),
-        Edit::Case(op) => apply_case(surface, *op),
-        Edit::Pluralize => format!("{surface}s"),
-        Edit::Singularize => {
-            let mut s = surface.to_owned();
-            s.pop(); // drop the trailing char (char-aware)
-            s
+/// Diff the original words against the corrected token sequence and emit one diagnostic per edit
+/// region, with byte spans into the original text. Insertions fold into the adjacent original word
+/// so each suggestion is a self-contained span replacement.
+fn diff_to_diagnostics(
+    words: &[WordSpan],
+    original: &[String],
+    corrected: &[String],
+) -> Vec<Diagnostic> {
+    use similar::{Algorithm, DiffOp, capture_diff_slices};
+
+    let mut out = Vec::new();
+    for op in capture_diff_slices(Algorithm::Myers, original, corrected) {
+        match op {
+            DiffOp::Equal { .. } => {}
+            DiffOp::Delete {
+                old_index, old_len, ..
+            } => push_edit(&mut out, words, original, old_index, old_len, String::new()),
+            DiffOp::Replace {
+                old_index,
+                old_len,
+                new_index,
+                new_len,
+            } => {
+                let repl = corrected[new_index..new_index + new_len].join(" ");
+                push_edit(&mut out, words, original, old_index, old_len, repl);
+            }
+            DiffOp::Insert {
+                old_index,
+                new_index,
+                new_len,
+            } => {
+                let inserted = corrected[new_index..new_index + new_len].join(" ");
+                if old_index == 0 {
+                    let repl = format!("{inserted} {}", original[0]);
+                    push_edit(&mut out, words, original, 0, 1, repl);
+                } else {
+                    let repl = format!("{} {inserted}", original[old_index - 1]);
+                    push_edit(&mut out, words, original, old_index - 1, 1, repl);
+                }
+            }
         }
-        Edit::SplitHyphen => surface.replace('-', " "),
-        Edit::Verb(tags) => verb_dict.apply(surface, tags)?.to_owned(),
-    };
-    if replacement == surface {
-        return None;
     }
-    Some(Diagnostic {
+    out
+}
+
+/// Push a diagnostic spanning original words `[start, start + len)` with `replacement`, unless it is
+/// a no-op (the replacement already equals the original span text).
+fn push_edit(
+    out: &mut Vec<Diagnostic>,
+    words: &[WordSpan],
+    original: &[String],
+    start: usize,
+    len: usize,
+    replacement: String,
+) {
+    if len == 0 || replacement == original[start..start + len].join(" ") {
+        return;
+    }
+    out.push(Diagnostic {
         span: Span {
-            start: word.start,
-            end: word.end,
+            start: words[start].start,
+            end: words[start + len - 1].end,
         },
         code: "NEURAL".to_owned(),
         message: "Possible grammatical error.".to_owned(),
         suggestions: vec![Suggestion { replacement }],
         source: Source::Neural,
-    })
+    });
 }
 
 /// Apply a `$TRANSFORM_CASE_*` op to a word surface (matching gector's semantics).
@@ -358,13 +434,41 @@ pub fn split_words(text: &str) -> Vec<WordSpan> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::*;
 
-    /// A scripted [`TagSource`] returning fixed predictions — lets us test the decoder with no model.
-    struct MockSource(Vec<WordPred>);
+    /// A keep-everything prediction.
+    const KEEP: WordPred = WordPred {
+        edit_label: 0,
+        edit_prob: 0.0,
+        keep_prob: 1.0,
+        error_prob: 0.0,
+    };
+
+    /// A scripted [`TagSource`]: returns the given predictions on the first pass, then all-keep so
+    /// the iterative decoder converges (a real model keep-tags its already-corrected output).
+    struct MockSource {
+        preds: Vec<WordPred>,
+        calls: Cell<usize>,
+    }
+    impl MockSource {
+        fn new(preds: Vec<WordPred>) -> Self {
+            Self {
+                preds,
+                calls: Cell::new(0),
+            }
+        }
+    }
     impl TagSource for MockSource {
-        fn predict(&self, _words: &[WordSpan], _text: &str) -> Vec<WordPred> {
-            self.0.clone()
+        fn predict(&self, words: &[WordSpan], _text: &str) -> Vec<WordPred> {
+            let call = self.calls.get();
+            self.calls.set(call + 1);
+            if call == 0 && words.len() == self.preds.len() {
+                self.preds.clone()
+            } else {
+                vec![KEEP; words.len()]
+            }
         }
     }
 
@@ -401,7 +505,7 @@ mod tests {
     }
 
     fn run(text: &str, preds: Vec<WordPred>, config: TaggerConfig) -> Vec<Diagnostic> {
-        Tagger::new(MockSource(preds), labels(), config)
+        Tagger::new(MockSource::new(preds), labels(), config)
             .grammar_diagnostics(text, &Analysis::default())
     }
 
@@ -458,8 +562,9 @@ mod tests {
     fn verb_transform_resolves_via_dict() {
         // "She go" → $TRANSFORM_VERB_VB_VBZ on "go" → "goes" via the verb dict.
         let vd = VerbDict::parse("go_goes:VB_VBZ\nrun_runs:VB_VBZ\n");
-        let tagger = Tagger::new(MockSource(vec![keep(), edit(5)]), labels(), TaggerConfig::default())
-            .with_verb_dict(vd);
+        let tagger =
+            Tagger::new(MockSource::new(vec![keep(), edit(5)]), labels(), TaggerConfig::default())
+                .with_verb_dict(vd);
         let diags = tagger.grammar_diagnostics("She go", &Analysis::default());
         assert_eq!(diags.len(), 1, "{diags:?}");
         assert_eq!(diags[0].suggestions[0].replacement, "goes");
@@ -472,6 +577,40 @@ mod tests {
         assert_eq!(plural[0].suggestions[0].replacement, "cats");
         let singular = run("two cats", vec![keep(), edit(7)], TaggerConfig::default());
         assert_eq!(singular[0].suggestions[0].replacement, "cat");
+    }
+
+    /// A [`TagSource`] scripted per pass (one prediction set per call), then all-keep.
+    struct IterSource {
+        scripts: Vec<Vec<WordPred>>,
+        calls: Cell<usize>,
+    }
+    impl TagSource for IterSource {
+        fn predict(&self, words: &[WordSpan], _text: &str) -> Vec<WordPred> {
+            let call = self.calls.get();
+            self.calls.set(call + 1);
+            match self.scripts.get(call) {
+                Some(s) if s.len() == words.len() => s.clone(),
+                _ => vec![KEEP; words.len()],
+            }
+        }
+    }
+
+    #[test]
+    fn iterative_refinement_applies_cascading_edits() {
+        // Pass 1 capitalizes "i"; pass 2 — on the now-corrected sentence — fixes "beleive". The
+        // unchanged "am" between them keeps the two edits as separate diagnostic regions.
+        let source = IterSource {
+            scripts: vec![
+                vec![edit(4), keep(), keep()], // iter 1: $TRANSFORM_CASE_CAPITAL on "i" -> "I"
+                vec![keep(), keep(), edit(2)], // iter 2: $REPLACE_believe on "beleive"
+            ],
+            calls: Cell::new(0),
+        };
+        let diags = Tagger::new(source, labels(), TaggerConfig::default())
+            .grammar_diagnostics("i am beleive", &Analysis::default());
+        assert_eq!(diags.len(), 2, "{diags:?}");
+        assert_eq!(diags[0].suggestions[0].replacement, "I");
+        assert_eq!(diags[1].suggestions[0].replacement, "believe");
     }
 
     #[test]
