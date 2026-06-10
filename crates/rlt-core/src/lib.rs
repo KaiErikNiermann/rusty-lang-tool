@@ -69,6 +69,8 @@ pub enum Source {
     Grammar,
     /// L3 — statistical confusion-pair disambiguation (real-word errors, e.g. their/there).
     Statistical,
+    /// L4 — neural edit-tagger (GECToR-style; the long-tail grammatical errors L1–L3 miss).
+    Neural,
 }
 
 /// One finding: a span, the rule/source that flagged it, a human message, and ordered fixes.
@@ -188,21 +190,24 @@ impl<E: Engine, G: GrammarChecker> GrammarChecker for Composite<E, G> {
     }
 }
 
-/// Adds the L3 [`ConfusionChecker`] on top of any [`Engine`] + [`GrammarChecker`] backend, so the
-/// cascade gains real-word-error detection. With an empty model it is a no-op.
-pub struct WithConfusion<B: Engine + GrammarChecker> {
+/// Stacks an additional [`GrammarChecker`] `G` onto an [`Engine`] + [`GrammarChecker`] backend `B`,
+/// **concatenating** both layers' diagnostics — additive composition where `G` never overrides `B`.
+/// This is the seam every new cascade layer slots onto: analysis (`Engine`) is delegated to `B`,
+/// and `grammar_diagnostics` runs `B` first, then appends `G`'s findings. L3 confusion ([`WithConfusion`])
+/// and the L4 neural tagger are both just specialisations of this.
+pub struct WithGrammar<B: Engine + GrammarChecker, G: GrammarChecker> {
     inner: B,
-    confusion: ConfusionChecker,
+    extra: G,
 }
 
-impl<B: Engine + GrammarChecker> WithConfusion<B> {
-    /// Wrap `inner`, adding L3 confusion checking.
-    pub fn new(inner: B, confusion: ConfusionChecker) -> Self {
-        Self { inner, confusion }
+impl<B: Engine + GrammarChecker, G: GrammarChecker> WithGrammar<B, G> {
+    /// Wrap `inner`, appending `extra`'s diagnostics to the cascade.
+    pub fn new(inner: B, extra: G) -> Self {
+        Self { inner, extra }
     }
 }
 
-impl<B: Engine + GrammarChecker> Engine for WithConfusion<B> {
+impl<B: Engine + GrammarChecker, G: GrammarChecker> Engine for WithGrammar<B, G> {
     fn analyze(&self, text: &str) -> Analysis {
         self.inner.analyze(text)
     }
@@ -211,10 +216,14 @@ impl<B: Engine + GrammarChecker> Engine for WithConfusion<B> {
     }
 }
 
-impl<B: Engine + GrammarChecker> GrammarChecker for WithConfusion<B> {
+impl<B: Engine + GrammarChecker, G: GrammarChecker> GrammarChecker for WithGrammar<B, G> {
     fn grammar_diagnostics(&self, text: &str, analysis: &Analysis) -> Vec<Diagnostic> {
         let mut diagnostics = self.inner.grammar_diagnostics(text, analysis);
-        diagnostics.extend(self.confusion.grammar_diagnostics(text, analysis));
+        diagnostics.extend(self.extra.grammar_diagnostics(text, analysis));
         diagnostics
     }
 }
+
+/// L3 real-word-error detection stacked onto any backend — the [`WithGrammar`] specialisation for
+/// [`ConfusionChecker`]. With an empty model it is a no-op. Construct via `WithConfusion::new`.
+pub type WithConfusion<B> = WithGrammar<B, ConfusionChecker>;
