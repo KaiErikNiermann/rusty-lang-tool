@@ -66,6 +66,13 @@ const AGID_POS_URL: &str =
 /// LT's English resource directory (the `remap.awk` build script + `added`/`removed` supplements live
 /// here after `fetch-lt`).
 const LT_EN_RESOURCE: &str = "resources/lt/_repo/languagetool-language-modules/en/src/main/resources/org/languagetool/resource/en";
+/// LanguageTool's morfologik English POS dictionary + its metadata (preferred tagger source — read
+/// directly via the pure-Rust CFSA2 reader). Distributed in the `english-pos-dict` Maven jar.
+const POS_DICT: &str = "resources/english.dict";
+const POS_INFO: &str = "resources/english.info";
+const POS_DICT_JAR_URL: &str =
+    "https://repo1.maven.org/maven2/org/languagetool/english-pos-dict/0.6/english-pos-dict-0.6.jar";
+
 /// The native engine's POS tagger artifact (fst + side-table), built by `build-tagger`.
 const TAGGER_OUT: &str = "resources/tagger.rkyv";
 /// Hand-authored closed-class supplement (committed; license-clean). Overrides the awk output for the
@@ -712,34 +719,19 @@ fn fetch_ngrams() -> Result<()> {
     Ok(())
 }
 
-/// Build the native engine's POS tagger dictionary from AGID via LanguageTool's own `remap.awk`,
-/// applying the `added.txt`/`removed.txt` supplements, then serializing the fst artifact. Reuses LT's
-/// exact awk transform (rather than reimplementing it) so the tagset/coverage matches LT's binary
-/// `.dict`. Resumable: the AGID download is skipped if already present.
+/// Build the native engine's POS tagger dictionary, applying the `added.txt`/`removed.txt`
+/// supplements, then serializing the fst artifact. The dictionary comes from **LanguageTool's own
+/// morfologik `.dict`** (read directly — its tagset/coverage is exactly LT's) when available, falling
+/// back to reconstructing it from AGID via LT's `remap.awk` otherwise.
 fn build_tagger() -> Result<()> {
-    // 1. Fetch AGID's inflection list + part-of-speech database (resumable).
-    fetch_if_absent(AGID_INFL, AGID_URL)?;
-    fetch_if_absent(AGID_POS, AGID_POS_URL)?;
+    let (mut triples, source) = match morfologik_triples()? {
+        Some(t) => (t, "LT morfologik .dict".to_owned()),
+        None => (agid_triples()?, "AGID/POS + remap.awk + closed-class".to_owned()),
+    };
+    let from_dict = triples.len();
 
-    let remap = format!("{LT_EN_RESOURCE}/remap.awk");
-    if !Path::new(&remap).exists() {
-        bail!("missing {remap} — run `cargo xtask fetch-lt` first");
-    }
-
-    // 2. Run LT's remap.awk over infl.txt THEN part-of-speech.txt → `inflected⇥lemma⇥POS` triples.
-    // Order matters: the closed-class (pos) rules cross-reference arrays the infl rules build.
-    println!("$ gawk -f {remap} {AGID_INFL} {AGID_POS}");
-    let out = Command::new("gawk")
-        .args(["-f", &remap, AGID_INFL, AGID_POS])
-        .output()
-        .context("running remap.awk (is `gawk` installed?)")?;
-    if !out.status.success() {
-        bail!("remap.awk failed: {}", String::from_utf8_lossy(&out.stderr));
-    }
-    let mut triples = parse_triples(&String::from_utf8_lossy(&out.stdout));
-    let from_agid = triples.len();
-
-    // 3. Supplements: + added.txt, − removed.txt (both `fullform⇥baseform⇥postag`, `#` comments).
+    // Supplements: + added.txt, − removed.txt (both `fullform⇥baseform⇥postag`, `#` comments). These
+    // are LT's additions-to / removals-from the binary dict, so they apply to either source.
     let added = read_triple_file(&format!("{LT_EN_RESOURCE}/added.txt"))?;
     let removed: std::collections::HashSet<(String, String, String)> =
         read_triple_file(&format!("{LT_EN_RESOURCE}/removed.txt"))?
@@ -751,26 +743,77 @@ fn build_tagger() -> Result<()> {
     triples.retain(|t| !removed.contains(t));
     let n_removed = before - triples.len();
 
-    // 4. Closed-class override: replace the awk output for the curated function words (the awk
-    //    mistags or omits them). Drop every awk triple whose surface is overridden, then add ours.
-    let overrides = read_triple_file(CLOSED_CLASS)?;
-    let overridden: std::collections::HashSet<String> =
-        overrides.iter().map(|(surface, ..)| surface.clone()).collect();
-    let n_override = overrides.len();
-    triples.retain(|(surface, ..)| !overridden.contains(surface));
-    triples.extend(overrides);
-
-    // 5. Serialize the fst + side-table artifact.
     let bytes = rlt_native::build_from_triples(triples)
         .map_err(|e| anyhow::anyhow!("building tagger artifact: {e}"))?;
     std::fs::write(TAGGER_OUT, &bytes).with_context(|| format!("writing {TAGGER_OUT}"))?;
     println!(
-        "wrote {TAGGER_OUT}: {from_agid} AGID/POS + {n_added} added − {n_removed} removed + \
-         {n_override} closed-class triples, {} bytes",
+        "wrote {TAGGER_OUT}: {from_dict} triples from {source} + {n_added} added − {n_removed} \
+         removed, {} bytes",
         bytes.len(),
     );
-    println!("next: score the oracle on the native engine to compare against the 58.7% baseline");
     Ok(())
+}
+
+/// Read triples straight from LanguageTool's morfologik POS dictionary, fetching the `*-pos-dict` jar
+/// if needed. Returns `None` (→ AGID fallback) only if the dict can't be obtained.
+fn morfologik_triples() -> Result<Option<Vec<(String, String, String)>>> {
+    if !Path::new(POS_DICT).exists() {
+        if let Err(e) = fetch_pos_dict() {
+            println!("morfologik POS dict unavailable ({e}) — falling back to AGID");
+            return Ok(None);
+        }
+    }
+    let meta = rlt_convert::parse_info(&std::fs::read_to_string(POS_INFO)?)?;
+    let triples = rlt_convert::read_triples(&std::fs::read(POS_DICT)?, &meta)
+        .with_context(|| format!("reading {POS_DICT}"))?;
+    println!("read {} triples from {POS_DICT}", triples.len());
+    Ok(Some(triples))
+}
+
+/// Download LT's `english-pos-dict` jar and extract `english.dict` + `english.info` into `resources/`.
+fn fetch_pos_dict() -> Result<()> {
+    let jar = "resources/english-pos-dict.jar";
+    fetch_if_absent(jar, POS_DICT_JAR_URL)?;
+    // jars are zip archives; pull the two files flat into resources/.
+    run("unzip", &[
+        "-o", "-j", jar,
+        "org/languagetool/resource/en/english.dict",
+        "org/languagetool/resource/en/english.info",
+        "-d", "resources",
+    ])
+}
+
+/// Reconstruct the POS dictionary from AGID + the Moby/WordNet part-of-speech list via LT's own
+/// `remap.awk`, plus the hand-authored closed-class supplement. The fallback when LT's binary dict
+/// isn't available.
+fn agid_triples() -> Result<Vec<(String, String, String)>> {
+    fetch_if_absent(AGID_INFL, AGID_URL)?;
+    fetch_if_absent(AGID_POS, AGID_POS_URL)?;
+
+    let remap = format!("{LT_EN_RESOURCE}/remap.awk");
+    if !Path::new(&remap).exists() {
+        bail!("missing {remap} — run `cargo xtask fetch-lt` first");
+    }
+    // remap.awk over infl.txt THEN part-of-speech.txt (order matters: the pos rules cross-reference
+    // arrays the infl rules build).
+    println!("$ gawk -f {remap} {AGID_INFL} {AGID_POS}");
+    let out = Command::new("gawk")
+        .args(["-f", &remap, AGID_INFL, AGID_POS])
+        .output()
+        .context("running remap.awk (is `gawk` installed?)")?;
+    if !out.status.success() {
+        bail!("remap.awk failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    let mut triples = parse_triples(&String::from_utf8_lossy(&out.stdout));
+
+    // Closed-class override: replace the awk output for the curated function words (awk mistags/omits
+    // them). Drop every awk triple whose surface is overridden, then add ours.
+    let overrides = read_triple_file(CLOSED_CLASS)?;
+    let overridden: std::collections::HashSet<String> =
+        overrides.iter().map(|(surface, ..)| surface.clone()).collect();
+    triples.retain(|(surface, ..)| !overridden.contains(surface));
+    triples.extend(overrides);
+    Ok(triples)
 }
 
 /// Lower `disambiguation.xml` into the `disambig.rkyv` tag-action artifact the native engine loads.

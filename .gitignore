@@ -43,3 +43,8 @@ node_modules/
 
 # Claude Code local state
 /.claude/
+
+# LanguageTool morfologik POS dictionary (fetched from the english-pos-dict jar, LGPL)
+/resources/english.dict
+/resources/english.info
+/resources/english-pos-dict.jar

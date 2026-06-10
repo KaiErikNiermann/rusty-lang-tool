@@ -17,10 +17,12 @@
 
 mod disambig;
 mod lt_schema;
+mod morfologik;
 
 pub use disambig::{
     DEFAULT_DISAMBIGUATION, DisambigReport, convert_disambiguation, lower_disambiguation,
 };
+pub use morfologik::{DictMeta, Encoder, parse_info, read_triples};
 
 use std::path::Path;
 
