@@ -268,6 +268,25 @@ fn num_after(haystack: &str, marker: &str) -> Option<usize> {
         .ok()
 }
 
+/// Strip ANSI CSI escapes (tracing colours the captured `key=value` fields, splitting the `=`).
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // Skip the CSI sequence up to and including its final letter byte.
+            for c2 in chars.by_ref() {
+                if c2.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Last `n` bytes of `s` (trimmed, on a char boundary) for compact error notes.
 fn tail(s: &str, n: usize) -> String {
     let s = s.trim();
@@ -342,8 +361,9 @@ fn sweep_one(version: &str) -> AdaptResult {
         return r;
     }
     r.convert_compiles = true;
-    r.rules_total = num_after(&blob.stderr, "rules=");
-    r.rules_opaque = num_after(&blob.stderr, "opaque=");
+    let blob_log = strip_ansi(&blob.stderr);
+    r.rules_total = num_after(&blob_log, "rules=");
+    r.rules_opaque = num_after(&blob_log, "opaque=");
 
     let score = capture(
         "cargo",
