@@ -2267,6 +2267,7 @@ dependencies = [
  "anyhow",
  "clap",
  "rlt-convert",
+ "rlt-lang",
  "rlt-native",
  "serde",
  "serde_json",
