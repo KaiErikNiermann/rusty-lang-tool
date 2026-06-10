@@ -8,6 +8,8 @@
 //! - `build-blob` — run the offline converter to produce the runtime rkyv artifact.
 //! - `build-wasm` — package the WASM surface via `wasm-pack` (Node target) + run the Node smoke test.
 //! - `run-oracle` — run the `<example>` differential-oracle test suite.
+//! - `build-l4` — build the L4 neural model artifact via the offline `pipeline/` (uv + Python).
+//! - `run-l4-oracle` — run the L4 end-to-end / oracle tests (need `resources/l4/`).
 //! - `fuzz` — run a libFuzzer target via `cargo-fuzz` (thin passthrough; lists targets with no arg).
 
 use std::path::Path;
@@ -77,6 +79,11 @@ enum Task {
     BuildWasm,
     /// Run the differential `<example>` oracle test suite.
     RunOracle,
+    /// Build the L4 neural model artifact (`resources/l4/`) via the offline `pipeline/` (uv +
+    /// Python 3.12): export the GECToR checkpoint to ONNX, int8-quantize, fetch the verb dict.
+    BuildL4,
+    /// Run the L4 end-to-end / oracle tests (need the `resources/l4/` artifact).
+    RunL4Oracle,
     /// Run a libFuzzer target via cargo-fuzz (`cargo install cargo-fuzz` first). With no target,
     /// lists the available targets. Args after `--` are forwarded to libFuzzer, e.g.
     /// `cargo xtask fuzz ir_match -- -max_total_time=60`.
@@ -111,8 +118,41 @@ fn main() -> Result<()> {
                 "--nocapture",
             ],
         ),
+        Task::BuildL4 => build_l4(),
+        Task::RunL4Oracle => run(
+            "cargo",
+            &[
+                "test",
+                "-p",
+                "rlt-cli",
+                "--release",
+                "--test",
+                "oracle",
+                "--",
+                "--ignored",
+                "l4",
+                "--nocapture",
+            ],
+        ),
         Task::Fuzz { target, args } => run_fuzz(target.as_deref(), &args),
     }
+}
+
+/// Build the L4 artifact via the offline `pipeline/` (uv + Python 3.12). Each step is resumable: the
+/// Python scripts skip work whose output already exists.
+fn build_l4() -> Result<()> {
+    run("uv", &["sync", "--project", "pipeline"])?;
+    for module in [
+        "rlt_pipeline.export",
+        "rlt_pipeline.quantize",
+        "rlt_pipeline.fetch",
+    ] {
+        run(
+            "uv",
+            &["run", "--project", "pipeline", "python", "-m", module],
+        )?;
+    }
+    Ok(())
 }
 
 /// Thin wrapper over `cargo fuzz`: `run <target> [-- <libfuzzer args>]`, or `list` when no target

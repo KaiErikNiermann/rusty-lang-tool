@@ -1,0 +1,20 @@
+"""Shared constants: the source model and the artifact-tuple file layout the Rust runtime loads."""
+
+from pathlib import Path
+
+# The borrowed GECToR checkpoint (non-commercial license — see the repo's LICENSES/NOTICE).
+MODEL_ID = "gotutiyan/gector-roberta-base-5k"
+# Grammarly's verb-form transform dictionary, needed to apply $TRANSFORM_VERB_* tags.
+VERB_DICT_URL = "https://github.com/grammarly/gector/raw/master/data/verb-form-vocab.txt"
+
+# Artifact tuple consumed by `crates/rlt-tagger`. `resources/l4/` is gitignored.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+OUT_DIR = REPO_ROOT / "resources" / "l4"
+
+ONNX_FP32 = OUT_DIR / "gector.fp32.onnx"
+ONNX_INT8 = OUT_DIR / "model.int8.onnx"
+TOKENIZER_JSON = OUT_DIR / "tokenizer.json"
+LABELS_JSON = OUT_DIR / "labels.json"
+VERB_DICT = OUT_DIR / "verb-form-vocab.txt"
+META_JSON = OUT_DIR / "meta.json"
+METRICS_JSON = OUT_DIR / "metrics.json"

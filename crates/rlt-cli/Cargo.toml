@@ -16,6 +16,7 @@ path = "src/main.rs"
 rlt-core.workspace = true
 rlt-engine.workspace = true
 rlt-convert.workspace = true
+rlt-tagger.workspace = true
 clap.workspace = true
 anyhow.workspace = true
 tracing.workspace = true

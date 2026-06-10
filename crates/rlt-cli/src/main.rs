@@ -8,8 +8,12 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand, ValueEnum};
-use rlt_core::{Checker, Composite, ConfusionChecker, Diagnostic, IrMatcher, WithConfusion};
+use rlt_core::{
+    Checker, Composite, ConfusionChecker, Diagnostic, Engine, GrammarChecker, IrMatcher,
+    WithConfusion, WithGrammar,
+};
 use rlt_engine::VendoredEngine;
+use rlt_tagger::{RtenTagSource, Tagger};
 
 /// Which L2 grammar backend to use.
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -132,6 +136,37 @@ fn load_confusion() -> ConfusionChecker {
         })
 }
 
+/// Load the L4 neural tagger from `resources/l4/` if present, else `None` (L4 disabled).
+fn load_tagger() -> Option<Tagger<RtenTagSource>> {
+    let dir = std::path::Path::new("resources/l4");
+    if !dir.join("model.int8.onnx").exists() {
+        tracing::warn!("resources/l4 not found — L4 disabled (run `cargo xtask build-l4`)");
+        return None;
+    }
+    match Tagger::from_dir(dir) {
+        Ok(tagger) => Some(tagger),
+        Err(e) => {
+            tracing::warn!("L4 disabled: {e}");
+            None
+        }
+    }
+}
+
+/// Stack L3 confusion (always) and L4 neural tagging (when present) onto an L1/L2 backend and run
+/// the full cascade. Generic so both `--matcher` backends share one composition path.
+fn check_with_layers<B: Engine + GrammarChecker>(
+    backend: B,
+    confusion: ConfusionChecker,
+    tagger: Option<Tagger<RtenTagSource>>,
+    text: &str,
+) -> Vec<Diagnostic> {
+    let confused = WithConfusion::new(backend, confusion);
+    match tagger {
+        Some(t) => Checker::new(WithGrammar::new(confused, t)).check(text),
+        None => Checker::new(confused).check(text),
+    }
+}
+
 /// Load the engine and print the tokenize + POS-tag analysis of `text`.
 fn run_tokens(text: &str) -> Result<()> {
     let bin = rlt_engine::DEFAULT_TOKENIZER_BIN;
@@ -157,10 +192,11 @@ fn run_check(file: &std::path::Path, matcher: Matcher) -> Result<()> {
     let engine = VendoredEngine::from_path(std::path::Path::new(tok))
         .with_context(|| format!("loading engine from {tok} (run `cargo xtask fetch-engine`?)"))?;
 
-    // L3 confusion checking wraps either backend (no-op when the model is absent).
+    // L3 confusion (no-op when absent) and L4 neural tagging (skipped when absent) wrap either backend.
     let confusion = load_confusion();
+    let tagger = load_tagger();
 
-    // L1 spelling runs for both backends; L2 grammar differs by `matcher`; L3 wraps both.
+    // L1 spelling runs for both backends; L2 grammar differs by `matcher`; L3 + L4 wrap both.
     let diagnostics = match matcher {
         Matcher::Nlprule => {
             let rules = rlt_engine::DEFAULT_RULES_BIN;
@@ -174,7 +210,7 @@ fn run_check(file: &std::path::Path, matcher: Matcher) -> Result<()> {
                 );
                 engine
             };
-            Checker::new(WithConfusion::new(engine, confusion)).check(&text)
+            check_with_layers(engine, confusion, tagger, &text)
         }
         Matcher::Ir => {
             let blob = rlt_convert::DEFAULT_OUT;
@@ -182,7 +218,7 @@ fn run_check(file: &std::path::Path, matcher: Matcher) -> Result<()> {
                 .with_context(|| format!("reading {blob} (run `cargo xtask build-blob`?)"))?;
             let ir = IrMatcher::from_rkyv_bytes(&bytes)
                 .map_err(|e| anyhow!("compiling IR rules from {blob}: {e}"))?;
-            Checker::new(WithConfusion::new(Composite::new(engine, ir), confusion)).check(&text)
+            check_with_layers(Composite::new(engine, ir), confusion, tagger, &text)
         }
     };
 
