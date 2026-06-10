@@ -55,6 +55,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Test oracle
 datatest-stable = "0.3"
 insta = "1"
+# Benchmarking (rlt-native: NativeEngine vs nlprule).
+criterion = "0.5"
 # Structure-aware fuzzing (optional `arbitrary` feature on rlt-ir / rlt-core; used by `fuzz/`).
 arbitrary = { version = "1", features = ["derive"] }
 # L4 neural tagger (rlt-tagger): pure-Rust ONNX inference + RoBERTa tokenization. Both compile to

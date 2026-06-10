@@ -7,6 +7,7 @@
 //! - `fetch-engine` — download nlprule's prebuilt English tokenizer/rules binaries (resumable).
 //! - `build-blob` — run the offline converter to produce the runtime rkyv artifact.
 //! - `build-tagger` — build the native engine's POS dictionary from AGID + LT's `remap.awk` (resumable).
+//! - `bench` — criterion benchmark of the native engine vs the nlprule baseline.
 //! - `build-wasm` — package the WASM surface via `wasm-pack` (Node target) + run the Node smoke test.
 //! - `run-oracle` — run the `<example>` differential-oracle test suite.
 //! - `build-l4` — build the L4 neural model artifact via the offline `pipeline/` (uv + Python).
@@ -103,6 +104,9 @@ enum Task {
     /// Lower LanguageTool's `disambiguation.xml` into the native engine's `resources/disambig.rkyv`
     /// tag-action artifact (needs `fetch-lt`).
     BuildDisambig,
+    /// Run the criterion benchmark comparing the native engine to the nlprule baseline (analyze,
+    /// is_known, load time). Needs `build-tagger` + `fetch-engine` for the head-to-head.
+    Bench,
     /// Download Norvig's n-gram subsets for the L3 confusion model (resumable).
     FetchNgrams,
     /// Build the L3 confusion model from LT's confusion sets + the n-gram subsets.
@@ -155,6 +159,7 @@ fn main() -> Result<()> {
         Task::BuildBlob => run("cargo", &["run", "-p", "rlt-convert"]),
         Task::BuildTagger => build_tagger(),
         Task::BuildDisambig => build_disambig(),
+        Task::Bench => run("cargo", &["bench", "-p", "rlt-native", "--bench", "engine"]),
         Task::FetchNgrams => fetch_ngrams(),
         Task::BuildConfusion => run("cargo", &["run", "-p", "rlt-cli", "--", "build-confusion"]),
         Task::BuildWasm => build_wasm(),
