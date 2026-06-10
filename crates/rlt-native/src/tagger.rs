@@ -56,7 +56,10 @@ impl Tagger {
     /// # Errors
     /// Returns [`TaggerError`] if the artifact or its embedded fst is malformed.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, TaggerError> {
-        let data = rkyv::from_bytes::<TaggerData, rkyv::rancor::Error>(bytes)
+        // `align_bytes` re-aligns the input: rkyv's validated access requires the archive's alignment,
+        // but a `&[u8]` from a file / JS buffer / sub-slice only guarantees byte alignment (production
+        // allocators over-align and hide this; a mis-aligned slice or Miri surfaces it).
+        let data = rkyv::from_bytes::<TaggerData, rkyv::rancor::Error>(&rlt_ir::align_bytes(bytes))
             .map_err(|e| TaggerError::Rkyv(e.to_string()))?;
         let fst = Map::new(data.fst_bytes).map_err(|e| TaggerError::Fst(e.to_string()))?;
         Ok(Self {
@@ -170,6 +173,25 @@ mod tests {
         );
         let bytes = build_artifact(&words).expect("build");
         Tagger::from_bytes(&bytes).expect("load")
+    }
+
+    #[test]
+    fn from_bytes_handles_unaligned_input() {
+        // The artifact arrives as a `&[u8]` from a file / JS buffer whose allocation alignment we do
+        // not control. Force a deliberately mis-aligned slice (offset by 1) and assert loading still
+        // succeeds — rkyv's validated access requires the archive's alignment, so the loader must
+        // re-align. (Miri surfaced this; production allocators over-align and hide it.)
+        let mut words = BTreeMap::new();
+        words.insert("cat".to_owned(), vec![wd("cat", "NN")]);
+        let bytes = build_artifact(&words).expect("build");
+
+        let mut offset = Vec::with_capacity(bytes.len() + 1);
+        offset.push(0u8);
+        offset.extend_from_slice(&bytes);
+        let unaligned = &offset[1..]; // shifts the base pointer off any large alignment
+
+        let tagger = Tagger::from_bytes(unaligned).expect("load from unaligned slice");
+        assert_eq!(tagger.lookup("cat").unwrap()[0].tag, "NN");
     }
 
     #[test]

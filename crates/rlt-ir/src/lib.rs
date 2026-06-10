@@ -93,12 +93,26 @@ impl Rule {
     }
 }
 
+/// Copy possibly-unaligned `bytes` into a 16-byte-aligned buffer.
+///
+/// rkyv's validated `from_bytes` requires the buffer to meet the archive's alignment, but a `&[u8]`
+/// from `std::fs::read`, a JS/wasm buffer, or a sub-slice only guarantees byte alignment. Production
+/// allocators over-align large buffers and hide this; a mis-aligned slice (or Miri's minimal-alignment
+/// allocator) surfaces it as an "unaligned pointer" error. Every loader routes through here so loading
+/// is correct regardless of the source allocation.
+#[must_use]
+pub fn align_bytes(bytes: &[u8]) -> rkyv::util::AlignedVec<16> {
+    let mut aligned = rkyv::util::AlignedVec::<16>::with_capacity(bytes.len());
+    aligned.extend_from_slice(bytes);
+    aligned
+}
+
 /// Deserialize a `Vec<Rule>` from the rkyv artifact the converter produced.
 ///
 /// # Errors
 /// Returns an error if `bytes` is not a valid archived `Vec<Rule>`.
 pub fn deserialize_rules(bytes: &[u8]) -> Result<Vec<Rule>, rkyv::rancor::Error> {
-    rkyv::from_bytes::<Vec<Rule>, rkyv::rancor::Error>(bytes)
+    rkyv::from_bytes::<Vec<Rule>, rkyv::rancor::Error>(&align_bytes(bytes))
 }
 
 /// The L3 confusion-pair model: easily-confused word pairs plus the pruned n-gram counts used to
@@ -139,7 +153,7 @@ pub struct ConfusionPair {
 /// # Errors
 /// Returns an error if `bytes` is not a valid archived [`ConfusionModel`].
 pub fn deserialize_confusion(bytes: &[u8]) -> Result<ConfusionModel, rkyv::rancor::Error> {
-    rkyv::from_bytes::<ConfusionModel, rkyv::rancor::Error>(bytes)
+    rkyv::from_bytes::<ConfusionModel, rkyv::rancor::Error>(&align_bytes(bytes))
 }
 
 /// One element of a rule's pattern. Known constructs get explicit variants; the `<filter>` escape
@@ -329,7 +343,7 @@ impl TagAction {
 /// # Errors
 /// Returns an error if `bytes` is not a valid archived `Vec<DisambigRule>`.
 pub fn deserialize_disambig(bytes: &[u8]) -> Result<Vec<DisambigRule>, rkyv::rancor::Error> {
-    rkyv::from_bytes::<Vec<DisambigRule>, rkyv::rancor::Error>(bytes)
+    rkyv::from_bytes::<Vec<DisambigRule>, rkyv::rancor::Error>(&align_bytes(bytes))
 }
 
 #[cfg(test)]
