@@ -10,6 +10,7 @@
 //! - `run-oracle` — run the `<example>` differential-oracle test suite.
 //! - `build-l4` — build the L4 neural model artifact via the offline `pipeline/` (uv + Python).
 //! - `run-l4-oracle` — run the L4 end-to-end / oracle tests (need `resources/l4/`).
+//! - `eval-l4` — ERRANT F0.5 eval of the int8 L4 model vs BEA-2019 dev → `resources/l4/metrics.json`.
 //! - `fuzz` — run a libFuzzer target via `cargo-fuzz` (thin passthrough; lists targets with no arg).
 
 use std::path::Path;
@@ -84,6 +85,9 @@ enum Task {
     BuildL4,
     /// Run the L4 end-to-end / oracle tests (need the `resources/l4/` artifact).
     RunL4Oracle,
+    /// Evaluate the int8 L4 model with ERRANT F0.5 against the BEA-2019 dev set, writing
+    /// `resources/l4/metrics.json` (the promotion gate). Needs `build-l4` first.
+    EvalL4,
     /// Run a libFuzzer target via cargo-fuzz (`cargo install cargo-fuzz` first). With no target,
     /// lists the available targets. Args after `--` are forwarded to libFuzzer, e.g.
     /// `cargo xtask fuzz ir_match -- -max_total_time=60`.
@@ -133,6 +137,10 @@ fn main() -> Result<()> {
                 "l4",
                 "--nocapture",
             ],
+        ),
+        Task::EvalL4 => run(
+            "uv",
+            &["run", "--project", "pipeline", "python", "-m", "rlt_pipeline.evaluate"],
         ),
         Task::Fuzz { target, args } => run_fuzz(target.as_deref(), &args),
     }

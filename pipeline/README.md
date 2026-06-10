@@ -15,9 +15,16 @@ cd pipeline
 uv sync                              # torch (CPU) + transformers<5 + gector + onnx(+runtime)
 uv run python -m rlt_pipeline.export     # checkpoint -> resources/l4/gector.fp32.onnx + tokenizer/labels/meta
 uv run python -m rlt_pipeline.quantize   # -> resources/l4/model.int8.onnx (~129 MB, from ~512 MB)
-uv run python -m rlt_pipeline.fetch      # verb-form-vocab.txt (for $TRANSFORM_VERB_* tags)
+uv run python -m rlt_pipeline.fetch      # verb-form-vocab.txt + BEA-2019 dev (for the eval)
+uv run python -m rlt_pipeline.evaluate   # ERRANT F0.5 vs BEA dev -> resources/l4/metrics.json
 uv run ruff check rlt_pipeline && uv run pyright rlt_pipeline
 ```
+
+`evaluate` runs the **int8 ONNX** through onnxruntime with gector's faithful decode (reusing its
+`edit_src_by_tags` + verb dict + word-pooling), scores with ERRANT, and sweeps
+`(keep_confidence, min_error_prob)` to calibrate the threshold *after* quantization. `--limit N`
+caps the dev sentences for a quick run. The calibrated thresholds become `rlt-tagger`'s
+`TaggerConfig` defaults.
 
 `rlt_pipeline.inspect_model` dumps the checkpoint's config/labels/tokenizer specials (used to derive
 `meta.json`).
@@ -40,6 +47,7 @@ stays Apache-2.0/MIT.
 
 ## Status
 
-Export + int8 quantize done; the int8 graph is verified to run in `rten` and to produce correct edits
-post-quantization (e.g. "She go" → `$TRANSFORM_VERB_VB_VBZ`, "a apple" → `$REPLACE_an`). The ERRANT
-F0.5 evaluation (`metrics.json`, the promotion gate) lands with M7.7.
+Export + int8 quantize + ERRANT eval done. The int8 graph runs in `rten` and produces correct edits
+post-quantization. On **BEA-2019 W&I+LOCNESS dev (4384 sentences)** the int8 model scores
+**F0.5 = 0.545** (P = 0.653, R = 0.328) at the calibrated `keep_confidence=0.2, min_error_prob=0.66`
+(which become `rlt-tagger`'s defaults). `metrics.json` is the promotion gate (`evaluate --floor`).

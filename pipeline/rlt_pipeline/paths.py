@@ -18,3 +18,8 @@ LABELS_JSON = OUT_DIR / "labels.json"
 VERB_DICT = OUT_DIR / "verb-form-vocab.txt"
 META_JSON = OUT_DIR / "meta.json"
 METRICS_JSON = OUT_DIR / "metrics.json"
+
+# Evaluation: the BEA-2019 W&I+LOCNESS dev set (gold M2), the standard ERRANT benchmark.
+EVAL_DIR = OUT_DIR / "eval"
+DEV_M2 = EVAL_DIR / "dev.gold.m2"
+BEA_URL = "https://www.cl.cam.ac.uk/research/nl/bea2019st/data/wi+locness_v2.1.bea19.tar.gz"
