@@ -15,6 +15,7 @@ libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
 arbitrary = { version = "1", features = ["derive"] }
 rlt-ir = { path = "../crates/rlt-ir", features = ["arbitrary"] }
 rlt-core = { path = "../crates/rlt-core", features = ["arbitrary"] }
+rlt-native = { path = "../crates/rlt-native" }
 
 [profile.release]
 debug = 1
@@ -35,6 +36,20 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "tagger_load"
+path = "fuzz_targets/tagger_load.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "disambig_rkyv"
+path = "fuzz_targets/disambig_rkyv.rs"
+test = false
+doc = false
+bench = false
+
 # Structure-aware targets: exercise the matcher / confusion logic (regex compile, backtracking,
 # byte-offset suggestion rendering) over arbitrary rules + token graphs.
 [[bin]]
@@ -47,6 +62,21 @@ bench = false
 [[bin]]
 name = "confusion_check"
 path = "fuzz_targets/confusion_check.rs"
+test = false
+doc = false
+bench = false
+
+# Native engine: span arithmetic over arbitrary Unicode, and disambiguation over arbitrary rules.
+[[bin]]
+name = "engine_analyze"
+path = "fuzz_targets/engine_analyze.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "disambig_apply"
+path = "fuzz_targets/disambig_apply.rs"
 test = false
 doc = false
 bench = false
