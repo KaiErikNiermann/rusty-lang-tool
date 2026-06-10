@@ -1256,6 +1256,7 @@ dependencies = [
  "rlt-core",
  "rlt-engine",
  "rlt-ir",
+ "rlt-tagger",
  "tracing",
  "tracing-subscriber",
 ]
