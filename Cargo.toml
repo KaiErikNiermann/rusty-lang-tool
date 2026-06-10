@@ -4,6 +4,7 @@ members = [
     "crates/rlt-ir",
     "crates/rlt-convert",
     "crates/rlt-engine",
+    "crates/rlt-native",
     "crates/rlt-core",
     "crates/rlt-tagger",
     "crates/rlt-cli",
@@ -65,12 +66,16 @@ tokenizers = { version = "0.23", default-features = false, features = ["unstable
 serde_json = "1"
 # Word-level diff for the L4 iterative decoder (original vs corrected -> span-accurate edits).
 similar = "2"
+# Native engine (rlt-native): LanguageTool sentence segmentation (the POS tagger FSA reuses `fst`
+# above). `from_xml` enables loading segment.srx. Pure-Rust, compiles to wasm32.
+srx = { version = "0.1", features = ["from_xml"] }
 # Internal crates
 rlt-ir = { path = "crates/rlt-ir" }
 rlt-engine = { path = "crates/rlt-engine" }
 rlt-core = { path = "crates/rlt-core" }
 rlt-convert = { path = "crates/rlt-convert" }
 rlt-tagger = { path = "crates/rlt-tagger" }
+rlt-native = { path = "crates/rlt-native" }
 
 # Pedantic clippy baseline, applied across the workspace via `[lints] workspace = true`.
 [workspace.lints.clippy]

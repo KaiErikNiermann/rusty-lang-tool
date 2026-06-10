@@ -1308,6 +1308,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rlt-native"
+version = "0.0.0"
+dependencies = [
+ "fst",
+ "rlt-core",
+ "serde",
+ "srx",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "rlt-tagger"
 version = "0.0.0"
 dependencies = [
@@ -1492,6 +1503,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-xml-rs"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0bf1ba0696ccf0872866277143ff1fd14d22eec235d2b23702f95e6660f7dfa"
+dependencies = [
+ "log",
+ "serde",
+ "thiserror 1.0.69",
+ "xml-rs",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1587,7 +1610,9 @@ checksum = "310140d03a2064947271c5105bfff8c406f2f0bafbdaa947b34a088683cc2905"
 dependencies = [
  "regex",
  "serde",
+ "serde-xml-rs",
  "serde_regex",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1980,6 +2005,12 @@ name = "writeable"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
+
+[[package]]
+name = "xml-rs"
+version = "0.8.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ae8337f8a065cfc972643663ea4279e04e7256de865aa66fe25cec5fb912d3f"
 
 [[package]]
 name = "xsd-parser"
