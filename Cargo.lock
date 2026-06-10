@@ -1313,7 +1313,9 @@ version = "0.0.0"
 dependencies = [
  "fst",
  "rkyv",
+ "rlt-convert",
  "rlt-core",
+ "rlt-engine",
  "serde",
  "srx",
  "thiserror 2.0.18",

@@ -19,5 +19,11 @@ rkyv.workspace = true
 serde = { workspace = true }
 thiserror.workspace = true
 
+# nlprule (via rlt-engine) + the example corpus are needed ONLY for the P1 differential test and the
+# bench baseline — dev-deps keep them out of the lib/wasm build, so the native engine ships nlprule-free.
+[dev-dependencies]
+rlt-engine.workspace = true
+rlt-convert.workspace = true
+
 [lints]
 workspace = true
