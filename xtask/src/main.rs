@@ -102,6 +102,9 @@ enum Task {
         /// Re-run versions already recorded in `resources/adaptability/results.json`.
         #[arg(long)]
         force: bool,
+        /// Skip sweeping; just regenerate `docs/adaptability.md` from the saved results.
+        #[arg(long)]
+        report_only: bool,
     },
     /// Run a libFuzzer target via cargo-fuzz (`cargo install cargo-fuzz` first). With no target,
     /// lists the available targets. Args after `--` are forwarded to libFuzzer, e.g.
@@ -157,7 +160,12 @@ fn main() -> Result<()> {
             "uv",
             &["run", "--project", "pipeline", "python", "-m", "rlt_pipeline.evaluate"],
         ),
-        Task::AdaptSweep { from, to, force } => adapt_sweep(from.as_deref(), to.as_deref(), force),
+        Task::AdaptSweep {
+            from,
+            to,
+            force,
+            report_only,
+        } => adapt_sweep(from.as_deref(), to.as_deref(), force, report_only),
         Task::Fuzz { target, args } => run_fuzz(target.as_deref(), &args),
     }
 }
@@ -400,7 +408,10 @@ fn restore_pinned() -> Result<()> {
     run("cargo", &["run", "-q", "-p", "rlt-convert"])
 }
 
-fn adapt_sweep(from: Option<&str>, to: Option<&str>, force: bool) -> Result<()> {
+fn adapt_sweep(from: Option<&str>, to: Option<&str>, force: bool, report_only: bool) -> Result<()> {
+    if report_only {
+        return write_report(&mut load_results());
+    }
     let versions = version_range(from, to)?;
     println!(
         "adaptability sweep over {} version(s): {}",
@@ -450,6 +461,37 @@ fn write_report(results: &mut [AdaptResult]) -> Result<()> {
          will absorb *future* releases. **Converter compiles** is the load-bearing column: a \
          renamed/removed XML element the lowering matches on shows up as a compile error.\n\n",
     );
+
+    // Computed headline: the range that compiles + scores, and where it breaks.
+    let compiling: Vec<&AdaptResult> = results.iter().filter(|r| r.convert_compiles).collect();
+    let failing: Vec<&str> = results
+        .iter()
+        .filter(|r| r.fetch_ok && !r.convert_compiles)
+        .map(|r| r.version.as_str())
+        .collect();
+    let pcts: Vec<f64> = compiling.iter().filter_map(|r| r.reproduced_pct).collect();
+    if let (Some(first), Some(last)) = (compiling.first(), compiling.last()) {
+        let lo = pcts.iter().copied().fold(f64::INFINITY, f64::min);
+        let hi = pcts.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let _ = write!(
+            md,
+            "**Summary.** The converter (authored for `{LT_VERSION}`) compiles and scores cleanly \
+             from **{}** through **{}** — {lo:.1}–{hi:.1}% of each release's own examples reproduced. ",
+            first.version, last.version,
+        );
+        if failing.is_empty() {
+            md.push_str("It compiles on every release swept.\n\n");
+        } else {
+            let _ = writeln!(
+                md,
+                "It does **not** compile on **{}**, where the older schema lacks an element/attribute \
+                 the lowering matches on (exact incompatibilities below) — so the break point is a \
+                 *compile error*, never silent drift.\n",
+                failing.join(", "),
+            );
+        }
+    }
+
     md.push_str(
         "| LT | fetch | gen-schema | converter compiles | rules / opaque | reproduced | repro % | FP |\n\
          |---|:-:|:-:|:-:|---|---|--:|---|\n",
@@ -473,15 +515,27 @@ fn write_report(results: &mut [AdaptResult]) -> Result<()> {
         );
     }
     if results.iter().any(|r| !r.note.is_empty()) {
-        md.push_str("\n## Notes\n\n");
+        md.push_str("\n## Why the failures fail\n\n");
         for r in results.iter().filter(|r| !r.note.is_empty()) {
-            let _ = writeln!(md, "- **{}**: {}", r.version, r.note);
+            let _ = writeln!(md, "- **{}**: {}", r.version, salient(&r.note));
         }
     }
     std::fs::create_dir_all("docs").context("creating docs dir")?;
     std::fs::write(ADAPT_REPORT, md).context("writing adaptability.md")?;
     println!("wrote {ADAPT_REPORT}");
     Ok(())
+}
+
+/// Pull the crux line out of a captured failure note (the rustc `not found` / `error[` line),
+/// stripping the `| ^^^^ ` caret decoration rustc prefixes it with.
+fn salient(note: &str) -> &str {
+    let pick = note
+        .lines()
+        .find(|l| l.contains("not found"))
+        .or_else(|| note.lines().find(|l| l.trim_start().starts_with("error[")))
+        .or_else(|| note.lines().find(|l| !l.trim().is_empty()))
+        .unwrap_or(note);
+    pick.trim_start_matches(|c: char| c == '|' || c == '^' || c.is_whitespace())
 }
 
 /// The LT release to operate on: `$RLT_LT_VERSION` if set, else the pinned [`LT_VERSION`].
