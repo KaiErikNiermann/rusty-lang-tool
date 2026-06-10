@@ -70,9 +70,27 @@ impl NativeEngine {
 
 impl Engine for NativeEngine {
     fn analyze(&self, text: &str) -> Analysis {
-        let mut tokens = segment_tokenize(&self.segmenter, text);
-        for token in &mut tokens {
-            self.tagger.tag_token(token);
+        let mut tokens = Vec::new();
+        for range in self.segmenter.sentence_ranges(text) {
+            // A zero-width SENT_START sentinel opens each sentence — LanguageTool authors its rules
+            // (979 reference SENT_START) assuming this boundary token exists at position 0; without
+            // it, every position-anchored pattern mis-aligns.
+            let mut sentence = vec![Token {
+                text: String::new(),
+                span: Span { start: range.start, end: range.start },
+                tags: vec!["SENT_START".to_owned()],
+                lemmas: Vec::new(),
+            }];
+            tokenize_into(&text[range.clone()], range.start, &mut sentence);
+            for token in &mut sentence {
+                self.tagger.tag_token(token);
+                push_structural_tags(token);
+            }
+            // SENT_END marks the sentence's final token — 331 grammar rules anchor on it.
+            if let Some(last) = sentence.last_mut() {
+                push_tag(&mut last.tags, "SENT_END");
+            }
+            tokens.append(&mut sentence);
         }
         Analysis { tokens }
     }
@@ -106,6 +124,47 @@ impl Segmenter {
     #[must_use]
     pub fn sentence_ranges(&self, text: &str) -> Vec<Range<usize>> {
         self.rules.split_ranges(text)
+    }
+}
+
+/// The punctuation marks LanguageTool tags `PCT` (its `UNKNOWN_PCT` disambiguation rule's class).
+const PCT_CHARS: &[char] = &['.', ',', ';', ':', '…', '!', '?'];
+
+/// Add the tokenizer-level **structural** tags LanguageTool's tagger assigns by token *shape* — the
+/// ones grammar rules anchor on heavily (CD 647, PCT 741, NNP 1345, UNKNOWN 402 rule references) but
+/// the morphological lexicon doesn't carry. Mirrors nlprule's tokenizer plus the simplest
+/// disambiguation.xml shape rules (`CD`, `UNKNOWN_PCT`, `COMMA_POSTAG`):
+/// - all-digit token → `CD` (a replacement, per `<token regexp>\d+</token>`);
+/// - `.,;:…!?` → `PCT`, plus the literal `,`/`.`/`:` classes LT also assigns;
+/// - an out-of-lexicon word → `NNP` if capitalized (proper-noun guess), else `UNKNOWN`.
+fn push_structural_tags(token: &mut Token) {
+    let text = token.text.as_str();
+    if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) {
+        token.tags.clear();
+        token.lemmas.clear();
+        token.tags.push("CD".to_owned());
+        return;
+    }
+    if text.chars().all(|c| PCT_CHARS.contains(&c)) && !text.is_empty() {
+        push_tag(&mut token.tags, "PCT");
+        match text {
+            "," => push_tag(&mut token.tags, ","),
+            "." | "!" | "?" | "…" => push_tag(&mut token.tags, "."),
+            ":" | ";" => push_tag(&mut token.tags, ":"),
+            _ => {}
+        }
+        return;
+    }
+    if token.tags.is_empty() {
+        let capitalized = text.chars().next().is_some_and(char::is_uppercase);
+        push_tag(&mut token.tags, if capitalized { "NNP" } else { "UNKNOWN" });
+    }
+}
+
+/// Append `tag` to `tags` if not already present (order-preserving unique).
+fn push_tag(tags: &mut Vec<String>, tag: &str) {
+    if !tags.iter().any(|t| t == tag) {
+        tags.push(tag.to_owned());
     }
 }
 
@@ -252,9 +311,10 @@ mod tests {
             .map(|t| (t.text.as_str(), t.tags.iter().map(String::as_str).collect()))
             .collect();
         assert_eq!(toks, vec![
-            ("The", vec!["DT"]), // lower-case fallback resolves the sentence-initial cap
+            ("", vec!["SENT_START"]),             // zero-width sentence-start sentinel
+            ("The", vec!["DT"]),                  // lower-case fallback resolves the sentence-initial cap
             ("cat", vec!["NN"]),
-            (".", vec![]),       // unknown punctuation -> no tag
+            (".", vec!["PCT", ".", "SENT_END"]),  // structural: punctuation class + sentence-final
         ]);
         assert!(engine.is_known("The") && !engine.is_known("zzz"));
     }
