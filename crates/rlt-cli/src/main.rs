@@ -48,9 +48,13 @@ enum Command {
     Check {
         /// Path to the UTF-8 text file to check.
         file: PathBuf,
-        /// Grammar backend for L2.
-        #[arg(long, value_enum, default_value_t = Matcher::Nlprule)]
+        /// Grammar backend for L2 (default: our IR matcher over current LT rules).
+        #[arg(long, value_enum, default_value_t = Matcher::Ir)]
         matcher: Matcher,
+        /// Analysis engine for the IR matcher: the native current-LT pipeline (default) or nlprule.
+        /// Ignored for `--matcher nlprule` (which bundles its own analysis).
+        #[arg(long, value_enum, default_value_t = AnalysisEngine::Native)]
+        engine: AnalysisEngine,
     },
     /// Convert a LanguageTool grammar.xml into the runtime rkyv artifact.
     Convert {
@@ -123,7 +127,11 @@ fn main() -> Result<()> {
         .init();
 
     match Cli::parse().command {
-        Command::Check { file, matcher } => run_check(&file, matcher),
+        Command::Check {
+            file,
+            matcher,
+            engine,
+        } => run_check(&file, matcher, engine),
         Command::Convert { grammar, out } => {
             let report = rlt_convert::convert(&grammar, &out)?;
             tracing::info!(
@@ -206,6 +214,35 @@ fn main() -> Result<()> {
     }
 }
 
+/// Load the nlprule analysis engine (no grammar rules attached).
+fn load_nlprule_engine() -> Result<VendoredEngine> {
+    let tok = rlt_engine::DEFAULT_TOKENIZER_BIN;
+    VendoredEngine::from_path(std::path::Path::new(tok))
+        .with_context(|| format!("loading engine from {tok} (run `cargo xtask fetch-engine`?)"))
+}
+
+/// Load the native analysis engine from the default artifact paths (`segment.srx` + `tagger.rkyv`,
+/// with `disambig.rkyv` when present).
+fn load_native_engine() -> Result<rlt_native::NativeEngine> {
+    let srx = std::path::Path::new("resources/segment.srx");
+    let tagger = std::path::Path::new("resources/tagger.rkyv");
+    let disambig = std::path::Path::new("resources/disambig.rkyv");
+    rlt_native::NativeEngine::from_paths(srx, tagger, disambig.exists().then_some(disambig))
+        .with_context(|| {
+            "loading native engine — needs resources/segment.srx (cargo xtask fetch-lt) and \
+             resources/tagger.rkyv (cargo xtask build-tagger); disambig.rkyv via build-disambig"
+                .to_owned()
+        })
+}
+
+/// Load + compile the IR grammar matcher from the converter's rkyv blob.
+fn load_ir_matcher() -> Result<IrMatcher> {
+    let blob = rlt_convert::DEFAULT_OUT;
+    let bytes = std::fs::read(blob)
+        .with_context(|| format!("reading {blob} (run `cargo xtask build-blob`?)"))?;
+    IrMatcher::from_rkyv_bytes(&bytes).map_err(|e| anyhow!("compiling IR rules from {blob}: {e}"))
+}
+
 /// Load the L3 confusion model if present, else an empty (no-op) checker.
 fn load_confusion() -> ConfusionChecker {
     let path = rlt_convert::DEFAULT_CONFUSION_OUT;
@@ -266,41 +303,42 @@ fn run_tokens(text: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_check(file: &std::path::Path, matcher: Matcher) -> Result<()> {
+fn run_check(file: &std::path::Path, matcher: Matcher, engine: AnalysisEngine) -> Result<()> {
     let text =
         std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
-
-    let tok = rlt_engine::DEFAULT_TOKENIZER_BIN;
-    let engine = VendoredEngine::from_path(std::path::Path::new(tok))
-        .with_context(|| format!("loading engine from {tok} (run `cargo xtask fetch-engine`?)"))?;
 
     // L3 confusion (no-op when absent) and L4 neural tagging (skipped when absent) wrap either backend.
     let confusion = load_confusion();
     let tagger = load_tagger();
 
-    // L1 spelling runs for both backends; L2 grammar differs by `matcher`; L3 + L4 wrap both.
+    // L1 spelling runs for every path; L2 grammar differs by `matcher`; for the IR matcher the
+    // analysis engine differs by `engine`; L3 + L4 wrap all of them.
     let diagnostics = match matcher {
         Matcher::Nlprule => {
+            // Pure nlprule: it bundles analysis + grammar (the `--engine` flag does not apply).
+            let mut nlprule = load_nlprule_engine()?;
             let rules = rlt_engine::DEFAULT_RULES_BIN;
-            let engine = if std::path::Path::new(rules).exists() {
-                engine
+            if std::path::Path::new(rules).exists() {
+                nlprule = nlprule
                     .with_rules_path(std::path::Path::new(rules))
-                    .with_context(|| format!("loading grammar rules from {rules}"))?
+                    .with_context(|| format!("loading grammar rules from {rules}"))?;
             } else {
-                tracing::warn!(
-                    "{rules} not found — spelling only (run `cargo xtask fetch-engine`)"
-                );
-                engine
-            };
-            check_with_layers(engine, confusion, tagger, &text)
+                tracing::warn!("{rules} not found — spelling only (run `cargo xtask fetch-engine`)");
+            }
+            check_with_layers(nlprule, confusion, tagger, &text)
         }
         Matcher::Ir => {
-            let blob = rlt_convert::DEFAULT_OUT;
-            let bytes = std::fs::read(blob)
-                .with_context(|| format!("reading {blob} (run `cargo xtask build-blob`?)"))?;
-            let ir = IrMatcher::from_rkyv_bytes(&bytes)
-                .map_err(|e| anyhow!("compiling IR rules from {blob}: {e}"))?;
-            check_with_layers(Composite::new(engine, ir), confusion, tagger, &text)
+            let ir = load_ir_matcher()?;
+            match engine {
+                AnalysisEngine::Native => {
+                    let native = load_native_engine()?;
+                    check_with_layers(Composite::new(native, ir), confusion, tagger, &text)
+                }
+                AnalysisEngine::Nlprule => {
+                    let nlprule = load_nlprule_engine()?;
+                    check_with_layers(Composite::new(nlprule, ir), confusion, tagger, &text)
+                }
+            }
         }
     };
 

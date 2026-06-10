@@ -1345,6 +1345,7 @@ dependencies = [
  "console_error_panic_hook",
  "rlt-core",
  "rlt-engine",
+ "rlt-native",
  "rlt-tagger",
  "serde-wasm-bindgen",
  "wasm-bindgen",
