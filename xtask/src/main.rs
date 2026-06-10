@@ -361,7 +361,8 @@ fn sweep_one(version: &str) -> AdaptResult {
         return r;
     }
     r.convert_compiles = true;
-    let blob_log = strip_ansi(&blob.stderr);
+    // The converter logs its report via tracing (to stdout), with the `key=value` fields coloured.
+    let blob_log = strip_ansi(&format!("{}\n{}", blob.stdout, blob.stderr));
     r.rules_total = num_after(&blob_log, "rules=");
     r.rules_opaque = num_after(&blob_log, "opaque=");
 
