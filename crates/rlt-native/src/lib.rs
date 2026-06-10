@@ -10,6 +10,7 @@
 
 #![forbid(unsafe_code)]
 
+mod compound;
 mod tagger;
 
 pub use tagger::{Tagger, TaggerError, WordData, build_artifact, build_from_triples};
@@ -18,7 +19,7 @@ use std::ops::Range;
 use std::path::Path;
 
 use rlt_core::{Analysis, Disambiguator, Engine, Span, Token};
-use rlt_lang::{LangConfig, TagSet};
+use rlt_lang::{Compounding, LangConfig, TagSet};
 
 /// Errors constructing the engine from its artifacts.
 #[derive(Debug, thiserror::Error)]
@@ -45,6 +46,8 @@ pub struct NativeEngine {
     disambiguator: Option<Disambiguator>,
     /// The structural tagset this language's grammar anchors on (Penn vs STTS).
     tagset: &'static TagSet,
+    /// Compound-word splitting rules, if the language compounds (German); `None` otherwise.
+    compounds: Option<&'static Compounding>,
 }
 
 impl NativeEngine {
@@ -58,6 +61,7 @@ impl NativeEngine {
             tagger,
             disambiguator: None,
             tagset: &rlt_lang::EN.tagset,
+            compounds: None,
         }
     }
 
@@ -86,8 +90,13 @@ impl NativeEngine {
         segment_srx: &str,
         tagger: &[u8],
     ) -> Result<Self, NativeError> {
-        Ok(Self::new(Segmenter::from_srx(segment_srx, cfg.code)?, Tagger::from_bytes(tagger)?)
-            .with_tagset(&cfg.tagset))
+        Ok(Self {
+            segmenter: Segmenter::from_srx(segment_srx, cfg.code)?,
+            tagger: Tagger::from_bytes(tagger)?,
+            disambiguator: None,
+            tagset: &cfg.tagset,
+            compounds: cfg.compounds.as_ref(),
+        })
     }
 
     /// Load from files on disk — the native path. `disambig` (the `disambig.rkyv` artifact) is
@@ -129,6 +138,18 @@ impl Engine for NativeEngine {
             tokenize_into(&text[range.clone()], range.start, &mut sentence);
             for token in &mut sentence {
                 self.tagger.tag_token(token);
+                // Out-of-lexicon word + a compounding language → try a compound split, taking the head
+                // constituent's analyses (so e.g. German `Haustür` is tagged, not flagged unknown).
+                if token.tags.is_empty() {
+                    if let Some(rules) = self.compounds {
+                        if let Some(analyses) = compound::analyze_compound(&token.text, &self.tagger, rules) {
+                            for wd in &analyses {
+                                push_tag(&mut token.tags, &wd.tag);
+                                push_tag(&mut token.lemmas, &wd.lemma);
+                            }
+                        }
+                    }
+                }
                 push_structural_tags(token, self.tagset);
             }
             // SENT_END marks the sentence's final token — 331 grammar rules anchor on it.
@@ -147,6 +168,9 @@ impl Engine for NativeEngine {
 
     fn is_known(&self, word: &str) -> bool {
         self.tagger.is_known(word)
+            || self
+                .compounds
+                .is_some_and(|rules| compound::is_compound(word, &self.tagger, rules))
     }
 }
 
