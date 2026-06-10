@@ -15,8 +15,9 @@ mod tagger;
 pub use tagger::{Tagger, TaggerError, WordData, build_artifact};
 
 use std::ops::Range;
+use std::path::Path;
 
-use rlt_core::{Span, Token};
+use rlt_core::{Analysis, Engine, Span, Token};
 
 /// Errors constructing the engine from its artifacts.
 #[derive(Debug, thiserror::Error)]
@@ -24,6 +25,61 @@ pub enum NativeError {
     /// `segment.srx` could not be parsed.
     #[error("parsing segment.srx: {0}")]
     Srx(String),
+    /// The tagger artifact could not be loaded.
+    #[error(transparent)]
+    Tagger(#[from] TaggerError),
+    /// An artifact file could not be read.
+    #[error("reading artifact: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// The native analysis engine: sentence segmentation + tokenization + FST POS tagging behind
+/// [`rlt_core::Engine`]. A drop-in replacement for the vendored nlprule engine.
+pub struct NativeEngine {
+    segmenter: Segmenter,
+    tagger: Tagger,
+}
+
+impl NativeEngine {
+    /// Assemble from a loaded segmenter + tagger.
+    #[must_use]
+    pub fn new(segmenter: Segmenter, tagger: Tagger) -> Self {
+        Self { segmenter, tagger }
+    }
+
+    /// Load from in-memory bytes — the wasm path. `segment_srx` is the SRX XML; `tagger` is the
+    /// rkyv tagger artifact.
+    ///
+    /// # Errors
+    /// Returns [`NativeError`] if either artifact is malformed.
+    pub fn from_bytes(segment_srx: &str, tagger: &[u8]) -> Result<Self, NativeError> {
+        Ok(Self {
+            segmenter: Segmenter::from_srx(segment_srx, "en")?,
+            tagger: Tagger::from_bytes(tagger)?,
+        })
+    }
+
+    /// Load from files on disk — the native path (`segment.srx` + `tagger.rkyv`).
+    ///
+    /// # Errors
+    /// Returns [`NativeError`] if a file is missing or an artifact is malformed.
+    pub fn from_paths(segment_srx: &Path, tagger: &Path) -> Result<Self, NativeError> {
+        Self::from_bytes(&std::fs::read_to_string(segment_srx)?, &std::fs::read(tagger)?)
+    }
+}
+
+impl Engine for NativeEngine {
+    fn analyze(&self, text: &str) -> Analysis {
+        let mut tokens = segment_tokenize(&self.segmenter, text);
+        for token in &mut tokens {
+            self.tagger.tag_token(token);
+        }
+        Analysis { tokens }
+    }
+
+    fn is_known(&self, word: &str) -> bool {
+        self.tagger.is_known(word)
+    }
 }
 
 /// Sentence segmenter driven by LanguageTool's `segment.srx` (via the `srx` crate), specialized to
@@ -170,5 +226,36 @@ mod tests {
         assert!(sents[0].contains("home") && sents[1].contains("stayed"), "{sents:?}");
         // Spans must tile the text exactly.
         assert_eq!(sents.concat(), text);
+    }
+
+    #[test]
+    fn analyze_segments_tokenizes_and_tags() {
+        use std::collections::BTreeMap;
+
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../resources/segment.srx");
+        let Ok(xml) = std::fs::read_to_string(path) else {
+            eprintln!("skip: {path} not fetched");
+            return;
+        };
+        let segmenter = Segmenter::from_srx(&xml, "en").expect("parse segment.srx");
+
+        let mut words = BTreeMap::new();
+        words.insert("the".to_owned(), vec![WordData { lemma: "the".to_owned(), tag: "DT".to_owned() }]);
+        words.insert("cat".to_owned(), vec![WordData { lemma: "cat".to_owned(), tag: "NN".to_owned() }]);
+        let tagger = Tagger::from_bytes(&build_artifact(&words).unwrap()).unwrap();
+
+        let engine = NativeEngine::new(segmenter, tagger);
+        let analysis = engine.analyze("The cat.");
+        let toks: Vec<(&str, Vec<&str>)> = analysis
+            .tokens
+            .iter()
+            .map(|t| (t.text.as_str(), t.tags.iter().map(String::as_str).collect()))
+            .collect();
+        assert_eq!(toks, vec![
+            ("The", vec!["DT"]), // lower-case fallback resolves the sentence-initial cap
+            ("cat", vec!["NN"]),
+            (".", vec![]),       // unknown punctuation -> no tag
+        ]);
+        assert!(engine.is_known("The") && !engine.is_known("zzz"));
     }
 }
