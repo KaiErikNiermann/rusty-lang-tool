@@ -1312,6 +1312,7 @@ name = "rlt-native"
 version = "0.0.0"
 dependencies = [
  "fst",
+ "rkyv",
  "rlt-core",
  "serde",
  "srx",

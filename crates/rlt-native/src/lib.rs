@@ -10,6 +10,10 @@
 
 #![forbid(unsafe_code)]
 
+mod tagger;
+
+pub use tagger::{Tagger, TaggerError, WordData, build_artifact};
+
 use std::ops::Range;
 
 use rlt_core::{Span, Token};

@@ -14,6 +14,8 @@ rlt-core.workspace = true
 srx.workspace = true
 # The POS tagger FSA (inflected -> lemma+tags); also backs is_known.
 fst.workspace = true
+# Zero-copy artifact for the tagger's side-table (the fst maps word -> entry index).
+rkyv.workspace = true
 serde = { workspace = true }
 thiserror.workspace = true
 
