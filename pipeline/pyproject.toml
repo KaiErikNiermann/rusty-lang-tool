@@ -1,0 +1,42 @@
+[project]
+name = "rlt-pipeline"
+version = "0.0.0"
+description = "Offline L4 pipeline: export + int8-quantize the GECToR tagger to ONNX (for rten) and evaluate it."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "torch>=2.2,<3",
+    # gector requires >=4.49; transformers 5.x broke its inner AutoModel.from_pretrained
+    # (meta-device guard), so cap below 5.
+    "transformers>=4.49,<5",
+    "huggingface-hub",
+    "onnx>=1.16",
+    "onnxruntime>=1.18",
+    "numpy",
+    "gector",
+]
+
+# uv is used (not Poetry) here: it resolves the CPU-only torch index + git source for `gector`
+# far more reliably than Poetry for an ML stack, and is the Python manager present on this machine.
+# Pinned to 3.12 because torch has no 3.14 wheels yet (system default is 3.14).
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+gector = { git = "https://github.com/gotutiyan/gector" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[dependency-groups]
+dev = ["ruff", "pyright"]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.pyright]
+# `standard` (not the global `strict` default): torch/transformers/gector ship without complete
+# type stubs, so strict mode drowns in unavoidable `Unknown`s at the library boundary. We keep our
+# own helper code typed and let the ML-library interop be `Any`.
+typeCheckingMode = "standard"
+pythonVersion = "3.12"
+reportMissingImports = true

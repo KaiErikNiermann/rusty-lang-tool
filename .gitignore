@@ -27,3 +27,6 @@ node_modules/
 
 # insta pending snapshots
 *.snap.new
+
+# L4 neural model artifacts (gector-derived; large + non-commercial)
+/resources/l4/
