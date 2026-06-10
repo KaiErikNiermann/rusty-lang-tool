@@ -40,3 +40,6 @@ node_modules/
 # AGID inflection + part-of-speech databases (fetched; the native POS tagger's source — build-tagger)
 /resources/agid-infl.txt
 /resources/agid-pos.txt
+
+# Claude Code local state
+/.claude/
