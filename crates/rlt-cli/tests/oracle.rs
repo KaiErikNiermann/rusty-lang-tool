@@ -76,7 +76,7 @@ fn nlprule_baseline_reproduces_examples() {
 #[ignore = "slow and needs fetched data + en.rkyv; run via `cargo xtask run-oracle`"]
 fn ir_matcher_reproduces_examples() {
     let tokenizer = root("resources/en_tokenizer.bin");
-    let blob = root("resources/en.rkyv");
+    let blob = root("resources/en/grammar.rkyv");
     let grammar = root(rlt_convert::DEFAULT_GRAMMAR);
     if missing(&[
         ("tokenizer", &tokenizer),
@@ -149,7 +149,7 @@ fn correct_sentences(grammar: &Path) -> Vec<String> {
 #[ignore = "slow and needs fetched data + confusion.rkyv; run via `cargo xtask run-oracle`"]
 fn l3_confusion_precision_recall() {
     let tokenizer = root("resources/en_tokenizer.bin");
-    let model_path = root("resources/confusion.rkyv");
+    let model_path = root("resources/en/confusion.rkyv");
     let grammar = root(rlt_convert::DEFAULT_GRAMMAR);
     if missing(&[
         ("tokenizer", &tokenizer),
@@ -237,7 +237,7 @@ fn l3_confusion_precision_recall() {
 #[test]
 #[ignore = "needs resources/l4 artifact; run via `cargo xtask run-l4-oracle`"]
 fn l4_edit_tagger_precision_recall() {
-    let dir = root("resources/l4");
+    let dir = root("resources/en/l4");
     if !dir.join("model.int8.onnx").exists() {
         eprintln!(
             "skipping L4 oracle: {} missing (run `cargo xtask build-l4`)",

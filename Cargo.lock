@@ -1403,6 +1403,7 @@ dependencies = [
  "rlt-core",
  "rlt-engine",
  "rlt-ir",
+ "rlt-lang",
  "rlt-native",
  "rlt-tagger",
  "serde",
@@ -1457,6 +1458,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rlt-lang"
+version = "0.0.0"
+
+[[package]]
 name = "rlt-native"
 version = "0.0.0"
 dependencies = [
@@ -1467,6 +1472,7 @@ dependencies = [
  "rlt-core",
  "rlt-engine",
  "rlt-ir",
+ "rlt-lang",
  "serde",
  "srx",
  "thiserror 2.0.18",
@@ -1493,6 +1499,7 @@ dependencies = [
  "console_error_panic_hook",
  "rlt-core",
  "rlt-engine",
+ "rlt-lang",
  "rlt-native",
  "rlt-tagger",
  "serde-wasm-bindgen",

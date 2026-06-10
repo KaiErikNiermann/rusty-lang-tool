@@ -1,0 +1,15 @@
+[package]
+name = "rlt-lang"
+description = "Per-language configuration for rusty-lang-tool: artifact paths, POS-dict Maven coordinates, the structural tagset, and source/compound options. The one place a language is defined."
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Intentionally dependency-free: pure data + path helpers, depended on by every crate + xtask.
+[dependencies]
+
+[lints]
+workspace = true

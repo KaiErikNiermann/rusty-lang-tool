@@ -12,6 +12,8 @@ authors.workspace = true
 rlt-core.workspace = true
 # `align_bytes` — shared rkyv alignment helper, so loading is robust to any input alignment.
 rlt-ir.workspace = true
+# Per-language config: the structural TagSet (Penn vs STTS) + the SRX language code.
+rlt-lang.workspace = true
 # LanguageTool sentence segmentation from segment.srx (pure Rust, wasm-ok).
 srx.workspace = true
 # The POS tagger FSA (inflected -> lemma+tags); also backs is_known.

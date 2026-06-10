@@ -48,6 +48,9 @@ enum Command {
     Check {
         /// Path to the UTF-8 text file to check.
         file: PathBuf,
+        /// Language (ISO code, e.g. `en`, `de`).
+        #[arg(long, default_value = "en")]
+        lang: String,
         /// Grammar backend for L2 (default: our IR matcher over current LT rules).
         #[arg(long, value_enum, default_value_t = Matcher::Ir)]
         matcher: Matcher,
@@ -88,30 +91,33 @@ enum Command {
     /// Score the IR matcher against LT's `<example>` corpus and print the numbers (no asserts).
     /// `--json` feeds the adaptability sweep; works on any LT version's grammar/blob.
     ScoreOracle {
+        /// Language (ISO code, e.g. `en`, `de`) — supplies the default artifact/grammar paths.
+        #[arg(long, default_value = "en")]
+        lang: String,
         /// Which engine supplies token analysis: the nlprule baseline or the native current-LT tagger.
         #[arg(long, value_enum, default_value_t = AnalysisEngine::Nlprule)]
         engine: AnalysisEngine,
         /// nlprule tokenizer binary (used by `--engine nlprule`).
         #[arg(long, default_value = rlt_engine::DEFAULT_TOKENIZER_BIN)]
         tokenizer: PathBuf,
-        /// SRX segmentation rules (used by `--engine native`).
-        #[arg(long, default_value = "resources/segment.srx")]
-        segment_srx: PathBuf,
-        /// Native POS tagger artifact (used by `--engine native`).
-        #[arg(long, default_value = "resources/tagger.rkyv")]
-        tagger: PathBuf,
-        /// Native disambiguation artifact (used by `--engine native`); omit to skip disambiguation.
-        #[arg(long, default_value = "resources/disambig.rkyv")]
-        disambig: PathBuf,
-        /// Disable the native disambiguation pass even if `--disambig` exists.
+        /// SRX segmentation rules (used by `--engine native`; defaults to the shared file).
+        #[arg(long)]
+        segment_srx: Option<PathBuf>,
+        /// Native POS tagger artifact (used by `--engine native`; defaults from `--lang`).
+        #[arg(long)]
+        tagger: Option<PathBuf>,
+        /// Native disambiguation artifact (used by `--engine native`; defaults from `--lang`).
+        #[arg(long)]
+        disambig: Option<PathBuf>,
+        /// Disable the native disambiguation pass even if the disambig artifact exists.
         #[arg(long)]
         no_disambig: bool,
-        /// Compiled IR rkyv blob.
-        #[arg(long, default_value = rlt_convert::DEFAULT_OUT)]
-        blob: PathBuf,
-        /// LanguageTool `grammar.xml`.
-        #[arg(long, default_value = rlt_convert::DEFAULT_GRAMMAR)]
-        grammar: PathBuf,
+        /// Compiled IR rkyv blob (defaults from `--lang`).
+        #[arg(long)]
+        blob: Option<PathBuf>,
+        /// LanguageTool `grammar.xml` (defaults from `--lang`).
+        #[arg(long)]
+        grammar: Option<PathBuf>,
         /// Emit JSON instead of a human-readable summary.
         #[arg(long)]
         json: bool,
@@ -129,9 +135,10 @@ fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Check {
             file,
+            lang,
             matcher,
             engine,
-        } => run_check(&file, matcher, engine),
+        } => run_check(&file, matcher, engine, resolve_lang(&lang)?),
         Command::Convert { grammar, out } => {
             let report = rlt_convert::convert(&grammar, &out)?;
             tracing::info!(
@@ -170,6 +177,7 @@ fn main() -> Result<()> {
         }
         Command::Tokens { text } => run_tokens(&text),
         Command::ScoreOracle {
+            lang,
             engine,
             tokenizer,
             segment_srx,
@@ -180,17 +188,25 @@ fn main() -> Result<()> {
             grammar,
             json,
         } => {
+            let cfg = resolve_lang(&lang)?;
+            // Path flags default from the language config when not given explicitly.
+            let blob = blob.unwrap_or_else(|| cfg.grammar_blob_path().into());
+            let grammar = grammar.unwrap_or_else(|| cfg.grammar_xml_path().into());
             let report = match engine {
                 AnalysisEngine::Nlprule => {
                     rlt_cli::oracle_score::score_ir(&tokenizer, &blob, &grammar)?
                 }
                 AnalysisEngine::Native => {
+                    let segment_srx = segment_srx.unwrap_or_else(|| cfg.segment_srx_path().into());
+                    let tagger = tagger.unwrap_or_else(|| cfg.tagger_path().into());
+                    let disambig = disambig.unwrap_or_else(|| cfg.disambig_path().into());
                     // Use the disambiguation artifact when present (unless explicitly disabled).
-                    let disambig = (!no_disambig && disambig.exists()).then_some(disambig.as_path());
+                    let disambig = (!no_disambig && disambig.exists()).then_some(disambig);
                     rlt_cli::oracle_score::score_ir_native(
+                        cfg,
                         &segment_srx,
                         &tagger,
-                        disambig,
+                        disambig.as_deref(),
                         &blob,
                         &grammar,
                     )?
@@ -214,6 +230,11 @@ fn main() -> Result<()> {
     }
 }
 
+/// Resolve an ISO language code to its static config, erroring on unknown codes.
+fn resolve_lang(code: &str) -> Result<&'static rlt_lang::LangConfig> {
+    rlt_lang::config(code).ok_or_else(|| anyhow!("unknown language {code:?} (known: en, de)"))
+}
+
 /// Load the nlprule analysis engine (no grammar rules attached).
 fn load_nlprule_engine() -> Result<VendoredEngine> {
     let tok = rlt_engine::DEFAULT_TOKENIZER_BIN;
@@ -221,32 +242,44 @@ fn load_nlprule_engine() -> Result<VendoredEngine> {
         .with_context(|| format!("loading engine from {tok} (run `cargo xtask fetch-engine`?)"))
 }
 
-/// Load the native analysis engine from the default artifact paths (`segment.srx` + `tagger.rkyv`,
-/// with `disambig.rkyv` when present).
-fn load_native_engine() -> Result<rlt_native::NativeEngine> {
-    let srx = std::path::Path::new("resources/segment.srx");
-    let tagger = std::path::Path::new("resources/tagger.rkyv");
-    let disambig = std::path::Path::new("resources/disambig.rkyv");
-    rlt_native::NativeEngine::from_paths(srx, tagger, disambig.exists().then_some(disambig))
-        .with_context(|| {
-            "loading native engine — needs resources/segment.srx (cargo xtask fetch-lt) and \
-             resources/tagger.rkyv (cargo xtask build-tagger); disambig.rkyv via build-disambig"
-                .to_owned()
-        })
+/// Load the native analysis engine for `cfg` (`segment.srx` + `resources/<lang>/tagger.rkyv`, with
+/// `disambig.rkyv` when present), using the language's structural tagset.
+fn load_native_engine(cfg: &'static rlt_lang::LangConfig) -> Result<rlt_native::NativeEngine> {
+    let srx = PathBuf::from(cfg.segment_srx_path());
+    let tagger = PathBuf::from(cfg.tagger_path());
+    let disambig = PathBuf::from(cfg.disambig_path());
+    rlt_native::NativeEngine::from_paths(
+        cfg,
+        &srx,
+        &tagger,
+        disambig.exists().then_some(disambig.as_path()),
+    )
+    .with_context(|| {
+        format!(
+            "loading native engine — needs {} (cargo xtask fetch-lt) and {} \
+             (cargo xtask build-tagger --lang {}); disambig via build-disambig",
+            srx.display(),
+            tagger.display(),
+            cfg.code,
+        )
+    })
 }
 
-/// Load + compile the IR grammar matcher from the converter's rkyv blob.
-fn load_ir_matcher() -> Result<IrMatcher> {
-    let blob = rlt_convert::DEFAULT_OUT;
-    let bytes = std::fs::read(blob)
-        .with_context(|| format!("reading {blob} (run `cargo xtask build-blob`?)"))?;
+/// Load + compile the IR grammar matcher from `cfg`'s rkyv blob.
+fn load_ir_matcher(cfg: &rlt_lang::LangConfig) -> Result<IrMatcher> {
+    let blob = cfg.grammar_blob_path();
+    let bytes = std::fs::read(&blob)
+        .with_context(|| format!("reading {blob} (run `cargo xtask build-blob --lang {}`?)", cfg.code))?;
     IrMatcher::from_rkyv_bytes(&bytes).map_err(|e| anyhow!("compiling IR rules from {blob}: {e}"))
 }
 
-/// Load the L3 confusion model if present, else an empty (no-op) checker.
-fn load_confusion() -> ConfusionChecker {
-    let path = rlt_convert::DEFAULT_CONFUSION_OUT;
-    std::fs::read(path)
+/// Load the L3 confusion model if `cfg` enables it and it's present, else an empty (no-op) checker.
+fn load_confusion(cfg: &rlt_lang::LangConfig) -> ConfusionChecker {
+    if !cfg.sources.confusion {
+        return ConfusionChecker::empty();
+    }
+    let path = cfg.confusion_path();
+    std::fs::read(&path)
         .ok()
         .and_then(|b| ConfusionChecker::from_rkyv_bytes(&b).ok())
         .unwrap_or_else(|| {
@@ -255,14 +288,17 @@ fn load_confusion() -> ConfusionChecker {
         })
 }
 
-/// Load the L4 neural tagger from `resources/l4/` if present, else `None` (L4 disabled).
-fn load_tagger() -> Option<Tagger<RtenTagSource>> {
-    let dir = std::path::Path::new("resources/l4");
-    if !dir.join("model.int8.onnx").exists() {
-        tracing::warn!("resources/l4 not found — L4 disabled (run `cargo xtask build-l4`)");
+/// Load the L4 neural tagger if `cfg` enables it and `resources/<lang>/l4/` is present, else `None`.
+fn load_tagger(cfg: &rlt_lang::LangConfig) -> Option<Tagger<RtenTagSource>> {
+    if !cfg.sources.neural_l4 {
         return None;
     }
-    match Tagger::from_dir(dir) {
+    let dir = PathBuf::from(cfg.l4_dir());
+    if !dir.join("model.int8.onnx").exists() {
+        tracing::warn!("{} not found — L4 disabled (run `cargo xtask build-l4`)", dir.display());
+        return None;
+    }
+    match Tagger::from_dir(&dir) {
         Ok(tagger) => Some(tagger),
         Err(e) => {
             tracing::warn!("L4 disabled: {e}");
@@ -303,13 +339,18 @@ fn run_tokens(text: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_check(file: &std::path::Path, matcher: Matcher, engine: AnalysisEngine) -> Result<()> {
+fn run_check(
+    file: &std::path::Path,
+    matcher: Matcher,
+    engine: AnalysisEngine,
+    cfg: &'static rlt_lang::LangConfig,
+) -> Result<()> {
     let text =
         std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
 
     // L3 confusion (no-op when absent) and L4 neural tagging (skipped when absent) wrap either backend.
-    let confusion = load_confusion();
-    let tagger = load_tagger();
+    let confusion = load_confusion(cfg);
+    let tagger = load_tagger(cfg);
 
     // L1 spelling runs for every path; L2 grammar differs by `matcher`; for the IR matcher the
     // analysis engine differs by `engine`; L3 + L4 wrap all of them.
@@ -328,10 +369,10 @@ fn run_check(file: &std::path::Path, matcher: Matcher, engine: AnalysisEngine) -
             check_with_layers(nlprule, confusion, tagger, &text)
         }
         Matcher::Ir => {
-            let ir = load_ir_matcher()?;
+            let ir = load_ir_matcher(cfg)?;
             match engine {
                 AnalysisEngine::Native => {
-                    let native = load_native_engine()?;
+                    let native = load_native_engine(cfg)?;
                     check_with_layers(Composite::new(native, ir), confusion, tagger, &text)
                 }
                 AnalysisEngine::Nlprule => {

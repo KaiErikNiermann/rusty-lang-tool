@@ -19,10 +19,11 @@ fn engine() -> Option<&'static NativeEngine> {
     static ENGINE: OnceLock<Option<NativeEngine>> = OnceLock::new();
     ENGINE
         .get_or_init(|| {
-            let disambig = Path::new(RES).join("disambig.rkyv");
+            let disambig = Path::new(RES).join("en/disambig.rkyv");
             NativeEngine::from_paths(
+                &rlt_lang::EN,
                 &Path::new(RES).join("segment.srx"),
-                &Path::new(RES).join("tagger.rkyv"),
+                &Path::new(RES).join("en/tagger.rkyv"),
                 disambig.exists().then_some(disambig.as_path()),
             )
             .ok()

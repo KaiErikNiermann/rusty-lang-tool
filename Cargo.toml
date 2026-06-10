@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/rlt-ir",
+    "crates/rlt-lang",
     "crates/rlt-convert",
     "crates/rlt-engine",
     "crates/rlt-native",
@@ -73,6 +74,7 @@ similar = "2"
 srx = { version = "0.1", features = ["from_xml"] }
 # Internal crates
 rlt-ir = { path = "crates/rlt-ir" }
+rlt-lang = { path = "crates/rlt-lang" }
 rlt-engine = { path = "crates/rlt-engine" }
 rlt-core = { path = "crates/rlt-core" }
 rlt-convert = { path = "crates/rlt-convert" }

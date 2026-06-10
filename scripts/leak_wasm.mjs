@@ -24,11 +24,11 @@ function text(name) {
 let srx, tagger, ir, disambig;
 try {
   srx = text("segment.srx");
-  tagger = bytes("tagger.rkyv");
-  ir = bytes("en.rkyv");
+  tagger = bytes("en/tagger.rkyv");
+  ir = bytes("en/grammar.rkyv");
   disambig = (() => {
     try {
-      return bytes("disambig.rkyv");
+      return bytes("en/disambig.rkyv");
     } catch {
       return new Uint8Array();
     }
@@ -38,7 +38,7 @@ try {
   process.exit(0);
 }
 
-const checker = RltChecker.with_native(srx, tagger, disambig, ir);
+const checker = RltChecker.with_native("en", srx, tagger, disambig, ir);
 const INPUT = "I should of went their yesterday. She go to school. In 2023, they recieve teh msg.";
 
 function sample() {

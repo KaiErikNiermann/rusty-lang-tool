@@ -21,10 +21,11 @@ const WORDS: &[&str] = &["the", "running", "London", "recieve", "gives", "zxqwv"
 const ITERS: usize = 3000;
 
 fn main() {
-    let disambig = Path::new("resources/disambig.rkyv");
+    let disambig = Path::new("resources/en/disambig.rkyv");
     let engine = NativeEngine::from_paths(
+        &rlt_lang::EN,
         Path::new("resources/segment.srx"),
-        Path::new("resources/tagger.rkyv"),
+        Path::new("resources/en/tagger.rkyv"),
         disambig.exists().then_some(disambig),
     )
     .expect("load native engine — build the artifacts first");

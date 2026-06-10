@@ -35,10 +35,11 @@ fn root(rel: &str) -> PathBuf {
 }
 
 fn load_native() -> Option<NativeEngine> {
-    let disambig = root("resources/disambig.rkyv");
+    let disambig = root("resources/en/disambig.rkyv");
     NativeEngine::from_paths(
+        &rlt_lang::EN,
         &root("resources/segment.srx"),
-        &root("resources/tagger.rkyv"),
+        &root("resources/en/tagger.rkyv"),
         disambig.exists().then_some(disambig.as_path()),
     )
     .ok()

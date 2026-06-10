@@ -282,12 +282,12 @@ mod tests {
 
     #[test]
     fn reads_real_languagetool_english_dict() {
-        let base = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../resources"));
+        let base = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../resources/en"));
         let (Ok(dict), Ok(info)) = (
-            std::fs::read(base.join("english.dict")),
-            std::fs::read_to_string(base.join("english.info")),
+            std::fs::read(base.join("pos.dict")),
+            std::fs::read_to_string(base.join("pos.info")),
         ) else {
-            eprintln!("skip: resources/english.dict not present");
+            eprintln!("skip: resources/en/pos.dict not present");
             return;
         };
         let meta = parse_info(&info).expect("parse .info");
