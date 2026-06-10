@@ -16,6 +16,10 @@
 
 #![forbid(unsafe_code)]
 
+mod infer;
+
+pub use infer::{Meta, RtenTagSource, TaggerError};
+
 use rlt_core::{Analysis, Diagnostic, GrammarChecker, Source, Span, Suggestion};
 
 /// A whitespace-delimited input word, as a byte range into the source text (GECToR operates on

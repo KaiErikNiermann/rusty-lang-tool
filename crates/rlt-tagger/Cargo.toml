@@ -11,7 +11,12 @@ authors.workspace = true
 [dependencies]
 rlt-core.workspace = true
 serde = { workspace = true }
+serde_json.workspace = true
 thiserror.workspace = true
+# Pure-Rust ONNX inference + RoBERTa tokenization (native + wasm32, one feature set).
+rten.workspace = true
+rten-tensor.workspace = true
+tokenizers.workspace = true
 
 [lints]
 workspace = true
