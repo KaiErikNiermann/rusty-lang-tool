@@ -256,10 +256,14 @@ pub static DE: LangConfig = LangConfig {
         jar_dict_path: "org/languagetool/resource/de/german.dict",
         jar_info_path: "org/languagetool/resource/de/german.info",
     },
+    // STTS-derived structural tags, verified against de/tagset.txt + grammar.xml + disambiguation.xml:
+    // ZAN = digit sequence (Ziffernfolge, not the number-word ZAL); PKT = the `[.,;:…!?]` class (88
+    // literal + many regex rule refs); EIG = Eigenname — grammar references `EIG:.*` regex, so the
+    // colon-suffixed form matches the most rules; German grammar uses no literal punctuation postags.
     tagset: TagSet {
-        digit_tag: "ZAL",
+        digit_tag: "ZAN",
         punctuation_tag: "PKT",
-        punctuation_classes: &[(",", ","), (".", "."), (":", ":")],
+        punctuation_classes: &[],
         punctuation_chars: PCT_CHARS,
         proper_noun_tag: "EIG:NOM:SIN:MAS",
         oov_tag: "UNKNOWN",
