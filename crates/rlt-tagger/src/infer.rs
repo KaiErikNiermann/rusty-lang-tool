@@ -14,7 +14,7 @@ use rten_tensor::{NdTensor, Tensor};
 use serde::Deserialize;
 use tokenizers::Tokenizer;
 
-use crate::{Labels, TagSource, Tagger, TaggerConfig, WordPred, WordSpan};
+use crate::{Labels, TagSource, Tagger, TaggerConfig, VerbDict, WordPred, WordSpan};
 
 /// The indices the Rust side must agree with the exported graph on (subset of `meta.json`).
 #[derive(Debug, Clone, Deserialize)]
@@ -203,11 +203,16 @@ impl Tagger<RtenTagSource> {
         let tokenizer = Tokenizer::from_file(dir.join("tokenizer.json")).map_err(backend)?;
         let labels: Vec<String> = serde_json::from_slice(&std::fs::read(dir.join("labels.json"))?)?;
         let meta: Meta = serde_json::from_slice(&std::fs::read(dir.join("meta.json"))?)?;
+        // Verb dict is optional: without it, $TRANSFORM_VERB_* tags are simply skipped.
+        let verb_dict = std::fs::read_to_string(dir.join("verb-form-vocab.txt"))
+            .map(|s| VerbDict::parse(&s))
+            .unwrap_or_default();
         Ok(Tagger::new(
             RtenTagSource::new(model, tokenizer, meta),
             Labels::new(labels),
             TaggerConfig::default(),
-        ))
+        )
+        .with_verb_dict(verb_dict))
     }
 }
 

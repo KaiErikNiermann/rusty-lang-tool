@@ -20,7 +20,40 @@ mod infer;
 
 pub use infer::{Meta, RtenTagSource, TaggerError};
 
+use std::collections::HashMap;
+
 use rlt_core::{Analysis, Diagnostic, GrammarChecker, Source, Span, Suggestion};
+
+/// Grammarly's verb-form transform dictionary, keyed `"{word}_{from_tag}_{to_tag}"` → target form
+/// (e.g. `"go_VB_VBZ"` → `"goes"`), used to apply `$TRANSFORM_VERB_*` tags.
+#[derive(Debug, Clone, Default)]
+pub struct VerbDict(HashMap<String, String>);
+
+impl VerbDict {
+    /// Parse `verb-form-vocab.txt` (`word1_word2:TAG1_TAG2` lines) into the decode map. First
+    /// mapping for a key wins (matching gector's loader).
+    #[must_use]
+    pub fn parse(text: &str) -> Self {
+        let mut map: HashMap<String, String> = HashMap::new();
+        for line in text.lines() {
+            let Some((words, tags)) = line.split_once(':') else {
+                continue;
+            };
+            let Some((from_word, to_word)) = words.split_once('_') else {
+                continue;
+            };
+            // decode key = "{word1}_{TAG1}_{TAG2}" = "{from_word}_{tags}".
+            map.entry(format!("{from_word}_{}", tags.trim()))
+                .or_insert_with(|| to_word.to_owned());
+        }
+        Self(map)
+    }
+
+    /// Resolve a `$TRANSFORM_VERB_{tags}` for `surface` (`tags` like `"VB_VBZ"`).
+    fn apply(&self, surface: &str, tags: &str) -> Option<&str> {
+        self.0.get(&format!("{surface}_{tags}")).map(String::as_str)
+    }
+}
 
 /// A whitespace-delimited input word, as a byte range into the source text (GECToR operates on
 /// space-tokenized words, not the engine's linguistic tokens).
@@ -82,8 +115,8 @@ impl Labels {
     }
 }
 
-/// A decoded GECToR edit. The transform/merge/split families that need external dictionaries
-/// ([`Edit::Unsupported`]) are deferred; the core text edits are handled directly.
+/// A decoded GECToR edit. `$MERGE_*` (needs the following word) and padding/OOV tags decode to
+/// [`Edit::Unsupported`] and are skipped; everything else is applied directly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Edit {
     /// `$KEEP` — leave the word unchanged.
@@ -96,19 +129,30 @@ pub enum Edit {
     Replace(String),
     /// `$TRANSFORM_CASE_*` — recase the word.
     Case(CaseOp),
-    /// A recognised-but-not-yet-handled tag (`$TRANSFORM_VERB_*`, `$MERGE_*`, padding, …).
+    /// `$TRANSFORM_AGREEMENT_PLURAL` — append `s`.
+    Pluralize,
+    /// `$TRANSFORM_AGREEMENT_SINGULAR` — drop the trailing character.
+    Singularize,
+    /// `$TRANSFORM_SPLIT_HYPHEN` — replace hyphens with spaces.
+    SplitHyphen,
+    /// `$TRANSFORM_VERB_{from}_{to}` — verb-form change resolved via the [`VerbDict`] (the `tags`
+    /// suffix, e.g. `"VB_VBZ"`).
+    Verb(String),
+    /// A recognised-but-not-applied tag (`$MERGE_*`, `<PAD>`, `<OOV>`, …).
     Unsupported,
 }
 
-/// A `$TRANSFORM_CASE_*` operation.
+/// A `$TRANSFORM_CASE_*` operation (semantics match gector's `g_transform_processer`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaseOp {
     /// Lower-case the whole word.
     Lower,
     /// Upper-case the whole word.
     Upper,
-    /// Upper-case the first character only.
+    /// Capitalize: first char upper, the rest lower-cased (`$TRANSFORM_CASE_CAPITAL`).
     Capital,
+    /// Keep the first char, capitalize the remainder (`$TRANSFORM_CASE_CAPITAL_1`).
+    CapitalRest,
 }
 
 /// Parse a single GECToR tag string into an [`Edit`].
@@ -119,11 +163,17 @@ fn parse_tag(tag: &str) -> Edit {
         "$TRANSFORM_CASE_LOWER" => Edit::Case(CaseOp::Lower),
         "$TRANSFORM_CASE_UPPER" => Edit::Case(CaseOp::Upper),
         "$TRANSFORM_CASE_CAPITAL" => Edit::Case(CaseOp::Capital),
+        "$TRANSFORM_CASE_CAPITAL_1" => Edit::Case(CaseOp::CapitalRest),
+        "$TRANSFORM_AGREEMENT_PLURAL" => Edit::Pluralize,
+        "$TRANSFORM_AGREEMENT_SINGULAR" => Edit::Singularize,
+        "$TRANSFORM_SPLIT_HYPHEN" => Edit::SplitHyphen,
         _ => {
             if let Some(t) = tag.strip_prefix("$APPEND_") {
                 Edit::Append(t.to_owned())
             } else if let Some(t) = tag.strip_prefix("$REPLACE_") {
                 Edit::Replace(t.to_owned())
+            } else if let Some(tags) = tag.strip_prefix("$TRANSFORM_VERB_") {
+                Edit::Verb(tags.to_owned())
             } else {
                 Edit::Unsupported
             }
@@ -157,16 +207,26 @@ pub struct Tagger<S: TagSource> {
     source: S,
     labels: Labels,
     config: TaggerConfig,
+    verb_dict: VerbDict,
 }
 
 impl<S: TagSource> Tagger<S> {
     /// Assemble a tagger from a prediction backend, its label vocabulary, and decoding config.
+    /// `$TRANSFORM_VERB_*` tags are no-ops until a [`VerbDict`] is attached with [`Self::with_verb_dict`].
     pub fn new(source: S, labels: Labels, config: TaggerConfig) -> Self {
         Self {
             source,
             labels,
             config,
+            verb_dict: VerbDict::default(),
         }
+    }
+
+    /// Attach the verb-form dictionary so `$TRANSFORM_VERB_*` tags resolve.
+    #[must_use]
+    pub fn with_verb_dict(mut self, verb_dict: VerbDict) -> Self {
+        self.verb_dict = verb_dict;
+        self
     }
 
     /// Decode predictions into diagnostics — the pure half, independent of how `predict` is backed.
@@ -189,7 +249,8 @@ impl<S: TagSource> Tagger<S> {
             if pred.edit_prob <= pred.keep_prob + self.config.keep_confidence {
                 continue;
             }
-            if let Some(diag) = edit_to_diagnostic(&self.labels.edit(pred.edit_label), *word, text) {
+            let edit = self.labels.edit(pred.edit_label);
+            if let Some(diag) = edit_to_diagnostic(&edit, *word, text, &self.verb_dict) {
                 out.push(diag);
             }
         }
@@ -203,8 +264,14 @@ impl<S: TagSource> GrammarChecker for Tagger<S> {
     }
 }
 
-/// Turn one decoded edit on `word` into a [`Diagnostic`], or `None` for no-ops/unsupported tags.
-fn edit_to_diagnostic(edit: &Edit, word: WordSpan, text: &str) -> Option<Diagnostic> {
+/// Turn one decoded edit on `word` into a [`Diagnostic`], or `None` for no-ops/unsupported tags
+/// (incl. a `$TRANSFORM_VERB_*` the dictionary can't resolve).
+fn edit_to_diagnostic(
+    edit: &Edit,
+    word: WordSpan,
+    text: &str,
+    verb_dict: &VerbDict,
+) -> Option<Diagnostic> {
     let surface = text.get(word.start..word.end)?;
     let replacement = match edit {
         Edit::Keep | Edit::Unsupported => return None,
@@ -212,6 +279,14 @@ fn edit_to_diagnostic(edit: &Edit, word: WordSpan, text: &str) -> Option<Diagnos
         Edit::Append(t) => format!("{surface} {t}"),
         Edit::Replace(t) => t.clone(),
         Edit::Case(op) => apply_case(surface, *op),
+        Edit::Pluralize => format!("{surface}s"),
+        Edit::Singularize => {
+            let mut s = surface.to_owned();
+            s.pop(); // drop the trailing char (char-aware)
+            s
+        }
+        Edit::SplitHyphen => surface.replace('-', " "),
+        Edit::Verb(tags) => verb_dict.apply(surface, tags)?.to_owned(),
     };
     if replacement == surface {
         return None;
@@ -228,18 +303,28 @@ fn edit_to_diagnostic(edit: &Edit, word: WordSpan, text: &str) -> Option<Diagnos
     })
 }
 
-/// Apply a `$TRANSFORM_CASE_*` op to a word surface.
+/// Apply a `$TRANSFORM_CASE_*` op to a word surface (matching gector's semantics).
 fn apply_case(surface: &str, op: CaseOp) -> String {
     match op {
         CaseOp::Lower => surface.to_lowercase(),
         CaseOp::Upper => surface.to_uppercase(),
-        CaseOp::Capital => {
+        CaseOp::Capital => capitalize(surface),
+        CaseOp::CapitalRest => {
+            // Keep the first char, capitalize the remainder (`token[0] + token[1:].capitalize()`).
             let mut chars = surface.chars();
-            chars.next().map_or_else(String::new, |c| {
-                c.to_uppercase().collect::<String>() + chars.as_str()
+            chars.next().map_or_else(String::new, |first| {
+                first.to_string() + &capitalize(chars.as_str())
             })
         }
     }
+}
+
+/// First character upper-cased, the rest lower-cased (Python `str.capitalize`).
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+    })
 }
 
 /// Split `text` into whitespace-delimited words with their byte ranges (GECToR's pre-tokenization).
@@ -280,12 +365,14 @@ mod tests {
     /// Vocabulary used across the decoder tests.
     fn labels() -> Labels {
         Labels::new(vec![
-            "$KEEP".to_owned(),               // 0
-            "$DELETE".to_owned(),             // 1
-            "$REPLACE_believe".to_owned(),    // 2
-            "$APPEND_the".to_owned(),         // 3
-            "$TRANSFORM_CASE_CAPITAL".to_owned(), // 4
-            "$TRANSFORM_VERB_VB_VBZ".to_owned(),  // 5 (unsupported for now)
+            "$KEEP".to_owned(),                       // 0
+            "$DELETE".to_owned(),                     // 1
+            "$REPLACE_believe".to_owned(),            // 2
+            "$APPEND_the".to_owned(),                 // 3
+            "$TRANSFORM_CASE_CAPITAL".to_owned(),     // 4
+            "$TRANSFORM_VERB_VB_VBZ".to_owned(),      // 5 (needs the verb dict)
+            "$TRANSFORM_AGREEMENT_PLURAL".to_owned(), // 6
+            "$TRANSFORM_AGREEMENT_SINGULAR".to_owned(), // 7
         ])
     }
 
@@ -355,10 +442,30 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_tag_is_skipped() {
-        // Verb-transform tag isn't handled yet → no diagnostic even though it "fires".
+    fn verb_transform_without_dict_is_skipped() {
+        // A $TRANSFORM_VERB tag with no verb dict attached can't resolve → no diagnostic.
         let diags = run("she run", vec![keep(), edit(5)], TaggerConfig::default());
         assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn verb_transform_resolves_via_dict() {
+        // "She go" → $TRANSFORM_VERB_VB_VBZ on "go" → "goes" via the verb dict.
+        let vd = VerbDict::parse("go_goes:VB_VBZ\nrun_runs:VB_VBZ\n");
+        let tagger = Tagger::new(MockSource(vec![keep(), edit(5)]), labels(), TaggerConfig::default())
+            .with_verb_dict(vd);
+        let diags = tagger.grammar_diagnostics("She go", &Analysis::default());
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert_eq!(diags[0].suggestions[0].replacement, "goes");
+    }
+
+    #[test]
+    fn agreement_transforms_apply() {
+        // PLURAL appends 's'; SINGULAR drops the last char.
+        let plural = run("one cat", vec![keep(), edit(6)], TaggerConfig::default());
+        assert_eq!(plural[0].suggestions[0].replacement, "cats");
+        let singular = run("two cats", vec![keep(), edit(7)], TaggerConfig::default());
+        assert_eq!(singular[0].suggestions[0].replacement, "cat");
     }
 
     #[test]
