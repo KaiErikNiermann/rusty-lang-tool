@@ -95,14 +95,39 @@ fn pct(n: usize, total: usize) -> f64 {
     }
 }
 
-/// Score the IR matcher (`Composite<VendoredEngine, IrMatcher>`) over the `<example>` corpus of a
-/// given grammar, using the given tokenizer + compiled rkyv blob.
+/// Score the IR matcher over the `<example>` corpus using the **nlprule** baseline engine for token
+/// analysis (the LT-v5.2 tagger) + the compiled rkyv blob.
 ///
 /// # Errors
 /// Returns an error if the engine/blob can't load or the grammar can't be parsed.
 pub fn score_ir(tokenizer: &Path, blob: &Path, grammar: &Path) -> Result<ScoreReport> {
     let engine = VendoredEngine::from_path(tokenizer)
         .with_context(|| format!("loading engine from {}", tokenizer.display()))?;
+    score_ir_with_engine(engine, blob, grammar)
+}
+
+/// Score the IR matcher using the **native** engine for token analysis (current-LT tags from
+/// `tagger.rkyv` + srx segmentation) — the head-to-head against [`score_ir`]'s nlprule baseline that
+/// gauges whether current-LT tags lift the oracle above the v5.2 ceiling.
+///
+/// # Errors
+/// Returns an error if the artifacts can't load or the grammar can't be parsed.
+pub fn score_ir_native(
+    segment_srx: &Path,
+    tagger: &Path,
+    blob: &Path,
+    grammar: &Path,
+) -> Result<ScoreReport> {
+    let engine = rlt_native::NativeEngine::from_paths(segment_srx, tagger)
+        .map_err(|e| anyhow!("loading native engine: {e}"))?;
+    score_ir_with_engine(engine, blob, grammar)
+}
+
+/// Score `Composite<E, IrMatcher>` over a grammar's `<example>` corpus, for any analysis engine `E`.
+///
+/// # Errors
+/// Returns an error if the blob can't load or the grammar can't be parsed.
+pub fn score_ir_with_engine<E: Engine>(engine: E, blob: &Path, grammar: &Path) -> Result<ScoreReport> {
     let bytes = std::fs::read(blob).with_context(|| format!("reading {}", blob.display()))?;
     let ir = IrMatcher::from_rkyv_bytes(&bytes)
         .map_err(|e| anyhow!("compiling IR rules from {}: {e}", blob.display()))?;

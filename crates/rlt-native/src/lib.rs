@@ -12,7 +12,7 @@
 
 mod tagger;
 
-pub use tagger::{Tagger, TaggerError, WordData, build_artifact};
+pub use tagger::{Tagger, TaggerError, WordData, build_artifact, build_from_triples};
 
 use std::ops::Range;
 use std::path::Path;

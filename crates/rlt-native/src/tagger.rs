@@ -101,8 +101,33 @@ fn push_unique(out: &mut Vec<String>, value: &str) {
     }
 }
 
-/// Build the tagger artifact bytes from a word → analyses map (offline). Keys are lower-cased; the
-/// `BTreeMap` gives the sorted order the fst requires.
+/// Build the tagger artifact from `(inflected, lemma, tag)` triples — LanguageTool's morfologik
+/// dictionary format (as produced by `remap.awk` over AGID, plus the `added.txt`/`removed.txt`
+/// supplements). Groups by the **case-sensitive** inflected surface (LT's dictionary is case-
+/// sensitive — `US`/NNP vs `us`/PRP — and the engine's lookup supplies the lower-case fallback),
+/// deduplicating repeated analyses while preserving first-seen order.
+///
+/// # Errors
+/// Returns [`TaggerError`] if the fst cannot be built or the side-table cannot be serialized.
+pub fn build_from_triples<I>(triples: I) -> Result<Vec<u8>, TaggerError>
+where
+    I: IntoIterator<Item = (String, String, String)>,
+{
+    let mut words: BTreeMap<String, Vec<WordData>> = BTreeMap::new();
+    for (inflected, lemma, tag) in triples {
+        if inflected.is_empty() || tag.is_empty() {
+            continue;
+        }
+        let entry = words.entry(inflected).or_default();
+        if !entry.iter().any(|w| w.lemma == lemma && w.tag == tag) {
+            entry.push(WordData { lemma, tag });
+        }
+    }
+    build_artifact(&words)
+}
+
+/// Build the tagger artifact bytes from a word → analyses map (offline). The `BTreeMap` gives the
+/// sorted key order the fst requires; keys are used verbatim (case-sensitive).
 ///
 /// # Errors
 /// Returns [`TaggerError`] if the fst cannot be built or the table cannot be serialized.
@@ -159,6 +184,31 @@ mod tests {
     fn lowercase_fallback_for_sentence_initial_caps() {
         assert!(fixture().is_known("Cat"));
         assert!(!fixture().is_known("Catt"));
+    }
+
+    #[test]
+    fn builds_from_triples_grouping_and_deduping() {
+        // Repeated (lemma,tag) collapse; distinct analyses accumulate; case is preserved as distinct
+        // keys (US vs us); empty-tag rows are dropped.
+        let triples = [
+            ("left", "leave", "VBD"),
+            ("left", "leave", "VBD"), // dup -> dropped
+            ("left", "leave", "VBN"),
+            ("left", "left", "JJ"),
+            ("US", "US", "NNP"),
+            ("us", "us", "PRP"),
+            ("bad", "bad", ""), // empty tag -> skipped
+        ]
+        .into_iter()
+        .map(|(i, l, t)| (i.to_owned(), l.to_owned(), t.to_owned()));
+        let tagger = Tagger::from_bytes(&build_from_triples(triples).unwrap()).unwrap();
+
+        let left = tagger.lookup("left").unwrap();
+        assert_eq!(left.len(), 3, "deduped to leave/VBD, leave/VBN, left/JJ");
+        // Case-sensitive keys keep US (NNP) and us (PRP) from colliding.
+        assert_eq!(tagger.lookup("US").unwrap()[0].tag, "NNP");
+        assert_eq!(tagger.lookup("us").unwrap()[0].tag, "PRP");
+        assert!(tagger.lookup("bad").is_none(), "empty-tag row dropped");
     }
 
     #[test]

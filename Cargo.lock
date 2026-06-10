@@ -1256,6 +1256,7 @@ dependencies = [
  "rlt-core",
  "rlt-engine",
  "rlt-ir",
+ "rlt-native",
  "rlt-tagger",
  "serde",
  "serde_json",
@@ -2059,6 +2060,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "rlt-native",
  "serde",
  "serde_json",
  "xsd-parser",

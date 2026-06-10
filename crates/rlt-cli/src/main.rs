@@ -25,6 +25,15 @@ enum Matcher {
     Ir,
 }
 
+/// Which engine supplies token analysis (POS tags/lemmas) for the oracle.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AnalysisEngine {
+    /// nlprule's bundled LanguageTool v5.2 tagger (the baseline; needs `fetch-engine`).
+    Nlprule,
+    /// The native engine over current-LT tags (`tagger.rkyv` + `segment.srx`; needs `build-tagger`).
+    Native,
+}
+
 /// Local, web-native grammar and spell checker built on LanguageTool's open rule corpus.
 #[derive(Debug, Parser)]
 #[command(name = "rlt", version, about)]
@@ -75,9 +84,18 @@ enum Command {
     /// Score the IR matcher against LT's `<example>` corpus and print the numbers (no asserts).
     /// `--json` feeds the adaptability sweep; works on any LT version's grammar/blob.
     ScoreOracle {
-        /// nlprule tokenizer binary.
+        /// Which engine supplies token analysis: the nlprule baseline or the native current-LT tagger.
+        #[arg(long, value_enum, default_value_t = AnalysisEngine::Nlprule)]
+        engine: AnalysisEngine,
+        /// nlprule tokenizer binary (used by `--engine nlprule`).
         #[arg(long, default_value = rlt_engine::DEFAULT_TOKENIZER_BIN)]
         tokenizer: PathBuf,
+        /// SRX segmentation rules (used by `--engine native`).
+        #[arg(long, default_value = "resources/segment.srx")]
+        segment_srx: PathBuf,
+        /// Native POS tagger artifact (used by `--engine native`).
+        #[arg(long, default_value = "resources/tagger.rkyv")]
+        tagger: PathBuf,
         /// Compiled IR rkyv blob.
         #[arg(long, default_value = rlt_convert::DEFAULT_OUT)]
         blob: PathBuf,
@@ -138,12 +156,22 @@ fn main() -> Result<()> {
         }
         Command::Tokens { text } => run_tokens(&text),
         Command::ScoreOracle {
+            engine,
             tokenizer,
+            segment_srx,
+            tagger,
             blob,
             grammar,
             json,
         } => {
-            let report = rlt_cli::oracle_score::score_ir(&tokenizer, &blob, &grammar)?;
+            let report = match engine {
+                AnalysisEngine::Nlprule => {
+                    rlt_cli::oracle_score::score_ir(&tokenizer, &blob, &grammar)?
+                }
+                AnalysisEngine::Native => {
+                    rlt_cli::oracle_score::score_ir_native(&segment_srx, &tagger, &blob, &grammar)?
+                }
+            };
             if json {
                 println!("{}", serde_json::to_string(&report)?);
             } else {

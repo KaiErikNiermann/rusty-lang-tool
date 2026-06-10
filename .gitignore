@@ -36,3 +36,7 @@ node_modules/
 
 # LanguageTool segmentation rules (fetched, LGPL data)
 /resources/segment.srx
+
+# AGID inflection + part-of-speech databases (fetched; the native POS tagger's source — build-tagger)
+/resources/agid-infl.txt
+/resources/agid-pos.txt
