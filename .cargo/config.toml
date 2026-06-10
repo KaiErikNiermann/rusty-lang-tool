@@ -1,2 +1,7 @@
 [alias]
 xtask = "run --quiet -p xtask --"
+
+# rten needs wasm SIMD: its scalar fallback (rten-simd generic path) is broken on wasm, and SIMD is
+# the supported/fast path anyway (Node 16+ and all current browsers support wasm-simd128).
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]

@@ -193,26 +193,44 @@ fn reduce_word(
 }
 
 impl Tagger<RtenTagSource> {
-    /// Load the L4 artifact tuple from a directory (`model.int8.onnx` / `tokenizer.json` /
-    /// `labels.json` / `meta.json`) — the native path.
+    /// Load the L4 artifact tuple from in-memory bytes — the wasm path (no filesystem). `verb_dict`
+    /// may be empty (then `$TRANSFORM_VERB_*` tags are skipped).
     ///
     /// # Errors
-    /// Returns [`TaggerError`] if any artifact is missing or malformed.
-    pub fn from_dir(dir: &Path) -> Result<Self, TaggerError> {
-        let model = Model::load_file(dir.join("model.int8.onnx")).map_err(backend)?;
-        let tokenizer = Tokenizer::from_file(dir.join("tokenizer.json")).map_err(backend)?;
-        let labels: Vec<String> = serde_json::from_slice(&std::fs::read(dir.join("labels.json"))?)?;
-        let meta: Meta = serde_json::from_slice(&std::fs::read(dir.join("meta.json"))?)?;
-        // Verb dict is optional: without it, $TRANSFORM_VERB_* tags are simply skipped.
-        let verb_dict = std::fs::read_to_string(dir.join("verb-form-vocab.txt"))
-            .map(|s| VerbDict::parse(&s))
-            .unwrap_or_default();
+    /// Returns [`TaggerError`] if the model/tokenizer is invalid or `labels`/`meta` won't parse.
+    pub fn from_bytes(
+        model: Vec<u8>,
+        tokenizer_json: &[u8],
+        labels_json: &[u8],
+        meta_json: &[u8],
+        verb_dict: &[u8],
+    ) -> Result<Self, TaggerError> {
+        let model = Model::load(model).map_err(backend)?;
+        let tokenizer = Tokenizer::from_bytes(tokenizer_json).map_err(backend)?;
+        let labels: Vec<String> = serde_json::from_slice(labels_json)?;
+        let meta: Meta = serde_json::from_slice(meta_json)?;
+        let verb_dict = VerbDict::parse(&String::from_utf8_lossy(verb_dict));
         Ok(Tagger::new(
             RtenTagSource::new(model, tokenizer, meta),
             Labels::new(labels),
             TaggerConfig::default(),
         )
         .with_verb_dict(verb_dict))
+    }
+
+    /// Load the L4 artifact tuple from a directory (`model.int8.onnx` / `tokenizer.json` /
+    /// `labels.json` / `meta.json` / `verb-form-vocab.txt`) — the native path.
+    ///
+    /// # Errors
+    /// Returns [`TaggerError`] if any required artifact is missing or malformed.
+    pub fn from_dir(dir: &Path) -> Result<Self, TaggerError> {
+        Self::from_bytes(
+            std::fs::read(dir.join("model.int8.onnx"))?,
+            &std::fs::read(dir.join("tokenizer.json"))?,
+            &std::fs::read(dir.join("labels.json"))?,
+            &std::fs::read(dir.join("meta.json"))?,
+            &std::fs::read(dir.join("verb-form-vocab.txt")).unwrap_or_default(),
+        )
     }
 }
 

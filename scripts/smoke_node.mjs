@@ -55,3 +55,44 @@ if (!hasSpelling) {
 }
 
 console.log("OK: WASM checker ran L1 spelling + L2 grammar in Node.");
+
+// --- L4 (optional): if the neural artifact is present, prove the int8 tagger runs in wasm too. ---
+function loadL4(name) {
+  try {
+    return new Uint8Array(readFileSync(join(root, "resources/l4", name)));
+  } catch {
+    return null;
+  }
+}
+const l4 = {
+  model: loadL4("model.int8.onnx"),
+  tokenizer: loadL4("tokenizer.json"),
+  labels: loadL4("labels.json"),
+  meta: loadL4("meta.json"),
+  verb: loadL4("verb-form-vocab.txt") ?? new Uint8Array(),
+};
+if (l4.model && l4.tokenizer && l4.labels && l4.meta) {
+  const neural = RltChecker.with_neural(
+    load("en_tokenizer.bin"),
+    load("en_rules.bin"),
+    l4.model,
+    l4.tokenizer,
+    l4.labels,
+    l4.meta,
+    l4.verb,
+  );
+  const nInput = "She go to school every day .";
+  const nDiags = neural.check(nInput);
+  console.log(`L4 input: ${JSON.stringify(nInput)} -> ${nDiags.length} diagnostics`);
+  for (const d of nDiags.filter((d) => d.source === "Neural")) {
+    console.log(`  [${d.span.start}..${d.span.end}] Neural -> ${JSON.stringify(d.suggestions?.[0]?.replacement)}`);
+  }
+  const hasNeural = nDiags.some((d) => d.source === "Neural" && d.suggestions?.some((s) => s.replacement === "goes"));
+  if (!hasNeural) {
+    console.error('FAIL: expected an L4 neural fix "go" -> "goes"');
+    process.exit(1);
+  }
+  console.log("OK: WASM checker ran L4 neural tagging in Node.");
+} else {
+  console.log("SKIP L4: resources/l4 artifact missing (run `cargo xtask build-l4`).");
+}
