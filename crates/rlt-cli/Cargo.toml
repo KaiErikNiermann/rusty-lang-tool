@@ -8,6 +8,12 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+# A small lib target holds the reusable oracle scoring, shared by the `rlt` bin (the `score-oracle`
+# subcommand) and the differential-oracle integration test.
+[lib]
+name = "rlt_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "rlt"
 path = "src/main.rs"
@@ -21,6 +27,8 @@ clap.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
 
 [dev-dependencies]
 # The L3 oracle loads the confusion model directly to drive synthetic perturbations.

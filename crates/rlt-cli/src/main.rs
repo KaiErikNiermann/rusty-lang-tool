@@ -72,6 +72,22 @@ enum Command {
         /// The sentence to analyze.
         text: String,
     },
+    /// Score the IR matcher against LT's `<example>` corpus and print the numbers (no asserts).
+    /// `--json` feeds the adaptability sweep; works on any LT version's grammar/blob.
+    ScoreOracle {
+        /// nlprule tokenizer binary.
+        #[arg(long, default_value = rlt_engine::DEFAULT_TOKENIZER_BIN)]
+        tokenizer: PathBuf,
+        /// Compiled IR rkyv blob.
+        #[arg(long, default_value = rlt_convert::DEFAULT_OUT)]
+        blob: PathBuf,
+        /// LanguageTool `grammar.xml`.
+        #[arg(long, default_value = rlt_convert::DEFAULT_GRAMMAR)]
+        grammar: PathBuf,
+        /// Emit JSON instead of a human-readable summary.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -121,6 +137,28 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Tokens { text } => run_tokens(&text),
+        Command::ScoreOracle {
+            tokenizer,
+            blob,
+            grammar,
+            json,
+        } => {
+            let report = rlt_cli::oracle_score::score_ir(&tokenizer, &blob, &grammar)?;
+            if json {
+                println!("{}", serde_json::to_string(&report)?);
+            } else {
+                println!(
+                    "reproduced {}/{} ({:.1}%); false positives {}/{} ({:.1}%)",
+                    report.reproduced,
+                    report.positive_total,
+                    report.reproduced_pct,
+                    report.false_positives,
+                    report.negative_total,
+                    report.false_positive_pct,
+                );
+            }
+            Ok(())
+        }
     }
 }
 
