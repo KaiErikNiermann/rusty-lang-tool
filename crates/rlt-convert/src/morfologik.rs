@@ -312,4 +312,47 @@ mod tests {
         assert!(has("is", "be", "VBZ"), "is: {:?}", by_word.get("is"));
         assert!(has("better", "good", "JJR") || has("better", "well", "RBR"), "better: {:?}", by_word.get("better"));
     }
+
+    #[test]
+    fn reads_real_languagetool_german_dict() {
+        // German exercises a different separator (`_`) + non-ASCII (umlaut) SUFFIX decoding + the STTS
+        // tagset — proving the reader is language-agnostic, not English-specific.
+        let base = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../resources/de"));
+        let (Ok(dict), Ok(info)) = (
+            std::fs::read(base.join("pos.dict")),
+            std::fs::read_to_string(base.join("pos.info")),
+        ) else {
+            eprintln!("skip: resources/de/pos.dict not present (cargo xtask build-tagger --lang de)");
+            return;
+        };
+        let meta = parse_info(&info).expect("parse .info");
+        assert_eq!(meta.separator, b'_', "German uses an underscore separator");
+        assert_eq!(meta.encoder, Encoder::Suffix);
+
+        let triples = read_triples(&dict, &meta).expect("read dict");
+        eprintln!("german.dict: {} triples", triples.len());
+        assert!(triples.len() > 1_000_000, "German morphology is rich; got {}", triples.len());
+
+        let mut by_word: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+        for (inflected, lemma, tag) in &triples {
+            by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
+        }
+        let has = |w: &str, lemma: &str, tag: &str| {
+            by_word.get(w).is_some_and(|v| v.iter().any(|(l, t)| l == lemma && t == tag))
+        };
+        // Closed-class + an umlaut plural (Häuser→Haus) — the umlaut proves multibyte SUFFIX trimming.
+        assert!(has("der", "der", "ART:DEF:DAT:SIN:FEM"), "der: {:?}", by_word.get("der"));
+        assert!(has("ist", "sein", "VER:3:SIN:PRÄ:NON"), "ist: {:?}", by_word.get("ist"));
+        assert!(has("Häuser", "Haus", "SUB:NOM:PLU:NEU"), "Häuser: {:?}", by_word.get("Häuser"));
+    }
+
+    #[test]
+    fn rejects_fsa5_with_clean_error() {
+        // FSA5 (`\fsa\x05`) is a different format we don't yet read — the guard must error cleanly,
+        // never panic, so a language that ships FSA5 fails with an actionable message (future branch).
+        let fsa5 = b"\\fsa\x05\x00\x00\x00rest";
+        let err = read_triples(fsa5, &DictMeta { separator: b'+', encoder: Encoder::Suffix })
+            .expect_err("FSA5 must be rejected");
+        assert!(err.to_string().contains("CFSA2"), "actionable error: {err}");
+    }
 }

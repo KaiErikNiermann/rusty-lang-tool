@@ -40,6 +40,49 @@ fn missing(paths: &[(&str, &PathBuf)]) -> bool {
     false
 }
 
+/// The native German engine (real LT POS dict + STTS tagset + compound splitting + disambiguation)
+/// over German's `<example>` corpus — the second-language end-to-end gate. Floors are set just below
+/// the first measured values (73.2% reproduction / 12.5% FP); compound-coverage gaps keep FP higher
+/// than English's, which is expected for v1.
+#[test]
+#[ignore = "slow, needs the de artifacts; build via `cargo xtask build-lang --lang de`"]
+fn de_native_reproduces_examples() {
+    let cfg = rlt_lang::config("de").expect("de config");
+    let srx = root(cfg.segment_srx_path());
+    let tagger = root(&cfg.tagger_path());
+    let disambig = root(&cfg.disambig_path());
+    let blob = root(&cfg.grammar_blob_path());
+    let grammar = root(&cfg.grammar_xml_path());
+    if missing(&[
+        ("segment.srx", &srx),
+        ("de tagger", &tagger),
+        ("de grammar blob", &blob),
+        ("de grammar.xml", &grammar),
+    ]) {
+        return;
+    }
+    let report = rlt_cli::oracle_score::score_ir_native(
+        cfg,
+        &srx,
+        &tagger,
+        disambig.exists().then_some(disambig.as_path()),
+        &blob,
+        &grammar,
+    )
+    .expect("score the German native oracle");
+    eprintln!(
+        "de native oracle: reproduced {}/{} ({:.1}%); false positives {}/{} ({:.1}%)",
+        report.reproduced,
+        report.positive_total,
+        report.reproduced_pct,
+        report.false_positives,
+        report.negative_total,
+        report.false_positive_pct,
+    );
+    assert!(report.reproduced >= 4500, "de reproduction regressed: {}", report.reproduced);
+    assert!(report.false_positives <= 600, "de false positives regressed: {}", report.false_positives);
+}
+
 #[test]
 #[ignore = "slow (~45s) and needs fetched data; run via `cargo xtask run-oracle`"]
 fn nlprule_baseline_reproduces_examples() {
