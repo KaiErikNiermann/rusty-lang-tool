@@ -33,3 +33,13 @@ node_modules/
 
 # Adaptability sweep working data (the committed report is docs/adaptability.md)
 /resources/adaptability/
+
+# LanguageTool segmentation rules (fetched, LGPL data)
+/resources/segment.srx
+
+# AGID inflection + part-of-speech databases (fetched; the native POS tagger's source — build-tagger)
+/resources/agid-infl.txt
+/resources/agid-pos.txt
+
+# Claude Code local state
+/.claude/

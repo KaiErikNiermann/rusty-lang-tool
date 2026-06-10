@@ -56,6 +56,48 @@ if (!hasSpelling) {
 
 console.log("OK: WASM checker ran L1 spelling + L2 grammar in Node.");
 
+// --- Native engine (pure-Rust, no nlprule): if its artifacts are present, prove it runs in wasm. ---
+function loadText(name) {
+  try {
+    return readFileSync(join(root, "resources", name), "utf8");
+  } catch {
+    return null;
+  }
+}
+function loadOpt(name) {
+  try {
+    return new Uint8Array(readFileSync(join(root, "resources", name)));
+  } catch {
+    return null;
+  }
+}
+const srx = loadText("segment.srx");
+const taggerRkyv = loadOpt("tagger.rkyv");
+const irBlob = loadOpt("en.rkyv");
+if (srx && taggerRkyv && irBlob) {
+  const native = RltChecker.with_native(srx, taggerRkyv, loadOpt("disambig.rkyv") ?? new Uint8Array(), irBlob);
+  const nvInput = "I should of went their yesterday. I recieve teh msg.";
+  const nvDiags = native.check(nvInput);
+  console.log(`native input: ${JSON.stringify(nvInput)} -> ${nvDiags.length} diagnostics`);
+  for (const d of nvDiags) {
+    const fix = d.suggestions?.[0]?.replacement;
+    console.log(`  [${d.span.start}..${d.span.end}] ${d.source}/${d.code}` + (fix ? ` -> ${JSON.stringify(fix)}` : ""));
+  }
+  const hasGrammar = nvDiags.some((d) => d.source === "Grammar");
+  const hasSpelling = nvDiags.some((d) => d.source === "Spelling" && d.suggestions?.some((s) => s.replacement === "receive"));
+  if (!hasGrammar) {
+    console.error("FAIL: native — expected an L2 grammar diagnostic");
+    process.exit(1);
+  }
+  if (!hasSpelling) {
+    console.error('FAIL: native — expected an L1 spelling fix "recieve" -> "receive"');
+    process.exit(1);
+  }
+  console.log("OK: pure-native WASM checker ran L1 spelling + L2 grammar in Node (no nlprule).");
+} else {
+  console.log("SKIP native: resources/{segment.srx,tagger.rkyv,en.rkyv} missing (cargo xtask build-tagger + build-blob).");
+}
+
 // --- L4 (optional): if the neural artifact is present, prove the int8 tagger runs in wasm too. ---
 function loadL4(name) {
   try {

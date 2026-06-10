@@ -1,0 +1,227 @@
+# Closed-class English function words — the native POS tagger supplement.
+#
+# AGID's infl.txt is open-class only (V/N/A); LanguageTool's `remap.awk` deliberately omits
+# determiners (its `D` rule is commented out) and mistags the rest (the→JJ, and→NN, to→JJ). LT itself
+# supplies these from its hand-maintained binary dictionary, which is not in the public checkout. This
+# file is the equivalent hand-authored set: the high-frequency function words that appear in nearly
+# every sentence, with their LanguageTool (Penn-derived) tags — see resource/en/tagset.txt.
+#
+# These assignments are stable English grammar, not version-specific, so the file is hand-authored
+# (license-clean, committed) rather than derived from LT data. `build-tagger` REPLACES the awk output
+# for each surface listed here. Words may carry several analyses (the tagger stores all; P3
+# disambiguation narrows to context). Format: inflected<TAB>lemma<TAB>tag — one analysis per line.
+#
+# Determiners / articles
+a	a	DT
+an	an	DT
+the	the	DT
+this	this	DT
+that	that	DT
+that	that	IN
+that	that	WDT
+these	these	DT
+those	those	DT
+each	each	DT
+every	every	DT
+either	either	DT
+either	either	CC
+neither	neither	DT
+neither	neither	CC
+all	all	DT
+all	all	PDT
+any	any	DT
+some	some	DT
+no	no	DT
+another	another	DT
+both	both	DT
+both	both	PDT
+such	such	PDT
+such	such	JJ
+half	half	PDT
+half	half	NN
+#
+# Personal pronouns
+I	I	PRP
+you	you	PRP
+he	he	PRP
+she	she	PRP
+it	it	PRP
+we	we	PRP
+they	they	PRP
+me	me	PRP
+him	him	PRP
+her	her	PRP$
+her	her	PRP
+us	us	PRP
+them	them	PRP
+myself	myself	PRP
+yourself	yourself	PRP
+himself	himself	PRP
+herself	herself	PRP
+itself	itself	PRP
+ourselves	ourselves	PRP
+themselves	themselves	PRP
+one	one	PRP
+one	one	CD
+one	one	NN
+#
+# Possessive pronouns
+my	my	PRP$
+your	your	PRP$
+his	his	PRP$
+its	its	PRP$
+our	our	PRP$
+their	their	PRP$
+mine	mine	PRP
+yours	yours	PRP
+hers	hers	PRP
+ours	ours	PRP
+theirs	theirs	PRP
+whose	whose	WP$
+#
+# Wh-words
+who	who	WP
+whom	whom	WP
+what	what	WP
+what	what	WDT
+which	which	WDT
+which	which	WP
+whoever	whoever	WP
+whatever	whatever	WDT
+whichever	whichever	WDT
+how	how	WRB
+when	when	WRB
+where	where	WRB
+why	why	WRB
+however	however	RB
+whenever	whenever	WRB
+wherever	wherever	WRB
+#
+# Prepositions / subordinating conjunctions
+of	of	IN
+in	in	IN
+in	in	RP
+on	on	IN
+on	on	RP
+at	at	IN
+by	by	IN
+for	for	IN
+for	for	CC
+with	with	IN
+from	from	IN
+into	into	IN
+about	about	IN
+about	about	RB
+against	against	IN
+between	between	IN
+among	among	IN
+through	through	IN
+during	during	IN
+before	before	IN
+after	after	IN
+above	above	IN
+below	below	IN
+over	over	IN
+over	over	RP
+under	under	IN
+since	since	IN
+until	until	IN
+unless	unless	IN
+although	although	IN
+though	though	IN
+because	because	IN
+while	while	IN
+whereas	whereas	IN
+if	if	IN
+than	than	IN
+despite	despite	IN
+upon	upon	IN
+within	within	IN
+without	without	IN
+toward	toward	IN
+towards	towards	IN
+beyond	beyond	IN
+onto	onto	IN
+throughout	throughout	IN
+as	as	IN
+as	as	RB
+#
+# `to` — the infinitive marker and preposition
+to	to	TO
+to	to	IN
+#
+# Coordinating conjunctions
+and	and	CC
+or	or	CC
+but	but	CC
+nor	nor	CC
+yet	yet	CC
+yet	yet	RB
+so	so	IN
+so	so	RB
+#
+# Modals
+can	can	MD
+could	could	MD
+may	may	MD
+might	might	MD
+must	must	MD
+shall	shall	MD
+should	should	MD
+will	will	MD
+would	would	MD
+ought	ought	MD
+#
+# Existential there / particles / negation
+there	there	EX
+there	there	RB
+not	not	RB
+never	never	RB
+#
+# `be`
+be	be	VB
+am	be	VBP
+is	be	VBZ
+are	be	VBP
+was	be	VBD
+were	be	VBD
+been	be	VBN
+being	be	VBG
+#
+# `have`
+have	have	VBP
+have	have	VB
+has	have	VBZ
+had	have	VBD
+had	have	VBN
+having	have	VBG
+#
+# `do`
+do	do	VBP
+do	do	VB
+does	do	VBZ
+did	do	VBD
+done	do	VBN
+doing	do	VBG
+#
+# High-frequency adverbs
+very	very	RB
+too	too	RB
+just	just	RB
+also	also	RB
+only	only	RB
+only	only	JJ
+even	even	RB
+still	still	RB
+here	here	RB
+now	now	RB
+then	then	RB
+again	again	RB
+almost	almost	RB
+always	always	RB
+often	often	RB
+rather	rather	RB
+really	really	RB
+indeed	indeed	RB
+therefore	therefore	RB
+thus	thus	RB

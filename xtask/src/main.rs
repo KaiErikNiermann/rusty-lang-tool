@@ -6,6 +6,8 @@
 //! - `gen-schema` — regenerate the committed `xsd-parser` bindings from LT's `rules.xsd`.
 //! - `fetch-engine` — download nlprule's prebuilt English tokenizer/rules binaries (resumable).
 //! - `build-blob` — run the offline converter to produce the runtime rkyv artifact.
+//! - `build-tagger` — build the native engine's POS dictionary from AGID + LT's `remap.awk` (resumable).
+//! - `bench` — criterion benchmark of the native engine vs the nlprule baseline.
 //! - `build-wasm` — package the WASM surface via `wasm-pack` (Node target) + run the Node smoke test.
 //! - `run-oracle` — run the `<example>` differential-oracle test suite.
 //! - `build-l4` — build the L4 neural model artifact via the offline `pipeline/` (uv + Python).
@@ -50,6 +52,26 @@ const ENGINE_BINARIES: &[&str] = &["en_tokenizer.bin", "en_rules.bin"];
 /// Directory the engine binaries land in (gitignored; the converter artifact lives here too).
 const RESOURCES_DIR: &str = "resources";
 
+/// AGID (Automatically Generated Inflection Database) — the inflection source LanguageTool's English
+/// POS dictionary is built from. The maintained mirror of Kevin Atkinson's `infl.txt`.
+const AGID_INFL: &str = "resources/agid-infl.txt";
+const AGID_URL: &str = "https://raw.githubusercontent.com/en-wl/wordlist/master/agid/infl.txt";
+/// Kevin Atkinson's Moby/WordNet part-of-speech database — the closed-class half (determiners,
+/// prepositions, pronouns, conjunctions) that AGID's inflection list (open-class V/N/A only) lacks.
+/// `remap.awk` has rules for both formats; it must see `infl.txt` first (the pos rules reference the
+/// JJR/NNS arrays the infl rules populate).
+const AGID_POS: &str = "resources/agid-pos.txt";
+const AGID_POS_URL: &str =
+    "https://raw.githubusercontent.com/en-wl/wordlist/master/pos/part-of-speech.txt";
+/// LT's English resource directory (the `remap.awk` build script + `added`/`removed` supplements live
+/// here after `fetch-lt`).
+const LT_EN_RESOURCE: &str = "resources/lt/_repo/languagetool-language-modules/en/src/main/resources/org/languagetool/resource/en";
+/// The native engine's POS tagger artifact (fst + side-table), built by `build-tagger`.
+const TAGGER_OUT: &str = "resources/tagger.rkyv";
+/// Hand-authored closed-class supplement (committed; license-clean). Overrides the awk output for the
+/// high-frequency function words AGID lacks and `remap.awk` mistags (the, a, is, and, to, pronouns…).
+const CLOSED_CLASS: &str = "data/en-closed-class.tsv";
+
 /// Norvig's Google-corpus n-gram subsets (small, fetchable) backing the L3 confusion model.
 const NGRAM_DIR: &str = "resources/ngrams";
 const NGRAM_FILES: &[(&str, &str)] = &[
@@ -74,6 +96,17 @@ enum Task {
     FetchEngine,
     /// Run the offline converter to (re)build the runtime rkyv artifact.
     BuildBlob,
+    /// Build the native engine's POS tagger dictionary (`resources/tagger.rkyv`) from AGID's
+    /// `infl.txt` via LanguageTool's own `remap.awk`, plus the `added.txt`/`removed.txt` supplements.
+    /// Fetches AGID if absent (resumable); needs `fetch-lt` for the awk script + supplements, and
+    /// `gawk` on PATH.
+    BuildTagger,
+    /// Lower LanguageTool's `disambiguation.xml` into the native engine's `resources/disambig.rkyv`
+    /// tag-action artifact (needs `fetch-lt`).
+    BuildDisambig,
+    /// Run the criterion benchmark comparing the native engine to the nlprule baseline (analyze,
+    /// is_known, load time). Needs `build-tagger` + `fetch-engine` for the head-to-head.
+    Bench,
     /// Download Norvig's n-gram subsets for the L3 confusion model (resumable).
     FetchNgrams,
     /// Build the L3 confusion model from LT's confusion sets + the n-gram subsets.
@@ -124,6 +157,9 @@ fn main() -> Result<()> {
         Task::GenSchema => gen_schema(),
         Task::FetchEngine => fetch_engine(),
         Task::BuildBlob => run("cargo", &["run", "-p", "rlt-convert"]),
+        Task::BuildTagger => build_tagger(),
+        Task::BuildDisambig => build_disambig(),
+        Task::Bench => run("cargo", &["bench", "-p", "rlt-native", "--bench", "engine"]),
         Task::FetchNgrams => fetch_ngrams(),
         Task::BuildConfusion => run("cargo", &["run", "-p", "rlt-cli", "--", "build-confusion"]),
         Task::BuildWasm => build_wasm(),
@@ -674,6 +710,123 @@ fn fetch_ngrams() -> Result<()> {
     }
     println!("next: `cargo xtask build-confusion` to compile the L3 model");
     Ok(())
+}
+
+/// Build the native engine's POS tagger dictionary from AGID via LanguageTool's own `remap.awk`,
+/// applying the `added.txt`/`removed.txt` supplements, then serializing the fst artifact. Reuses LT's
+/// exact awk transform (rather than reimplementing it) so the tagset/coverage matches LT's binary
+/// `.dict`. Resumable: the AGID download is skipped if already present.
+fn build_tagger() -> Result<()> {
+    // 1. Fetch AGID's inflection list + part-of-speech database (resumable).
+    fetch_if_absent(AGID_INFL, AGID_URL)?;
+    fetch_if_absent(AGID_POS, AGID_POS_URL)?;
+
+    let remap = format!("{LT_EN_RESOURCE}/remap.awk");
+    if !Path::new(&remap).exists() {
+        bail!("missing {remap} — run `cargo xtask fetch-lt` first");
+    }
+
+    // 2. Run LT's remap.awk over infl.txt THEN part-of-speech.txt → `inflected⇥lemma⇥POS` triples.
+    // Order matters: the closed-class (pos) rules cross-reference arrays the infl rules build.
+    println!("$ gawk -f {remap} {AGID_INFL} {AGID_POS}");
+    let out = Command::new("gawk")
+        .args(["-f", &remap, AGID_INFL, AGID_POS])
+        .output()
+        .context("running remap.awk (is `gawk` installed?)")?;
+    if !out.status.success() {
+        bail!("remap.awk failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    let mut triples = parse_triples(&String::from_utf8_lossy(&out.stdout));
+    let from_agid = triples.len();
+
+    // 3. Supplements: + added.txt, − removed.txt (both `fullform⇥baseform⇥postag`, `#` comments).
+    let added = read_triple_file(&format!("{LT_EN_RESOURCE}/added.txt"))?;
+    let removed: std::collections::HashSet<(String, String, String)> =
+        read_triple_file(&format!("{LT_EN_RESOURCE}/removed.txt"))?
+            .into_iter()
+            .collect();
+    let n_added = added.len();
+    triples.extend(added);
+    let before = triples.len();
+    triples.retain(|t| !removed.contains(t));
+    let n_removed = before - triples.len();
+
+    // 4. Closed-class override: replace the awk output for the curated function words (the awk
+    //    mistags or omits them). Drop every awk triple whose surface is overridden, then add ours.
+    let overrides = read_triple_file(CLOSED_CLASS)?;
+    let overridden: std::collections::HashSet<String> =
+        overrides.iter().map(|(surface, ..)| surface.clone()).collect();
+    let n_override = overrides.len();
+    triples.retain(|(surface, ..)| !overridden.contains(surface));
+    triples.extend(overrides);
+
+    // 5. Serialize the fst + side-table artifact.
+    let bytes = rlt_native::build_from_triples(triples)
+        .map_err(|e| anyhow::anyhow!("building tagger artifact: {e}"))?;
+    std::fs::write(TAGGER_OUT, &bytes).with_context(|| format!("writing {TAGGER_OUT}"))?;
+    println!(
+        "wrote {TAGGER_OUT}: {from_agid} AGID/POS + {n_added} added − {n_removed} removed + \
+         {n_override} closed-class triples, {} bytes",
+        bytes.len(),
+    );
+    println!("next: score the oracle on the native engine to compare against the 58.7% baseline");
+    Ok(())
+}
+
+/// Lower `disambiguation.xml` into the `disambig.rkyv` tag-action artifact the native engine loads.
+fn build_disambig() -> Result<()> {
+    let src = Path::new(rlt_convert::DEFAULT_DISAMBIGUATION);
+    if !src.exists() {
+        bail!("missing {} — run `cargo xtask fetch-lt` first", src.display());
+    }
+    let out = Path::new("resources/disambig.rkyv");
+    let report = rlt_convert::convert_disambiguation(src, out)?;
+    println!(
+        "wrote {}: {} rules ({} applicable, {} unsupported)",
+        out.display(),
+        report.rules.len(),
+        report.applicable,
+        report.rules.len() - report.applicable,
+    );
+    Ok(())
+}
+
+/// Download `url` to `dest` unless a non-empty file is already there (resumable).
+fn fetch_if_absent(dest: &str, url: &str) -> Result<()> {
+    if Path::new(dest).exists() && std::fs::metadata(dest)?.len() > 0 {
+        println!("{dest} exists — skipping download (resume)");
+    } else {
+        run("curl", &["-sSL", "-o", dest, url])?;
+        println!("fetched {dest}");
+    }
+    Ok(())
+}
+
+/// Parse `remap.awk`'s stdout into `(inflected, lemma, tag)` triples — tab-separated, exactly three
+/// non-empty fields (awk occasionally emits a stray blank line).
+fn parse_triples(text: &str) -> Vec<(String, String, String)> {
+    text.lines().filter_map(split_triple).collect()
+}
+
+/// Read an LT supplement file (`added.txt`/`removed.txt`) into triples, skipping `#` comments + blanks.
+fn read_triple_file(path: &str) -> Result<Vec<(String, String, String)>> {
+    let text = std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?;
+    Ok(text
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .filter_map(split_triple)
+        .collect())
+}
+
+/// Split one tab-separated line into a non-empty `(inflected, lemma, tag)` triple, or `None`.
+fn split_triple(line: &str) -> Option<(String, String, String)> {
+    let mut f = line.split('\t');
+    match (f.next(), f.next(), f.next()) {
+        (Some(i), Some(l), Some(t)) if !i.is_empty() && !t.is_empty() => {
+            Some((i.to_owned(), l.to_owned(), t.to_owned()))
+        }
+        _ => None,
+    }
 }
 
 /// Run an external command, inheriting stdio, failing loudly on non-zero exit.

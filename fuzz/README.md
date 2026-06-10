@@ -23,9 +23,14 @@ is off in every normal/runtime build.
 | `confusion_rkyv` | Same trust boundary for the L3 confusion model (`resources/confusion.rkyv`). | raw `&[u8]` |
 | `ir_match` | The L2 matcher over arbitrary rules + an arbitrary token graph: regex compilation, the backtracking matcher (`min`/`max`/`skip`), antipattern suppression, marker-span resolution, and the byte-offset **suggestion rendering** (`text.get(span)` / token-span slicing) against spans that need not correspond to the text. | `Arbitrary` `{ rules, analysis, text }` |
 | `confusion_check` | The L3 checker: bigram / POS-context log-ratio lookups, neighbour selection, the contraction/evidence guards, and recase + span emission. | `Arbitrary` `{ model, analysis, text }` |
+| `tagger_load` | **Untrusted input.** The native engine's POS tagger artifact (`resources/tagger.rkyv`), loaded in a web build from a URL — rkyv + embedded-fst validation must reject malformed bytes. | raw `&[u8]` |
+| `disambig_rkyv` | Same boundary for the native disambiguation artifact (`resources/disambig.rkyv`); also fuzzes rule **compilation** (regex building). | raw `&[u8]` |
+| `engine_analyze` | The native engine's `analyze` over arbitrary Unicode: segmentation, the word tokenizer, FST tagging, structural tagging (CD/PCT/NNP/SENT_START/SENT_END) and disambiguation. Asserts every token span is in-bounds, on a char boundary, and equals its source text. Loads the real artifacts once (no-ops if absent). | `Arbitrary` `String` |
+| `disambig_apply` | The disambiguation pass over arbitrary rules + an arbitrary token graph: regex compilation, marker resolution, the reused backtracking matcher, and tag-action application (retain/push over tags & lemmas). | `Arbitrary` `{ rules, tokens }` |
 
-The two `*_rkyv` targets are the security-relevant boundary (deserialising attacker-controlled
-bytes). The two structure-aware targets exercise the most error-prone runtime logic.
+The `*_rkyv` + `tagger_load` targets are the security-relevant boundary (deserialising
+attacker-controlled bytes). The structure-aware + `engine_analyze` targets exercise the most
+error-prone runtime logic — regex/backtracking and byte-offset span arithmetic.
 
 ## Running
 
@@ -57,5 +62,7 @@ Run those targets with a `-max_len` at least as large as the seed.
 
 ## Status
 
-Last sweep: all four targets ran clean — `ir_match` 0.58M execs, `confusion_check` 2.1M,
-`ir_rkyv` 1.5M, `confusion_rkyv` 72.8M — no crashes, panics, or OOMs.
+Last sweep: all eight targets ran clean — no crashes, panics, or OOMs. The original four
+(`ir_match` 0.58M execs, `confusion_check` 2.1M, `ir_rkyv` 1.5M, `confusion_rkyv` 72.8M) plus the
+native-engine four (`tagger_load` 6.1M, `disambig_rkyv` 4.1M, `disambig_apply` 0.2M,
+`engine_analyze` 52K with the real artifacts — span invariants held).

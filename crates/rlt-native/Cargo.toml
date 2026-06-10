@@ -1,0 +1,34 @@
+[package]
+name = "rlt-native"
+description = "Native analysis engine: LanguageTool sentence segmentation (srx) + word tokenization + FST POS tagging + disambiguation, behind rlt_core::Engine. Replaces the vendored nlprule."
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+rlt-core.workspace = true
+# LanguageTool sentence segmentation from segment.srx (pure Rust, wasm-ok).
+srx.workspace = true
+# The POS tagger FSA (inflected -> lemma+tags); also backs is_known.
+fst.workspace = true
+# Zero-copy artifact for the tagger's side-table (the fst maps word -> entry index).
+rkyv.workspace = true
+serde = { workspace = true }
+thiserror.workspace = true
+
+# nlprule (via rlt-engine) + the example corpus are needed ONLY for the P1 differential test and the
+# bench baseline — dev-deps keep them out of the lib/wasm build, so the native engine ships nlprule-free.
+[dev-dependencies]
+rlt-engine.workspace = true
+rlt-convert.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "engine"
+harness = false
+
+[lints]
+workspace = true

@@ -16,6 +16,10 @@ xsd-parser = "1.5"
 # adapt-sweep: persist per-version results (resumable) + parse score-oracle's JSON.
 serde = { workspace = true }
 serde_json.workspace = true
+# build-tagger: assemble the native engine's POS dictionary (AGID + remap.awk → fst artifact).
+rlt-native.workspace = true
+# build-disambig: lower disambiguation.xml → the disambig.rkyv artifact.
+rlt-convert.workspace = true
 
 [lints]
 workspace = true

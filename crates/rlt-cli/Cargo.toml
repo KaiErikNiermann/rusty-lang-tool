@@ -23,6 +23,7 @@ rlt-core.workspace = true
 rlt-engine.workspace = true
 rlt-convert.workspace = true
 rlt-tagger.workspace = true
+rlt-native.workspace = true
 clap.workspace = true
 anyhow.workspace = true
 tracing.workspace = true

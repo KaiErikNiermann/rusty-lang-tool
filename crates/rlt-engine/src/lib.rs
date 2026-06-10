@@ -95,6 +95,19 @@ impl VendoredEngine {
         }
         tags
     }
+
+    /// The raw `(lemma, pos)` analyses nlprule's tagger records for `word`, in lexicon order — the
+    /// context-free dictionary lookup (no disambiguation). Feeds the native engine's P1 bootstrap
+    /// dictionary (a direct dump of nlprule's tagger) so its differential test isolates engine-code
+    /// bugs from data differences. Empty for unknown words.
+    #[must_use]
+    pub fn word_data(&self, word: &str) -> Vec<(String, String)> {
+        self.tokenizer
+            .tagger()
+            .get_tags(word)
+            .map(|d| (d.lemma().as_str().to_owned(), d.pos().as_str().to_owned()))
+            .collect()
+    }
 }
 
 /// Append `value` to `out` iff it is non-empty and not already present (order-preserving unique) —

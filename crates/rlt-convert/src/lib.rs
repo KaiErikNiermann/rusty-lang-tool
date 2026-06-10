@@ -15,7 +15,12 @@
 
 #![forbid(unsafe_code)]
 
+mod disambig;
 mod lt_schema;
+
+pub use disambig::{
+    DEFAULT_DISAMBIGUATION, DisambigReport, convert_disambiguation, lower_disambiguation,
+};
 
 use std::path::Path;
 
@@ -850,7 +855,7 @@ fn is_yes(v: &pattern::BinaryYesNoType) -> bool {
 /// remove the DOCTYPE, then iteratively substitute `&name;` until stable (entities may reference
 /// other entities). Quote-bearing entity values appear only in element content in LT's grammar,
 /// so textual substitution is safe here.
-fn expand_entities(xml: &str) -> Result<String> {
+pub(crate) fn expand_entities(xml: &str) -> Result<String> {
     let Some(doctype_start) = xml.find("<!DOCTYPE") else {
         return Ok(xml.to_owned()); // No internal subset — nothing to expand.
     };

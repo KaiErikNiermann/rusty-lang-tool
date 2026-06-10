@@ -11,9 +11,17 @@ authors.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# `nlprule` (default) keeps the `RltChecker::new`/`with_neural` constructors backed by nlprule's
+# prebuilt binaries. Build with `--no-default-features` for a pure-native bundle (the `with_native*`
+# constructors only) that drops the nlprule crate + its 11.6 MB binary entirely.
+default = ["nlprule"]
+nlprule = ["dep:rlt-engine"]
+
 [dependencies]
 rlt-core.workspace = true
-rlt-engine.workspace = true
+rlt-engine = { workspace = true, optional = true }
+rlt-native.workspace = true
 rlt-tagger.workspace = true
 wasm-bindgen.workspace = true
 serde-wasm-bindgen.workspace = true

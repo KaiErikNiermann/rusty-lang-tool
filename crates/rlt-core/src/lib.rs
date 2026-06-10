@@ -20,7 +20,7 @@ mod matcher;
 mod spell;
 
 pub use disambig::ConfusionChecker;
-pub use matcher::IrMatcher;
+pub use matcher::{Disambiguator, IrMatcher};
 
 use serde::{Deserialize, Serialize};
 
