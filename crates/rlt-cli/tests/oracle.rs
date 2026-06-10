@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use rlt_convert::Example;
 use rlt_core::{Checker, Composite, ConfusionChecker, Engine, GrammarChecker, IrMatcher, Source};
 use rlt_engine::VendoredEngine;
+use rlt_tagger::Tagger;
 
 /// Resolve a workspace-root-relative path from this crate's manifest dir.
 fn root(rel: &str) -> PathBuf {
@@ -294,4 +295,77 @@ fn l3_confusion_precision_recall() {
         fp <= 5000,
         "L3 false positives regressed: {fp}; expected <= 5000"
     );
+}
+
+/// L4 quality smoke/regression: a curated set of grammatical errors the neural tagger should fix,
+/// and correct sentences it must leave untouched. A floor that guards against decode/quantization
+/// regressions — *not* a full GEC benchmark (that is the pipeline's offline ERRANT F0.5 gate). The
+/// tagger reads text directly, so no engine is needed. Requires `resources/l4/`.
+#[test]
+#[ignore = "needs resources/l4 artifact; run via `cargo xtask run-l4-oracle`"]
+fn l4_edit_tagger_precision_recall() {
+    let dir = root("resources/l4");
+    if !dir.join("model.int8.onnx").exists() {
+        eprintln!(
+            "skipping L4 oracle: {} missing (run `cargo xtask build-l4`)",
+            dir.display()
+        );
+        return;
+    }
+    let tagger = Tagger::from_dir(&dir).expect("load L4 artifact");
+
+    // (sentence, acceptable replacements on the error word — verbs have >1 valid form).
+    let errors: &[(&str, &[&str])] = &[
+        ("I have a apple .", &["an"]),
+        ("They was very happy .", &["were"]),
+        ("He do not like it .", &["did", "does"]),
+        ("I seen it yesterday .", &["saw"]),
+        ("She go to school .", &["went", "goes"]),
+    ];
+    let mut recalled = 0usize;
+    for (text, fixes) in errors {
+        let diags = tagger.grammar_diagnostics(text, &rlt_core::Analysis::default());
+        let hit = diags.iter().any(|d| {
+            d.source == Source::Neural
+                && d.suggestions
+                    .iter()
+                    .any(|s| fixes.contains(&s.replacement.as_str()))
+        });
+        if hit {
+            recalled += 1;
+        } else {
+            eprintln!("L4 missed {text:?}: {diags:?}");
+        }
+    }
+
+    let clean = [
+        "She goes to school every day .",
+        "I have an apple .",
+        "The quick brown fox jumps over the lazy dog .",
+        "We are very happy today .",
+    ];
+    let mut false_positives = 0usize;
+    for text in clean {
+        let n = tagger
+            .grammar_diagnostics(text, &rlt_core::Analysis::default())
+            .iter()
+            .filter(|d| d.source == Source::Neural)
+            .count();
+        if n > 0 {
+            eprintln!("L4 false positive on {text:?}");
+        }
+        false_positives += n;
+    }
+
+    eprintln!(
+        "ORACLE [l4]: recall {recalled}/{}, false positives {false_positives}/{}",
+        errors.len(),
+        clean.len()
+    );
+    assert!(
+        recalled >= 4,
+        "L4 recall regressed: {recalled}/{}",
+        errors.len()
+    );
+    assert!(false_positives == 0, "L4 false positives: {false_positives}");
 }
