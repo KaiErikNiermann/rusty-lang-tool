@@ -45,6 +45,28 @@ Source model: **`gotutiyan/gector-roberta-base-5k`** — **non-commercial**. Any
 the L4 artifact is therefore non-commercial (see the repo `LICENSES.md` / `NOTICE`). The Rust *code*
 stays Apache-2.0/MIT.
 
+## Model size & backbone (web delivery)
+
+The int8 roberta-base graph is **~129 MB** — fine for native and the Node smoke test, heavy for the
+browser. The runtime is **backbone-agnostic** (it loads whatever tokenizer/labels/meta the export
+emits), so the backbone is a one-line swap via env vars:
+
+```sh
+RLT_MODEL_ID=gotutiyan/gector-bert-base-cased-5k RLT_L4_DIR=/tmp/l4-bert \
+  uv run python -m rlt_pipeline.export && ... quantize   # build a variant without clobbering
+```
+
+The realistic size levers, in order of impact:
+
+1. **Distillation** — the only path to a genuinely small (sub-50 MB) web model. No off-the-shelf
+   distilled GECToR exists; all gotutiyan checkpoints are base (~110–130 MB int8) or large. This is
+   a future training effort (the offline pipeline is where it would live).
+2. **Smaller-vocab backbone** — `gector-bert-base-cased-5k` (29k vocab vs roberta's 50k) is a
+   measured **112 MB** int8 (~13% smaller); a validated drop-in via `$RLT_MODEL_ID` (the runtime
+   loads its tokenizer/meta unchanged).
+3. **Delivery compression** — the int8 ONNX gzips to **~91 MB** (68%); serve compressed and inflate
+   before handing the bytes to wasm.
+
 ## Status
 
 Export + int8 quantize + ERRANT eval done. The int8 graph runs in `rten` and produces correct edits
