@@ -258,6 +258,80 @@ pub struct ExceptionPat {
     pub case_sensitive: bool,
 }
 
+/// A disambiguation rule: a pattern (with an optional `<marker>` delimiting the affected tokens) plus
+/// the tag action to apply to the marked tokens when it matches. Lowered from `disambiguation.xml`,
+/// which uses the same pattern vocabulary as `grammar.xml`. Run after tagging, before the L2 matcher,
+/// to narrow/fix the over-generated raw-lexicon tags the grammar rules then key on.
+#[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct DisambigRule {
+    /// LT rule id (or enclosing group id), for debugging.
+    pub id: String,
+    /// The ordered pattern, with `MarkerStart`/`MarkerEnd` bounding the tokens the action mutates
+    /// (the whole match when there is no marker).
+    pub pattern: Vec<Construct>,
+    /// What to do to the marked tokens' tags/lemmas on a match.
+    pub action: TagAction,
+}
+
+/// What a matched [`DisambigRule`] does to the marked tokens. Operates on the token's flattened,
+/// deduplicated `tags`/`lemmas` lists (the engine models analyses as separate tag + lemma lists, not
+/// paired readings), which captures the disambiguation effect the L2 matcher keys on.
+#[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+#[non_exhaustive]
+pub enum TagAction {
+    /// `action="replace"` (LT's default): replace the marked tokens' readings with these.
+    Replace {
+        /// Postags to set.
+        postags: Vec<String>,
+        /// Lemmas to set (empty = leave the surface-derived lemmas).
+        lemmas: Vec<String>,
+    },
+    /// `action="add"`: add these as additional readings.
+    Add {
+        /// Postags to add.
+        postags: Vec<String>,
+        /// Lemmas to add.
+        lemmas: Vec<String>,
+    },
+    /// `action="remove"`: drop readings whose postag (or lemma) matches one of these.
+    Remove {
+        /// Postags to remove (regex patterns when `postag_regexp`).
+        postags: Vec<String>,
+        /// Lemmas to remove.
+        lemmas: Vec<String>,
+        /// Whether `postags` are regexes (`postag_regexp="yes"`).
+        postag_regexp: bool,
+    },
+    /// `action="filter"`: keep only the postags matching one of these patterns.
+    Filter {
+        /// Postag patterns to keep (regex when `postag_regexp`).
+        postags: Vec<String>,
+        /// Whether `postags` are regexes (`postag_regexp="yes"`).
+        postag_regexp: bool,
+    },
+    /// `action="unify"/"filterall"/"ignore_spelling"`, `<match>` postag synthesis, or a `chunk_re`
+    /// token (no chunker) — recognized but not applied. The rule is kept (named) but inert.
+    Unsupported,
+}
+
+impl TagAction {
+    /// Whether this action is recognized but not applied (the coverage tail).
+    #[must_use]
+    pub fn is_unsupported(&self) -> bool {
+        matches!(self, TagAction::Unsupported)
+    }
+}
+
+/// Deserialize a `Vec<DisambigRule>` from its rkyv artifact.
+///
+/// # Errors
+/// Returns an error if `bytes` is not a valid archived `Vec<DisambigRule>`.
+pub fn deserialize_disambig(bytes: &[u8]) -> Result<Vec<DisambigRule>, rkyv::rancor::Error> {
+    rkyv::from_bytes::<Vec<DisambigRule>, rkyv::rancor::Error>(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

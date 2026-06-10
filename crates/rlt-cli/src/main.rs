@@ -96,6 +96,12 @@ enum Command {
         /// Native POS tagger artifact (used by `--engine native`).
         #[arg(long, default_value = "resources/tagger.rkyv")]
         tagger: PathBuf,
+        /// Native disambiguation artifact (used by `--engine native`); omit to skip disambiguation.
+        #[arg(long, default_value = "resources/disambig.rkyv")]
+        disambig: PathBuf,
+        /// Disable the native disambiguation pass even if `--disambig` exists.
+        #[arg(long)]
+        no_disambig: bool,
         /// Compiled IR rkyv blob.
         #[arg(long, default_value = rlt_convert::DEFAULT_OUT)]
         blob: PathBuf,
@@ -160,6 +166,8 @@ fn main() -> Result<()> {
             tokenizer,
             segment_srx,
             tagger,
+            disambig,
+            no_disambig,
             blob,
             grammar,
             json,
@@ -169,7 +177,15 @@ fn main() -> Result<()> {
                     rlt_cli::oracle_score::score_ir(&tokenizer, &blob, &grammar)?
                 }
                 AnalysisEngine::Native => {
-                    rlt_cli::oracle_score::score_ir_native(&segment_srx, &tagger, &blob, &grammar)?
+                    // Use the disambiguation artifact when present (unless explicitly disabled).
+                    let disambig = (!no_disambig && disambig.exists()).then_some(disambig.as_path());
+                    rlt_cli::oracle_score::score_ir_native(
+                        &segment_srx,
+                        &tagger,
+                        disambig,
+                        &blob,
+                        &grammar,
+                    )?
                 }
             };
             if json {

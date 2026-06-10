@@ -21,7 +21,11 @@ rlt-ir.workspace = true
 # Generated bindings (src/lt_schema.rs) deserialize via these; quick-xml is referenced by the
 # generated deserializer impls. The heavy `xsd-parser` generator lives in xtask, not here.
 xsd-parser-types.workspace = true
-quick-xml.workspace = true
+# `serialize` enables quick-xml's serde support — used to deserialize disambiguation.xml (which has no
+# XSD, so the generated bindings don't cover its `<disambig>` element) into a hand-written serde model.
+# `overlapped-lists` buffers non-contiguous repeated elements (rulegroups interleaved with bare rules).
+quick-xml = { workspace = true, features = ["serialize", "overlapped-lists"] }
+serde = { workspace = true }
 regex.workspace = true
 rkyv.workspace = true
 anyhow.workspace = true

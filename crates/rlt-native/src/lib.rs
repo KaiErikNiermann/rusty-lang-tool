@@ -17,7 +17,7 @@ pub use tagger::{Tagger, TaggerError, WordData, build_artifact, build_from_tripl
 use std::ops::Range;
 use std::path::Path;
 
-use rlt_core::{Analysis, Engine, Span, Token};
+use rlt_core::{Analysis, Disambiguator, Engine, Span, Token};
 
 /// Errors constructing the engine from its artifacts.
 #[derive(Debug, thiserror::Error)]
@@ -28,43 +28,71 @@ pub enum NativeError {
     /// The tagger artifact could not be loaded.
     #[error(transparent)]
     Tagger(#[from] TaggerError),
+    /// The disambiguation artifact could not be loaded.
+    #[error("loading disambiguation rules: {0}")]
+    Disambig(String),
     /// An artifact file could not be read.
     #[error("reading artifact: {0}")]
     Io(#[from] std::io::Error),
 }
 
-/// The native analysis engine: sentence segmentation + tokenization + FST POS tagging behind
-/// [`rlt_core::Engine`]. A drop-in replacement for the vendored nlprule engine.
+/// The native analysis engine: sentence segmentation + tokenization + FST POS tagging + (optional)
+/// disambiguation behind [`rlt_core::Engine`]. A drop-in replacement for the vendored nlprule engine.
 pub struct NativeEngine {
     segmenter: Segmenter,
     tagger: Tagger,
+    disambiguator: Option<Disambiguator>,
 }
 
 impl NativeEngine {
-    /// Assemble from a loaded segmenter + tagger.
+    /// Assemble from a loaded segmenter + tagger (no disambiguation; add it with
+    /// [`with_disambiguator`](Self::with_disambiguator)).
     #[must_use]
     pub fn new(segmenter: Segmenter, tagger: Tagger) -> Self {
-        Self { segmenter, tagger }
+        Self {
+            segmenter,
+            tagger,
+            disambiguator: None,
+        }
+    }
+
+    /// Attach a disambiguation pass (run after tagging, before the result is returned).
+    #[must_use]
+    pub fn with_disambiguator(mut self, disambiguator: Disambiguator) -> Self {
+        self.disambiguator = Some(disambiguator);
+        self
     }
 
     /// Load from in-memory bytes — the wasm path. `segment_srx` is the SRX XML; `tagger` is the
-    /// rkyv tagger artifact.
+    /// rkyv tagger artifact. Disambiguation can be attached via [`with_disambiguator`](Self::with_disambiguator).
     ///
     /// # Errors
     /// Returns [`NativeError`] if either artifact is malformed.
     pub fn from_bytes(segment_srx: &str, tagger: &[u8]) -> Result<Self, NativeError> {
-        Ok(Self {
-            segmenter: Segmenter::from_srx(segment_srx, "en")?,
-            tagger: Tagger::from_bytes(tagger)?,
-        })
+        Ok(Self::new(
+            Segmenter::from_srx(segment_srx, "en")?,
+            Tagger::from_bytes(tagger)?,
+        ))
     }
 
-    /// Load from files on disk — the native path (`segment.srx` + `tagger.rkyv`).
+    /// Load from files on disk — the native path. `disambig` (the `disambig.rkyv` artifact) is
+    /// optional; without it the engine emits raw, un-disambiguated lexicon tags.
     ///
     /// # Errors
     /// Returns [`NativeError`] if a file is missing or an artifact is malformed.
-    pub fn from_paths(segment_srx: &Path, tagger: &Path) -> Result<Self, NativeError> {
-        Self::from_bytes(&std::fs::read_to_string(segment_srx)?, &std::fs::read(tagger)?)
+    pub fn from_paths(
+        segment_srx: &Path,
+        tagger: &Path,
+        disambig: Option<&Path>,
+    ) -> Result<Self, NativeError> {
+        let mut engine = Self::from_bytes(&std::fs::read_to_string(segment_srx)?, &std::fs::read(tagger)?)?;
+        if let Some(path) = disambig {
+            engine.disambiguator = Some(
+                Disambiguator::from_rkyv_bytes(&std::fs::read(path)?)
+                    .map_err(|e| NativeError::Disambig(e.to_string()))?,
+            );
+        }
+        Ok(engine)
     }
 }
 
@@ -89,6 +117,11 @@ impl Engine for NativeEngine {
             // SENT_END marks the sentence's final token — 331 grammar rules anchor on it.
             if let Some(last) = sentence.last_mut() {
                 push_tag(&mut last.tags, "SENT_END");
+            }
+            // Disambiguation runs per sentence (LT's rules don't cross boundaries; the sentinels
+            // bound them), narrowing/fixing tags before the L2 matcher sees them.
+            if let Some(disambiguator) = &self.disambiguator {
+                disambiguator.disambiguate(&mut sentence);
             }
             tokens.append(&mut sentence);
         }

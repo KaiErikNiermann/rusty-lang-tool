@@ -115,10 +115,11 @@ pub fn score_ir(tokenizer: &Path, blob: &Path, grammar: &Path) -> Result<ScoreRe
 pub fn score_ir_native(
     segment_srx: &Path,
     tagger: &Path,
+    disambig: Option<&Path>,
     blob: &Path,
     grammar: &Path,
 ) -> Result<ScoreReport> {
-    let engine = rlt_native::NativeEngine::from_paths(segment_srx, tagger)
+    let engine = rlt_native::NativeEngine::from_paths(segment_srx, tagger, disambig)
         .map_err(|e| anyhow!("loading native engine: {e}"))?;
     score_ir_with_engine(engine, blob, grammar)
 }

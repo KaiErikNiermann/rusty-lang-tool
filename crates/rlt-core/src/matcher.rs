@@ -15,7 +15,10 @@
 use std::collections::HashMap;
 
 use regex::Regex;
-use rlt_ir::{Case, Construct, ExceptionPat, Rule, SugPart, Suggestion as IrSuggestion, TokenPat};
+use rlt_ir::{
+    Case, Construct, DisambigRule, ExceptionPat, Rule, SugPart, Suggestion as IrSuggestion,
+    TagAction, TokenPat,
+};
 
 use crate::{Analysis, Diagnostic, GrammarChecker, Source, Span, Suggestion, Token};
 
@@ -203,6 +206,16 @@ enum TextMatch {
 enum TagMatch {
     Literal(String),
     Regex(Regex),
+}
+
+impl TagMatch {
+    /// Whether this matcher accepts the POS `tag`.
+    fn matches(&self, tag: &str) -> bool {
+        match self {
+            TagMatch::Literal(p) => p == tag,
+            TagMatch::Regex(re) => re.is_match(tag),
+        }
+    }
 }
 
 /// Compile a rule, or `None` if it cannot be matched faithfully (unsupported construct, no
@@ -628,7 +641,7 @@ fn render(
     end: usize,
     captures: &[Option<(usize, usize)>],
 ) -> Option<Diagnostic> {
-    let (mtok_start, mtok_end) = marker_token_range(rule, captures, start, end)?;
+    let (mtok_start, mtok_end) = marker_token_range(rule.marker, captures, start, end)?;
     let span = Span {
         start: tokens[mtok_start].span.start,
         end: tokens[mtok_end - 1].span.end,
@@ -654,12 +667,12 @@ fn render(
 /// Token-index range `[start, end)` the diagnostic span covers: the marked elements' captures, or
 /// the whole match when there is no `<marker>`.
 fn marker_token_range(
-    rule: &CompiledRule,
+    marker: Option<(usize, usize)>,
     captures: &[Option<(usize, usize)>],
     start: usize,
     end: usize,
 ) -> Option<(usize, usize)> {
-    let Some((mi_start, mi_end)) = rule.marker else {
+    let Some((mi_start, mi_end)) = marker else {
         return (end > start).then_some((start, end));
     };
     let mut lo = usize::MAX;
@@ -707,6 +720,209 @@ fn apply_case(s: &str, case: Case) -> String {
     }
 }
 
+// ---- Disambiguation: applying disambiguation.xml tag-actions over a tagged token sequence --------
+
+/// Runs LanguageTool's `disambiguation.xml` rules over a tagged token sequence, mutating tags/lemmas
+/// to narrow or fix the raw-lexicon analyses before the L2 grammar matcher keys on them. Reuses the
+/// exact pattern-matching engine the grammar matcher uses.
+pub struct Disambiguator {
+    rules: Vec<CompiledDisambig>,
+}
+
+/// A disambiguation rule compiled for matching: pattern elements, the marked element range (the
+/// tokens the action mutates), and the action.
+struct CompiledDisambig {
+    elements: Vec<Elem>,
+    marker: Option<(usize, usize)>,
+    action: CompiledAction,
+}
+
+/// A compiled [`TagAction`]: postag/lemma edits applied to a matched token's flattened tag/lemma lists.
+enum CompiledAction {
+    Replace { postags: Vec<String>, lemmas: Vec<String> },
+    Add { postags: Vec<String>, lemmas: Vec<String> },
+    Remove { tags: Vec<TagMatch>, lemmas: Vec<String> },
+    Filter { tags: Vec<TagMatch> },
+}
+
+impl Disambiguator {
+    /// Compile a set of disambiguation rules (skipping unsupported/unmatchable ones).
+    #[must_use]
+    pub fn new(rules: &[DisambigRule]) -> Self {
+        Self {
+            rules: rules.iter().filter_map(compile_disambig).collect(),
+        }
+    }
+
+    /// Compile from the rkyv artifact produced by the converter.
+    ///
+    /// # Errors
+    /// Returns an error if `bytes` is not a valid archived `Vec<DisambigRule>`.
+    pub fn from_rkyv_bytes(bytes: &[u8]) -> Result<Self, rkyv::rancor::Error> {
+        Ok(Self::new(&rlt_ir::deserialize_disambig(bytes)?))
+    }
+
+    /// Number of compiled (applicable) rules.
+    #[must_use]
+    pub fn rule_count(&self) -> usize {
+        self.rules.len()
+    }
+
+    /// Apply every rule in order, mutating `tokens`' tags/lemmas. Rules run sequentially, so a later
+    /// rule sees earlier rules' edits — matching LanguageTool's pipeline.
+    pub fn disambiguate(&self, tokens: &mut [Token]) {
+        for rule in &self.rules {
+            apply_disambig_rule(rule, tokens);
+        }
+    }
+}
+
+/// Scan `tokens` for every (non-overlapping) match of `rule`, then apply its action to each match's
+/// marked tokens. Matches are collected before mutating so the scan can borrow `tokens` immutably.
+fn apply_disambig_rule(rule: &CompiledDisambig, tokens: &mut [Token]) {
+    let mut hits: Vec<(usize, usize)> = Vec::new();
+    let mut caps = vec![None; rule.elements.len()];
+    let mut ti = 0;
+    while ti < tokens.len() {
+        caps.fill(None);
+        match match_elements(&rule.elements, 0, tokens, ti, &mut caps) {
+            Some(end) if end > ti => {
+                if let Some(range) = marker_token_range(rule.marker, &caps, ti, end) {
+                    hits.push(range);
+                }
+                ti = end; // non-overlapping: resume past this match
+            }
+            _ => ti += 1,
+        }
+    }
+    for (start, end) in hits {
+        for token in &mut tokens[start..end] {
+            apply_action(&rule.action, token);
+        }
+    }
+}
+
+/// Apply one compiled action to a single token's flattened tag/lemma lists.
+fn apply_action(action: &CompiledAction, token: &mut Token) {
+    match action {
+        CompiledAction::Replace { postags, lemmas } => {
+            // Soft replace: when the target reading is already among the token's analyses, narrow to
+            // it (the rule's intent — pick the right reading); when it is absent, *add* it rather than
+            // clobber. Hard-clobbering craters recall when a replace rule over-fires on the
+            // over-generated raw lexicon, destroying tags later grammar rules need.
+            if !postags.is_empty() {
+                if postags.iter().any(|p| token.tags.contains(p)) {
+                    token.tags.retain(|t| postags.contains(t));
+                } else {
+                    for p in postags {
+                        push_unique_str(&mut token.tags, p);
+                    }
+                }
+            }
+            if !lemmas.is_empty() {
+                if lemmas.iter().any(|l| token.lemmas.contains(l)) {
+                    token.lemmas.retain(|l| lemmas.contains(l));
+                } else {
+                    for l in lemmas {
+                        push_unique_str(&mut token.lemmas, l);
+                    }
+                }
+            }
+        }
+        CompiledAction::Add { postags, lemmas } => {
+            for p in postags {
+                push_unique_str(&mut token.tags, p);
+            }
+            for l in lemmas {
+                push_unique_str(&mut token.lemmas, l);
+            }
+        }
+        CompiledAction::Remove { tags, lemmas } => {
+            token.tags.retain(|t| !tags.iter().any(|m| m.matches(t)));
+            if !lemmas.is_empty() {
+                token.lemmas.retain(|l| !lemmas.iter().any(|rm| rm == l));
+            }
+        }
+        CompiledAction::Filter { tags } => {
+            if !tags.is_empty() {
+                token.tags.retain(|t| tags.iter().any(|m| m.matches(t)));
+            }
+        }
+    }
+}
+
+/// Append `value` to `out` if absent (order-preserving unique).
+fn push_unique_str(out: &mut Vec<String>, value: &str) {
+    if !out.iter().any(|v| v == value) {
+        out.push(value.to_owned());
+    }
+}
+
+/// Compile a [`DisambigRule`] for matching; `None` if its action is unsupported or its pattern
+/// contains an unmatchable construct.
+fn compile_disambig(r: &DisambigRule) -> Option<CompiledDisambig> {
+    let action = compile_action(&r.action)?;
+    let mut elements = Vec::new();
+    let mut marker_start = None;
+    let mut marker = None;
+    for c in &r.pattern {
+        match c {
+            Construct::MarkerStart => marker_start = Some(elements.len()),
+            Construct::MarkerEnd => marker = marker_start.map(|s| (s, elements.len())),
+            Construct::Token(_) | Construct::Or(_) | Construct::And(_) => {
+                elements.push(compile_construct(c)?);
+            }
+            _ => return None,
+        }
+    }
+    (!elements.is_empty()).then_some(CompiledDisambig {
+        elements,
+        marker,
+        action,
+    })
+}
+
+/// Compile a [`TagAction`] into a [`CompiledAction`]; `None` if unsupported or a postag regex fails.
+fn compile_action(a: &TagAction) -> Option<CompiledAction> {
+    let tag_matches = |postags: &[String], regexp: bool| -> Option<Vec<TagMatch>> {
+        postags
+            .iter()
+            .map(|p| {
+                if regexp {
+                    Some(TagMatch::Regex(anchored(p, false)?))
+                } else {
+                    Some(TagMatch::Literal(p.clone()))
+                }
+            })
+            .collect()
+    };
+    Some(match a {
+        TagAction::Replace { postags, lemmas } => CompiledAction::Replace {
+            postags: postags.clone(),
+            lemmas: lemmas.clone(),
+        },
+        TagAction::Add { postags, lemmas } => CompiledAction::Add {
+            postags: postags.clone(),
+            lemmas: lemmas.clone(),
+        },
+        TagAction::Remove {
+            postags,
+            lemmas,
+            postag_regexp,
+        } => CompiledAction::Remove {
+            tags: tag_matches(postags, *postag_regexp)?,
+            lemmas: lemmas.clone(),
+        },
+        TagAction::Filter {
+            postags,
+            postag_regexp,
+        } => CompiledAction::Filter {
+            tags: tag_matches(postags, *postag_regexp)?,
+        },
+        _ => return None, // TagAction::Unsupported (and any future variant)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use rlt_ir::TokenPat;
@@ -739,6 +955,57 @@ mod tests {
             text: Some(word.to_owned()),
             ..Default::default()
         })
+    }
+
+    #[test]
+    fn disambiguator_applies_remove_add_filter_and_soft_replace() {
+        use rlt_ir::{DisambigRule, TagAction};
+
+        let tok = |text: &str, tags: &[&str]| Token {
+            text: text.to_owned(),
+            tags: tags.iter().map(|s| (*s).to_owned()).collect(),
+            ..Default::default()
+        };
+        let rule = |id: &str, word: &str, action: TagAction| DisambigRule {
+            id: id.to_owned(),
+            pattern: vec![lit(word)],
+            action,
+        };
+        let dis = Disambiguator::new(&[
+            // remove NNS from the verb "gives"
+            rule("R", "gives", TagAction::Remove {
+                postags: vec!["NNS".to_owned()],
+                lemmas: vec![],
+                postag_regexp: false,
+            }),
+            // add PCT to a comma
+            rule("A", ",", TagAction::Add {
+                postags: vec!["PCT".to_owned()],
+                lemmas: vec![],
+            }),
+            // soft-replace: "or" narrows to CC (present) — JJ/NN:U dropped
+            rule("S", "or", TagAction::Replace {
+                postags: vec!["CC".to_owned()],
+                lemmas: vec![],
+            }),
+            // soft-replace where target absent → added, not clobbered
+            rule("S2", "10", TagAction::Replace {
+                postags: vec!["CD".to_owned()],
+                lemmas: vec![],
+            }),
+        ]);
+
+        let mut tokens = vec![
+            tok("gives", &["NNS", "VBZ"]),
+            tok(",", &[]),
+            tok("or", &["CC", "JJ", "NN:U"]),
+            tok("10", &["FOO"]),
+        ];
+        dis.disambiguate(&mut tokens);
+        assert_eq!(tokens[0].tags, vec!["VBZ"], "NNS removed");
+        assert_eq!(tokens[1].tags, vec!["PCT"], "PCT added");
+        assert_eq!(tokens[2].tags, vec!["CC"], "narrowed to the present target");
+        assert_eq!(tokens[3].tags, vec!["FOO", "CD"], "target absent → added, not clobbered");
     }
 
     #[test]

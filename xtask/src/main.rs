@@ -100,6 +100,9 @@ enum Task {
     /// Fetches AGID if absent (resumable); needs `fetch-lt` for the awk script + supplements, and
     /// `gawk` on PATH.
     BuildTagger,
+    /// Lower LanguageTool's `disambiguation.xml` into the native engine's `resources/disambig.rkyv`
+    /// tag-action artifact (needs `fetch-lt`).
+    BuildDisambig,
     /// Download Norvig's n-gram subsets for the L3 confusion model (resumable).
     FetchNgrams,
     /// Build the L3 confusion model from LT's confusion sets + the n-gram subsets.
@@ -151,6 +154,7 @@ fn main() -> Result<()> {
         Task::FetchEngine => fetch_engine(),
         Task::BuildBlob => run("cargo", &["run", "-p", "rlt-convert"]),
         Task::BuildTagger => build_tagger(),
+        Task::BuildDisambig => build_disambig(),
         Task::FetchNgrams => fetch_ngrams(),
         Task::BuildConfusion => run("cargo", &["run", "-p", "rlt-cli", "--", "build-confusion"]),
         Task::BuildWasm => build_wasm(),
@@ -761,6 +765,24 @@ fn build_tagger() -> Result<()> {
         bytes.len(),
     );
     println!("next: score the oracle on the native engine to compare against the 58.7% baseline");
+    Ok(())
+}
+
+/// Lower `disambiguation.xml` into the `disambig.rkyv` tag-action artifact the native engine loads.
+fn build_disambig() -> Result<()> {
+    let src = Path::new(rlt_convert::DEFAULT_DISAMBIGUATION);
+    if !src.exists() {
+        bail!("missing {} — run `cargo xtask fetch-lt` first", src.display());
+    }
+    let out = Path::new("resources/disambig.rkyv");
+    let report = rlt_convert::convert_disambiguation(src, out)?;
+    println!(
+        "wrote {}: {} rules ({} applicable, {} unsupported)",
+        out.display(),
+        report.rules.len(),
+        report.applicable,
+        report.rules.len() - report.applicable,
+    );
     Ok(())
 }
 
