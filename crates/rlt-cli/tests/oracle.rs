@@ -12,7 +12,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use rlt_convert::Example;
+use rlt_cli::oracle_score::{
+    count_false_positives, count_reproduced, negative_examples, positive_examples,
+};
 use rlt_core::{Checker, Composite, ConfusionChecker, Engine, GrammarChecker, IrMatcher, Source};
 use rlt_engine::VendoredEngine;
 use rlt_tagger::Tagger;
@@ -38,87 +40,6 @@ fn missing(paths: &[(&str, &PathBuf)]) -> bool {
     false
 }
 
-/// Load LT's positive (`correction`-bearing) examples.
-fn positive_examples(grammar: &Path) -> Vec<Example> {
-    rlt_convert::extract_examples(grammar)
-        .expect("extract examples")
-        .into_iter()
-        .filter(|e| !e.corrections.is_empty())
-        .collect()
-}
-
-/// Load LT's negative examples (no `correction`) — sentences on which the owning rule must NOT
-/// fire. Used as a precision check for the IR matcher, whose diagnostic `code` is the rule id.
-fn negative_examples(grammar: &Path) -> Vec<Example> {
-    rlt_convert::extract_examples(grammar)
-        .expect("extract examples")
-        .into_iter()
-        .filter(|e| e.corrections.is_empty())
-        .collect()
-}
-
-/// Count negative examples on which the owning rule wrongly fires (self-flag = false positive),
-/// and print the rate. Lower is better.
-fn false_positive_rate<B: Engine + GrammarChecker>(
-    checker: &Checker<B>,
-    examples: &[Example],
-) -> usize {
-    let mut flagged = 0usize;
-    for ex in examples {
-        let fires = checker
-            .check(&ex.text)
-            .into_iter()
-            .any(|d| d.source == Source::Grammar && d.code == ex.rule_id);
-        if fires {
-            flagged += 1;
-        }
-    }
-    let total = examples.len();
-    #[allow(clippy::cast_precision_loss)]
-    let pct = if total == 0 {
-        0.0
-    } else {
-        flagged as f64 / total as f64 * 100.0
-    };
-    eprintln!(
-        "ORACLE [ir v6.7] false positives: {flagged}/{total} negative examples self-flag ({pct:.1}%)"
-    );
-    flagged
-}
-
-/// Count examples whose expected correction the checker reproduces, and print the rate.
-fn score<B: Engine + GrammarChecker>(
-    label: &str,
-    checker: &Checker<B>,
-    examples: &[Example],
-) -> usize {
-    let mut reproduced = 0usize;
-    for ex in examples {
-        let produced: Vec<String> = checker
-            .check(&ex.text)
-            .into_iter()
-            .filter(|d| d.source == Source::Grammar)
-            .flat_map(|d| d.suggestions.into_iter().map(|s| s.replacement))
-            .collect();
-        if ex
-            .corrections
-            .iter()
-            .any(|c| produced.iter().any(|p| p == c))
-        {
-            reproduced += 1;
-        }
-    }
-    let total = examples.len();
-    #[allow(clippy::cast_precision_loss)]
-    let pct = if total == 0 {
-        0.0
-    } else {
-        reproduced as f64 / total as f64 * 100.0
-    };
-    eprintln!("ORACLE [{label}]: reproduced {reproduced}/{total} ({pct:.1}%)");
-    reproduced
-}
-
 #[test]
 #[ignore = "slow (~45s) and needs fetched data; run via `cargo xtask run-oracle`"]
 fn nlprule_baseline_reproduces_examples() {
@@ -138,7 +59,12 @@ fn nlprule_baseline_reproduces_examples() {
         .expect("load engine + rules");
     let checker = Checker::new(engine);
 
-    let reproduced = score("nlprule v5.2", &checker, &positive_examples(&grammar));
+    let positives = positive_examples(&grammar).expect("extract examples");
+    let reproduced = count_reproduced(&checker, &positives);
+    eprintln!(
+        "ORACLE [nlprule v5.2]: reproduced {reproduced}/{}",
+        positives.len()
+    );
     // Regression floor just below the measured baseline (4751 with nlprule 0.6.4 vs LT v6.7).
     assert!(
         reproduced >= 4500,
@@ -169,8 +95,15 @@ fn ir_matcher_reproduces_examples() {
     );
     let checker = Checker::new(Composite::new(engine, matcher));
 
-    let reproduced = score("ir v6.7", &checker, &positive_examples(&grammar));
-    let false_positives = false_positive_rate(&checker, &negative_examples(&grammar));
+    let positives = positive_examples(&grammar).expect("extract examples");
+    let negatives = negative_examples(&grammar).expect("extract examples");
+    let reproduced = count_reproduced(&checker, &positives);
+    let false_positives = count_false_positives(&checker, &negatives);
+    eprintln!(
+        "ORACLE [ir v6.7]: reproduced {reproduced}/{}; false positives {false_positives}/{}",
+        positives.len(),
+        negatives.len()
+    );
 
     // Recall floor: measured 4985/8527 = 58.5% — ahead of the nlprule v5.2 baseline (55.3%). The
     // jump from 53.3% is the <match> `regexp_replace` transforms rendering correctly (440 uses)

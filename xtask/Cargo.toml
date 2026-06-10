@@ -13,6 +13,9 @@ anyhow.workspace = true
 # Schema codegen lives here (not in any runtime crate) so the heavy generator dependency never
 # touches normal builds. `gen-schema` regenerates the committed bindings on an LT bump.
 xsd-parser = "1.5"
+# adapt-sweep: persist per-version results (resumable) + parse score-oracle's JSON.
+serde = { workspace = true }
+serde_json.workspace = true
 
 [lints]
 workspace = true
