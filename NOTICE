@@ -1,0 +1,39 @@
+rusty-lang-tool — third-party attributions
+===========================================
+
+The Rust code in this repository is licensed Apache-2.0 OR MIT (see LICENSE-APACHE,
+LICENSE-MIT). The notices below cover bundled or derived third-party material whose
+terms differ. See LICENSES.md for the full discussion.
+
+-------------------------------------------------------------------------------
+LanguageTool (rules, confusion sets, morphology)  —  LGPL-2.1
+-------------------------------------------------------------------------------
+The L2 rule corpus and L3 confusion sets are derived from LanguageTool
+(https://github.com/languagetool-org/languagetool), LGPL-2.1. Build artifacts
+derived from this data (resources/en.rkyv, resources/confusion.rkyv) are LGPL-2.1
+and are not committed; they are produced on demand.
+
+-------------------------------------------------------------------------------
+L4 edit-tagger model  —  NON-COMMERCIAL
+-------------------------------------------------------------------------------
+The optional L4 layer derives its model from:
+
+  gotutiyan/gector-roberta-base-5k
+  https://huggingface.co/gotutiyan/gector-roberta-base-5k
+  Trained weights are licensed for NON-COMMERCIAL use only.
+
+  An unofficial PyTorch implementation of GECToR (Omelianchuk et al., 2020,
+  "GECToR — Grammatical Error Correction: Tag, Not Rewrite").
+
+The exported/quantized artifact (resources/l4/*) is a derivative of those weights
+and is non-commercial. Any distribution bundling it is non-commercial (PolyForm
+Noncommercial 1.0.0). The artifact is not committed; it is produced by pipeline/.
+
+The verb-form transform dictionary (resources/l4/verb-form-vocab.txt) is from
+Grammarly's GECToR (https://github.com/grammarly/gector).
+
+-------------------------------------------------------------------------------
+Norvig n-grams (L3 statistical confusion)
+-------------------------------------------------------------------------------
+L3 uses Peter Norvig's Google-corpus n-gram subsets (https://norvig.com/ngrams/),
+fetched on demand, pruned to LanguageTool's confusion words.
