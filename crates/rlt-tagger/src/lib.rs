@@ -187,16 +187,18 @@ fn parse_tag(tag: &str) -> Edit {
 pub struct TaggerConfig {
     /// Added to each word's `$KEEP` probability before an edit can win — higher = fewer edits.
     pub keep_confidence: f32,
-    /// A sentence is only edited if some word's detect error probability reaches this.
+    /// Confidence floor used as both the sentence gate (some word's detect error probability must
+    /// reach this) and the token gate (an edit's own probability must reach this) — GECToR semantics.
     pub min_error_probability: f32,
 }
 
 impl Default for TaggerConfig {
     fn default() -> Self {
-        // Conservative starting point; M7.7 calibrates these to the precision@recall target.
+        // Calibrated post-quantization on BEA-2019 dev (pipeline ERRANT sweep): this combo maximized
+        // F0.5 (precision-leaning), which is what an additive, writer-facing layer wants.
         Self {
-            keep_confidence: 0.0,
-            min_error_probability: 0.5,
+            keep_confidence: 0.2,
+            min_error_probability: 0.66,
         }
     }
 }
@@ -247,6 +249,10 @@ impl<S: TagSource> Tagger<S> {
         for (word, pred) in words.iter().zip(&preds) {
             // Keep bias: the edit must beat `$KEEP` by the configured margin to fire.
             if pred.edit_prob <= pred.keep_prob + self.config.keep_confidence {
+                continue;
+            }
+            // Token-level confidence gate (GECToR): the edit's own probability must clear the bar.
+            if pred.edit_prob < self.config.min_error_probability {
                 continue;
             }
             let edit = self.labels.edit(pred.edit_label);
