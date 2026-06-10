@@ -5,6 +5,7 @@ members = [
     "crates/rlt-convert",
     "crates/rlt-engine",
     "crates/rlt-core",
+    "crates/rlt-tagger",
     "crates/rlt-cli",
     "crates/rlt-wasm",
     "xtask",
@@ -60,6 +61,7 @@ rlt-ir = { path = "crates/rlt-ir" }
 rlt-engine = { path = "crates/rlt-engine" }
 rlt-core = { path = "crates/rlt-core" }
 rlt-convert = { path = "crates/rlt-convert" }
+rlt-tagger = { path = "crates/rlt-tagger" }
 
 # Pedantic clippy baseline, applied across the workspace via `[lints] workspace = true`.
 [workspace.lints.clippy]
