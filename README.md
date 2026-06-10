@@ -24,9 +24,10 @@ bundled `<example>` sentences:
   transforms; `<unify>` is unused in English and `postag_replace` synthesis is out of scope.
 - **L3 confusion** (real-word errors, e.g. their/there): **82.6%** recall on perturbed sentences,
   via a bigram + POS-context likelihood ratio over Norvig's n-grams pruned to LT's confusion sets.
-- **L4 neural** (long-tail grammar, native vertical working): a GECToR edit-tagger, **int8-quantized
-  and run in pure Rust via `rten`** — `rlt check "She go to school"` → `"go" → "goes"`. Composes onto
-  L1–L3 behind the same trait. Non-commercial (see Licensing).
+- **L4 neural** (long-tail grammar): a GECToR edit-tagger, **int8-quantized and run in pure Rust via
+  `rten`** — **native and in wasm** — with GECToR-style iterative refinement. `rlt check "She go to
+  school"` → `"go" → "goes"`; composes onto L1–L3 behind the same trait. **F0.5 = 0.545** on BEA-2019
+  dev (ERRANT). Non-commercial (see Licensing).
 
 ## Architecture (the cascade)
 
@@ -39,7 +40,7 @@ Each layer slots in additively behind clean traits (`Engine` / `GrammarChecker`,
 | **L1** | **Spelling (`is_known` + Norvig edit-1, via the engine lexicon)** | **done** |
 | **L2** | **LT rule grammar — nlprule baseline + IR matcher over converted v6.7 rules** | **done** |
 | **L3** | **Confusion-pair real-word errors (bigram + POS likelihood ratio over pruned n-grams)** | **done** |
-| **L4** | **Neural GECToR edit-tagger (int8 ONNX via pure-Rust `rten`), `Source::Neural`** | **α (native; wasm/eval next)** |
+| **L4** | **Neural GECToR edit-tagger (int8 ONNX via pure-Rust `rten`), iterative, `Source::Neural`** | **done (native + wasm; F0.5 0.545)** |
 
 ## Workspace
 
