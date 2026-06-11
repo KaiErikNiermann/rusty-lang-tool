@@ -25,36 +25,67 @@ pub struct LangConfig {
     pub tagset: TagSet,
     /// Which optional dictionary sources / cascade layers apply.
     pub sources: Sources,
+    /// L1 spell-checking parameters (the script's alphabet).
+    pub spell: SpellConfig,
     /// Compound-word splitting rules, if the language compounds (German does; English doesn't).
     pub compounds: Option<Compounding>,
 }
 
-/// Maven coordinates + in-jar layout of a language's morfologik POS dictionary.
+/// Where a language's morfologik POS dictionary comes from. Most languages publish a standalone
+/// `*-pos-dict` jar on Maven Central; some (e.g. Russian) ship the `.dict`/`.info` inside the
+/// LanguageTool repo itself, so they need no separate download.
 #[derive(Debug, Clone, Copy)]
-pub struct PosDict {
-    /// Maven groupId (e.g. `org.languagetool` for English, `de.danielnaber` for German).
-    pub group_id: &'static str,
-    /// Maven artifactId (e.g. `english-pos-dict`, `german-pos-dict`).
-    pub artifact_id: &'static str,
-    /// Maven version (e.g. `0.6`, `1.2.4`).
-    pub version: &'static str,
-    /// Path of the `.dict` inside the jar.
-    pub jar_dict_path: &'static str,
-    /// Path of the `.info` inside the jar.
-    pub jar_info_path: &'static str,
+pub enum PosDict {
+    /// A `*-pos-dict` jar on Maven Central (English `org.languagetool:english-pos-dict`, German
+    /// `de.danielnaber:german-pos-dict`).
+    Maven {
+        /// Maven groupId.
+        group_id: &'static str,
+        /// Maven artifactId.
+        artifact_id: &'static str,
+        /// Maven version.
+        version: &'static str,
+        /// Path of the `.dict` inside the jar.
+        jar_dict_path: &'static str,
+        /// Path of the `.info` inside the jar.
+        jar_info_path: &'static str,
+    },
+    /// Dict + info ship inside the LT repo checkout, as filenames under [`LangConfig::lt_resource_dir`]
+    /// (Russian `russian.dict`/`russian.info`) — already present after `fetch-lt`, no download.
+    Repo {
+        /// `.dict` filename under `lt_resource_dir()`.
+        dict_file: &'static str,
+        /// `.info` filename under `lt_resource_dir()`.
+        info_file: &'static str,
+    },
 }
 
 impl PosDict {
-    /// The Maven Central jar URL.
+    /// The Maven Central jar URL, or `None` for a repo-shipped dict.
     #[must_use]
-    pub fn jar_url(&self) -> String {
-        let group = self.group_id.replace('.', "/");
-        format!(
-            "https://repo1.maven.org/maven2/{group}/{a}/{v}/{a}-{v}.jar",
-            a = self.artifact_id,
-            v = self.version,
-        )
+    pub fn jar_url(&self) -> Option<String> {
+        match *self {
+            PosDict::Maven {
+                group_id,
+                artifact_id,
+                version,
+                ..
+            } => Some(format!(
+                "https://repo1.maven.org/maven2/{group}/{artifact_id}/{version}/{artifact_id}-{version}.jar",
+                group = group_id.replace('.', "/"),
+            )),
+            PosDict::Repo { .. } => None,
+        }
     }
+}
+
+/// L1 spell-checking parameters that vary by script.
+#[derive(Debug, Clone, Copy)]
+pub struct SpellConfig {
+    /// The script's lower-case alphabet: the membership set a token must fall within to be
+    /// spell-checked, and the pool edit-distance-1 suggestions are drawn from. ASCII `a–z` for
+    /// en/de; Cyrillic `а–я` + `ё` for ru.
+    pub alphabet: &'static str,
 }
 
 /// The structural tags a language's grammar anchors on, assigned by the engine from token shape.
@@ -140,15 +171,22 @@ impl LangConfig {
     pub fn segment_srx_path(&self) -> &'static str {
         "resources/segment.srx"
     }
-    /// The fetched POS `.dict` / `.info` / jar under the language dir.
+    /// The POS `.dict`: under the language dir for a Maven dict (where `fetch_pos_dict` extracts it),
+    /// or directly in the LT repo checkout for a [`PosDict::Repo`] dict.
     #[must_use]
     pub fn pos_dict_local(&self) -> String {
-        format!("resources/{}/pos.dict", self.code)
+        match self.pos_dict {
+            PosDict::Maven { .. } => format!("resources/{}/pos.dict", self.code),
+            PosDict::Repo { dict_file, .. } => format!("{}/{dict_file}", self.lt_resource_dir()),
+        }
     }
     #[must_use]
-    /// Local path of the POS `.info`.
+    /// Local path of the POS `.info` (alongside the `.dict`).
     pub fn pos_info_local(&self) -> String {
-        format!("resources/{}/pos.info", self.code)
+        match self.pos_dict {
+            PosDict::Maven { .. } => format!("resources/{}/pos.info", self.code),
+            PosDict::Repo { info_file, .. } => format!("{}/{info_file}", self.lt_resource_dir()),
+        }
     }
     #[must_use]
     /// Local path of the downloaded POS-dict jar.
@@ -198,6 +236,7 @@ pub fn config(code: &str) -> Option<&'static LangConfig> {
     match code {
         "en" => Some(&EN),
         "de" => Some(&DE),
+        "ru" => Some(&RU),
         _ => None,
     }
 }
@@ -209,7 +248,7 @@ const PCT_CHARS: &[char] = &['.', ',', ';', ':', '…', '!', '?'];
 pub static EN: LangConfig = LangConfig {
     code: "en",
     lt_module: "en",
-    pos_dict: PosDict {
+    pos_dict: PosDict::Maven {
         group_id: "org.languagetool",
         artifact_id: "english-pos-dict",
         version: "0.6",
@@ -240,6 +279,9 @@ pub static EN: LangConfig = LangConfig {
         confusion: true,
         neural_l4: true,
     },
+    spell: SpellConfig {
+        alphabet: "abcdefghijklmnopqrstuvwxyz",
+    },
     compounds: None,
 };
 
@@ -249,7 +291,7 @@ pub static EN: LangConfig = LangConfig {
 pub static DE: LangConfig = LangConfig {
     code: "de",
     lt_module: "de",
-    pos_dict: PosDict {
+    pos_dict: PosDict::Maven {
         group_id: "de.danielnaber",
         artifact_id: "german-pos-dict",
         version: "1.2.4",
@@ -276,11 +318,51 @@ pub static DE: LangConfig = LangConfig {
         confusion: true,
         neural_l4: false,
     },
+    spell: SpellConfig {
+        alphabet: "abcdefghijklmnopqrstuvwxyz",
+    },
     compounds: Some(Compounding {
         linking: &["s", "es", "n", "en", "er", "e", "ens", "ns"],
         head_is_last: true,
         min_part_len: 3,
     }),
+};
+
+/// Russian — the first far-from-Latin language. The morfologik dict ships inside the LT repo as
+/// `russian.dict`/`russian.info` (KOI8-R encoded — handled by the morfologik reader's `encoding`
+/// support), so it needs no Maven download. Cyrillic alphabet for L1; no compounding; L3 confusion
+/// uses the repo's `confusion_sets.txt` (n-grams come from a Leipzig corpus, no prebuilt set exists).
+/// Structural tags are derived from `tags_russian.txt` + the ru rules and validated by the oracle (P4).
+pub static RU: LangConfig = LangConfig {
+    code: "ru",
+    lt_module: "ru",
+    pos_dict: PosDict::Repo {
+        dict_file: "russian.dict",
+        info_file: "russian.info",
+    },
+    // NN:Name:Masc:Sin:Nom = a masculine-nominative-singular proper name (the dict's general
+    // proper-noun form); the ru rules reference SENT_START/SENT_END but no punctuation postag, so
+    // that value is low-stakes; digit/number tagging (NumC:Nom) is the initial guess refined in P4.
+    tagset: TagSet {
+        digit_tag: "NumC:Nom",
+        punctuation_tag: "PNCT",
+        punctuation_classes: &[],
+        punctuation_chars: PCT_CHARS,
+        proper_noun_tag: "NN:Name:Masc:Sin:Nom",
+        oov_tag: "UNKNOWN",
+        sent_start: "SENT_START",
+        sent_end: "SENT_END",
+    },
+    sources: Sources {
+        uses_agid: false,
+        closed_class: None,
+        confusion: true,
+        neural_l4: false,
+    },
+    spell: SpellConfig {
+        alphabet: "абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
+    },
+    compounds: None,
 };
 
 #[cfg(test)]
@@ -295,14 +377,21 @@ mod tests {
         assert_eq!(en.grammar_blob_path(), "resources/en/grammar.rkyv");
         assert_eq!(en.segment_srx_path(), "resources/segment.srx");
         assert_eq!(
-            en.pos_dict.jar_url(),
-            "https://repo1.maven.org/maven2/org/languagetool/english-pos-dict/0.6/english-pos-dict-0.6.jar"
+            en.pos_dict.jar_url().as_deref(),
+            Some("https://repo1.maven.org/maven2/org/languagetool/english-pos-dict/0.6/english-pos-dict-0.6.jar")
         );
         let de = config("de").unwrap();
         assert_eq!(
-            de.pos_dict.jar_url(),
-            "https://repo1.maven.org/maven2/de/danielnaber/german-pos-dict/1.2.4/german-pos-dict-1.2.4.jar"
+            de.pos_dict.jar_url().as_deref(),
+            Some("https://repo1.maven.org/maven2/de/danielnaber/german-pos-dict/1.2.4/german-pos-dict-1.2.4.jar")
         );
         assert!(de.compounds.is_some() && en.compounds.is_none());
+
+        // Russian: repo-shipped dict (no Maven URL); the .dict/.info resolve into the LT checkout.
+        let ru = config("ru").unwrap();
+        assert!(ru.pos_dict.jar_url().is_none());
+        assert!(ru.pos_dict_local().ends_with("/resource/ru/russian.dict"));
+        assert!(ru.pos_info_local().ends_with("/resource/ru/russian.info"));
+        assert_eq!(ru.spell.alphabet.chars().count(), 33);
     }
 }

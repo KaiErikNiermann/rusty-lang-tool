@@ -141,12 +141,25 @@ pub trait GrammarChecker {
 /// the binary, with no dynamic dispatch on the hot path.
 pub struct Checker<B: Engine + GrammarChecker> {
     backend: B,
+    /// The script's lower-case alphabet, driving L1 spell-check membership + edit generation.
+    /// Defaults to [`spell::ASCII_ALPHABET`] (en/de); the CLI/wasm pass the language's alphabet.
+    alphabet: &'static str,
 }
 
 impl<B: Engine + GrammarChecker> Checker<B> {
-    /// Construct a checker over the given analysis + grammar backend.
+    /// Construct a checker over the given analysis + grammar backend, spell-checking against the
+    /// ASCII alphabet (the historical English/German default).
     pub fn new(backend: B) -> Self {
-        Self { backend }
+        Self {
+            backend,
+            alphabet: spell::ASCII_ALPHABET,
+        }
+    }
+
+    /// Construct a checker whose L1 spell-checker uses `alphabet` — the active language's lower-case
+    /// letters (e.g. Cyrillic for Russian), from `rlt_lang::SpellConfig`.
+    pub fn with_spell(backend: B, alphabet: &'static str) -> Self {
+        Self { backend, alphabet }
     }
 
     /// Run the full cascade (L1 spelling + L2 grammar) over `text` and return all diagnostics,
@@ -154,7 +167,7 @@ impl<B: Engine + GrammarChecker> Checker<B> {
     #[must_use]
     pub fn check(&self, text: &str) -> Vec<Diagnostic> {
         let analysis = self.backend.analyze(text);
-        let mut diagnostics = spell::spelling_diagnostics(&self.backend, &analysis);
+        let mut diagnostics = spell::spelling_diagnostics(&self.backend, &analysis, self.alphabet);
         diagnostics.extend(self.backend.grammar_diagnostics(text, &analysis));
         diagnostics.sort_by_key(|d| d.span.start);
         diagnostics

@@ -181,7 +181,7 @@ impl GrammarChecker for ConfusionChecker {
         let tokens = &analysis.tokens;
         // Lower-case every surface once; each token is otherwise re-lowercased up to three times
         // (as the current word, then as the next token's left neighbour, then the right neighbour).
-        let lower: Vec<String> = tokens.iter().map(|t| t.text.to_ascii_lowercase()).collect();
+        let lower: Vec<String> = tokens.iter().map(|t| t.text.to_lowercase()).collect();
         let mut out = Vec::new();
         for i in 0..tokens.len() {
             let word = &lower[i];
@@ -240,9 +240,11 @@ impl GrammarChecker for ConfusionChecker {
     }
 }
 
-/// Whether a token is a plain alphabetic word (usable as confusion context).
+/// Whether a token is a plain alphabetic word (usable as confusion context). Unicode-aware so it
+/// accepts non-Latin scripts (Cyrillic etc.); for ASCII text this is identical to the old
+/// `is_ascii_alphabetic` gate, and confusion decisions are gated by the pair table regardless.
 fn is_word(w: &str) -> bool {
-    !w.is_empty() && w.bytes().all(|b| b.is_ascii_alphabetic())
+    !w.is_empty() && w.chars().all(char::is_alphabetic)
 }
 
 /// Threshold on the log-likelihood ratio, mapped log-relatively from LT's `factor`.

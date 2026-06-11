@@ -91,10 +91,11 @@ impl RltChecker {
         ir_blob: &[u8],
     ) -> Result<RltChecker, JsValue> {
         console_error_panic_hook::set_once();
+        let alphabet = lang_alphabet(lang)?;
         let engine = load_native_engine(lang, segment_srx, tagger, disambig)?;
         let ir = load_ir(ir_blob)?;
         Ok(Self {
-            inner: Box::new(Checker::new(Composite::new(engine, ir))),
+            inner: Box::new(Checker::with_spell(Composite::new(engine, ir), alphabet)),
         })
     }
 
@@ -116,12 +117,16 @@ impl RltChecker {
         l4_verb: &[u8],
     ) -> Result<RltChecker, JsValue> {
         console_error_panic_hook::set_once();
+        let alphabet = lang_alphabet(lang)?;
         let engine = load_native_engine(lang, segment_srx, tagger, disambig)?;
         let ir = load_ir(ir_blob)?;
         let l4 = Tagger::from_bytes(l4_model, l4_tokenizer, l4_labels, l4_meta, l4_verb)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Self {
-            inner: Box::new(Checker::new(WithGrammar::new(Composite::new(engine, ir), l4))),
+            inner: Box::new(Checker::with_spell(
+                WithGrammar::new(Composite::new(engine, ir), l4),
+                alphabet,
+            )),
         })
     }
 
@@ -141,6 +146,13 @@ fn load_engine(tokenizer_bin: &[u8], rules_bin: &[u8]) -> Result<VendoredEngine,
     VendoredEngine::from_reader(tokenizer_bin)
         .and_then(|e| e.with_rules_reader(rules_bin))
         .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// The language's L1 spell-check alphabet (Cyrillic for ru, ASCII for en/de).
+fn lang_alphabet(lang: &str) -> Result<&'static str, JsValue> {
+    rlt_lang::config(lang)
+        .map(|c| c.spell.alphabet)
+        .ok_or_else(|| JsValue::from_str(&format!("unknown language {lang:?}")))
 }
 
 /// Build the native engine from in-memory artifacts (disambiguation skipped if `disambig` is empty).

@@ -39,6 +39,7 @@ const SPARSE_PATHS: &[&str] = &[
     "languagetool-core/src/main/resources/org/languagetool/rules",
     "languagetool-language-modules/en/src/main/resources/org/languagetool",
     "languagetool-language-modules/de/src/main/resources/org/languagetool",
+    "languagetool-language-modules/ru/src/main/resources/org/languagetool",
 ];
 
 /// LT's top-level rules schema (it `xs:include`s `pattern.xsd`); the entry point for codegen.
@@ -194,7 +195,7 @@ fn main() -> Result<()> {
         Task::BuildConfusion { lang, .. } if lang == "en" => {
             run("cargo", &["run", "-p", "rlt-cli", "--", "build-confusion"])
         }
-        Task::BuildConfusion { lang, source } => build_confusion_de(lang_cfg(&lang)?, &source),
+        Task::BuildConfusion { lang, source } => build_confusion(lang_cfg(&lang)?, &source),
         Task::BuildWasm => build_wasm(),
         Task::RunOracle => run(
             "cargo",
@@ -814,16 +815,30 @@ fn morfologik_triples(
 }
 
 /// Download `cfg`'s `*-pos-dict` jar and extract its `.dict` + `.info` into `resources/<lang>/`.
+/// Only valid for [`PosDict::Maven`] languages; repo-shipped dicts are already present after
+/// `fetch-lt` (their `pos_dict_local()` points straight into the checkout).
 fn fetch_pos_dict(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+    let rlt_lang::PosDict::Maven {
+        jar_dict_path,
+        jar_info_path,
+        ..
+    } = cfg.pos_dict
+    else {
+        bail!(
+            "{} ships its POS dict in the LT repo — run `cargo xtask fetch-lt`",
+            cfg.code
+        );
+    };
     std::fs::create_dir_all(cfg.resource_dir())?;
     let jar = cfg.pos_jar_local();
-    fetch_if_absent(&jar, &cfg.pos_dict.jar_url())?;
+    let url = cfg.pos_dict.jar_url().expect("Maven dict has a jar URL");
+    fetch_if_absent(&jar, &url)?;
     // jars are zip archives; extract the two files flat into resources/<lang>/, renaming to pos.*.
-    run("unzip", &["-o", "-j", &jar, cfg.pos_dict.jar_dict_path, cfg.pos_dict.jar_info_path, "-d", &cfg.resource_dir()])?;
+    run("unzip", &["-o", "-j", &jar, jar_dict_path, jar_info_path, "-d", &cfg.resource_dir()])?;
     // unzip -j strips the dir but keeps the basename (english.dict / german.dict); rename to pos.*.
     let dir = cfg.resource_dir();
-    let dict_name = cfg.pos_dict.jar_dict_path.rsplit('/').next().unwrap_or("pos.dict");
-    let info_name = cfg.pos_dict.jar_info_path.rsplit('/').next().unwrap_or("pos.info");
+    let dict_name = jar_dict_path.rsplit('/').next().unwrap_or("pos.dict");
+    let info_name = jar_info_path.rsplit('/').next().unwrap_or("pos.info");
     std::fs::rename(format!("{dir}/{dict_name}"), cfg.pos_dict_local())?;
     std::fs::rename(format!("{dir}/{info_name}"), cfg.pos_info_local())?;
     Ok(())
@@ -882,7 +897,8 @@ fn build_disambig(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
 
 /// Resolve an ISO language code to its static config.
 fn lang_cfg(code: &str) -> Result<&'static rlt_lang::LangConfig> {
-    rlt_lang::config(code).ok_or_else(|| anyhow::anyhow!("unknown language {code:?} (known: en, de)"))
+    rlt_lang::config(code)
+        .ok_or_else(|| anyhow::anyhow!("unknown language {code:?} (known: en, de, ru)"))
 }
 
 /// Leipzig Corpora Collection — a clean, fetchable German news corpus (tagged sentences) used as the
@@ -891,10 +907,26 @@ fn lang_cfg(code: &str) -> Result<&'static rlt_lang::LangConfig> {
 const LEIPZIG_DE_URL: &str =
     "https://downloads.wortschatz-leipzig.de/corpora/deu_news_2021_1M.tar.gz";
 
+/// Leipzig Russian news corpus — the L3 n-gram source for Russian (no prebuilt LT n-grams exist for
+/// ru; LT ships tuned Lucene n-grams only for en/de/fr/es).
+const LEIPZIG_RU_URL: &str =
+    "https://downloads.wortschatz-leipzig.de/corpora/rus_news_2022_1M.tar.gz";
+
 /// LanguageTool's own German n-gram dataset (a Java Lucene index). The tuned source — extracted to TSV
 /// via `tools/NgramDump.java`; gives far better recall than Leipzig (more coverage + the confusion
 /// `factor` thresholds were calibrated against it). 1.6 GB; build-time only.
 const LT_NGRAM_DE_URL: &str = "https://languagetool.org/download/ngram-data/ngrams-de-20150819.zip";
+
+/// Build a language's L3 confusion model from a frequency corpus, dispatching by language. German has
+/// LanguageTool's own tuned Lucene n-grams (`lt-ngrams`, best recall) with a Leipzig fallback; Russian
+/// (and any future non-en/de language) uses a Leipzig corpus count.
+fn build_confusion(cfg: &'static rlt_lang::LangConfig, source: &str) -> Result<()> {
+    match cfg.code {
+        "de" => build_confusion_de(cfg, source),
+        "ru" => build_confusion_leipzig(cfg, LEIPZIG_RU_URL),
+        other => bail!("no L3 confusion build configured for {other:?}"),
+    }
+}
 
 /// Build the German L3 confusion model. `source` selects the n-gram frequency data: `lt-ngrams`
 /// (LanguageTool's own tuned Lucene data, via the JVM extractor — best recall) or `leipzig` (a
@@ -906,7 +938,7 @@ fn build_confusion_de(cfg: &'static rlt_lang::LangConfig, source: &str) -> Resul
             Err(e) => println!("lt-ngrams source unavailable ({e}) — falling back to Leipzig"),
         }
     }
-    build_confusion_de_leipzig(cfg)
+    build_confusion_leipzig(cfg, LEIPZIG_DE_URL)
 }
 
 /// Build the model from already-counted Norvig-format TSVs, using the native engine's POS tags.
@@ -980,19 +1012,21 @@ fn build_confusion_de_lt_ngrams(cfg: &'static rlt_lang::LangConfig) -> Result<()
 }
 
 /// L3 source: a Leipzig corpus counted in pure Rust (no JVM). Lower recall than LT's tuned n-grams.
-fn build_confusion_de_leipzig(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+fn build_confusion_leipzig(cfg: &'static rlt_lang::LangConfig, url: &str) -> Result<()> {
     let dir = format!("{}/ngrams", cfg.resource_dir());
     std::fs::create_dir_all(&dir)?;
     let sentences = format!("{dir}/sentences.txt");
     if !Path::new(&sentences).exists() {
         let tar = format!("{dir}/leipzig.tar.gz");
-        fetch_if_absent(&tar, LEIPZIG_DE_URL)?;
-        run("tar", &["xzf", &tar, "-C", &dir, "--strip-components=1", "--wildcards", "*-sentences_tagged.txt"])?;
+        fetch_if_absent(&tar, url)?;
+        // The plain `*-sentences.txt` (`id<TAB>sentence`) is present in every Leipzig corpus; the
+        // counter strips any `|TAG` itself, so tagged sentences aren't needed.
+        run("tar", &["xzf", &tar, "-C", &dir, "--strip-components=1", "--wildcards", "*-sentences.txt"])?;
         let extracted = std::fs::read_dir(&dir)?
             .filter_map(std::result::Result::ok)
             .map(|e| e.path())
-            .find(|p| p.to_string_lossy().contains("sentences_tagged"))
-            .context("Leipzig tar had no *-sentences_tagged.txt")?;
+            .find(|p| p.to_string_lossy().ends_with("-sentences.txt"))
+            .context("Leipzig tar had no *-sentences.txt")?;
         std::fs::rename(extracted, &sentences)?;
     }
     let words = confusion_words(&format!("{}/confusion_sets.txt", cfg.lt_resource_dir()))?;

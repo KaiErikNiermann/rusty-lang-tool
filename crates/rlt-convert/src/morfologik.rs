@@ -11,7 +11,7 @@
 //! Format references: morfologik `CFSA2.java` (arc/v-int encoding) and the `mormor` enumerator + the
 //! `SUFFIX` sequence encoder. CFSA2 only for now; FSA5 (`version=0x05`) would be a sibling reader.
 
-use anyhow::{Result, bail, ensure};
+use anyhow::{Result, anyhow, bail, ensure};
 
 /// Parsed `.info` metadata (only the fields we need to decode entries).
 #[derive(Debug, Clone)]
@@ -20,6 +20,11 @@ pub struct DictMeta {
     pub separator: u8,
     /// How the base form is encoded relative to the inflected form (`fsa.dict.encoder`).
     pub encoder: Encoder,
+    /// Byte encoding of the dict's strings (`fsa.dict.encoding`). `None` ⇒ UTF-8 (en/de): validated
+    /// via `from_utf8`, invalid entries skipped. `Some(enc)` ⇒ a legacy single-byte encoding such as
+    /// Russian's KOI8-R, decoded via `encoding_rs`. The separator/encoder operate on the raw encoded
+    /// bytes; only the final inflected/base/tag fields are decoded to UTF-8.
+    pub encoding: Option<&'static encoding_rs::Encoding>,
 }
 
 /// The lemma-encoding scheme. LanguageTool's English POS dict uses `SUFFIX`; the others are here for
@@ -40,6 +45,7 @@ pub enum Encoder {
 pub fn parse_info(info: &str) -> Result<DictMeta> {
     let mut separator = None;
     let mut encoder = None;
+    let mut encoding = None;
     for line in info.lines() {
         let line = line.split('#').next().unwrap_or("").trim();
         let Some((key, value)) = line.split_once('=') else {
@@ -58,13 +64,35 @@ pub fn parse_info(info: &str) -> Result<DictMeta> {
                     other => bail!("unsupported morfologik encoder {other:?} (only SUFFIX/NONE)"),
                 });
             }
+            "fsa.dict.encoding" => {
+                let label = value.trim();
+                // UTF-8 stays on the validating `from_utf8` path (None); anything else resolves to
+                // an encoding_rs codec (e.g. KOI8-R for Russian, windows-1251, iso-8859-*).
+                if !label.eq_ignore_ascii_case("utf-8") && !label.eq_ignore_ascii_case("utf8") {
+                    encoding = Some(
+                        encoding_rs::Encoding::for_label(label.as_bytes())
+                            .ok_or_else(|| anyhow!("unknown fsa.dict.encoding {label:?}"))?,
+                    );
+                }
+            }
             _ => {}
         }
     }
     Ok(DictMeta {
         separator: separator.unwrap_or(b'+'),
         encoder: encoder.unwrap_or(Encoder::Suffix),
+        encoding,
     })
+}
+
+/// Decode a field's raw bytes to a `String` per the dict's encoding. UTF-8 (`None`) validates and
+/// returns `None` on invalid bytes (so the caller skips the entry, preserving en/de behaviour); a
+/// legacy codec maps every byte and never fails (single-byte encodings are total).
+fn decode_field(bytes: &[u8], meta: &DictMeta) -> Option<String> {
+    match meta.encoding {
+        None => String::from_utf8(bytes.to_vec()).ok(),
+        Some(enc) => Some(enc.decode_without_bom_handling(bytes).0.into_owned()),
+    }
 }
 
 /// Read a CFSA2 `<lang>.dict` into `(inflected, lemma, tag)` triples.
@@ -98,9 +126,9 @@ fn decode_entry(entry: &[u8], meta: &DictMeta) -> Option<(String, String, String
         Encoder::Suffix => decode_suffix(inflected, encoded_base),
     };
     Some((
-        String::from_utf8(inflected.to_vec()).ok()?,
-        String::from_utf8(base).ok()?,
-        String::from_utf8(tag.to_vec()).ok()?,
+        decode_field(inflected, meta)?,
+        decode_field(&base, meta)?,
+        decode_field(tag, meta)?,
     ))
 }
 
@@ -351,8 +379,11 @@ mod tests {
         // FSA5 (`\fsa\x05`) is a different format we don't yet read — the guard must error cleanly,
         // never panic, so a language that ships FSA5 fails with an actionable message (future branch).
         let fsa5 = b"\\fsa\x05\x00\x00\x00rest";
-        let err = read_triples(fsa5, &DictMeta { separator: b'+', encoder: Encoder::Suffix })
-            .expect_err("FSA5 must be rejected");
+        let err = read_triples(
+            fsa5,
+            &DictMeta { separator: b'+', encoder: Encoder::Suffix, encoding: None },
+        )
+        .expect_err("FSA5 must be rejected");
         assert!(err.to_string().contains("CFSA2"), "actionable error: {err}");
     }
 }
