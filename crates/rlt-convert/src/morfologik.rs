@@ -478,6 +478,64 @@ mod tests {
     }
 
     #[test]
+    fn reads_real_languagetool_french_dict() {
+        // French's POS dict is Maven-shipped (org.languagetool:french-pos-dict), extracted by
+        // `cargo xtask build-tagger --lang fr` to resources/fr/pos.dict — CFSA2 + UTF-8, SUFFIX
+        // encoder, `_` separator. This pins the Romance/Latin-with-accents path: precomposed accented
+        // keys (é/à/ç) decode as clean UTF-8 and carry NO combining marks, which is what makes
+        // `Normalization::None` correct for French (unlike Arabic's StripCombiningMarks).
+        let base = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../resources/fr"));
+        let (Ok(dict), Ok(info)) = (
+            std::fs::read(base.join("pos.dict")),
+            std::fs::read_to_string(base.join("pos.info")),
+        ) else {
+            eprintln!("skip: resources/fr/pos.dict not present (run `cargo xtask build-tagger --lang fr`)");
+            return;
+        };
+        let meta = parse_info(&info).expect("parse .info");
+        assert_eq!(meta.separator, b'_', "french.info declares fsa.dict.separator=_");
+        assert_eq!(meta.encoder, Encoder::Suffix);
+        assert_eq!(meta.encoding, None, "french.info declares fsa.dict.encoding=utf-8");
+
+        let triples = read_triples(&dict, &meta).expect("read dict");
+        eprintln!("french pos.dict: {} triples", triples.len());
+        assert!(triples.len() > 600_000, "French morphology is rich; got {}", triples.len());
+
+        // Precomposed French accents are clean UTF-8 and carry no combining marks (the dict keys are
+        // NFC, not NFD) — this is what makes Normalization::None correct for French.
+        let combining = |s: &str| s.chars().any(|c| ('\u{0300}'..='\u{036F}').contains(&c));
+        assert!(
+            triples
+                .iter()
+                .take(20_000)
+                .all(|(i, l, _)| !i.contains('\u{fffd}') && !l.contains('\u{fffd}') && !combining(i)),
+            "decoded keys must be clean, precomposed (no combining marks) UTF-8",
+        );
+
+        let mut by_word: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+        for (inflected, lemma, tag) in &triples {
+            by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
+        }
+        // «chats» (cats) is a SUFFIX diff from its lemma «chat» tagged masculine-plural noun `N m p`
+        // (the trailing byte is the morfologik frequency marker, so match the tag *prefix*).
+        assert!(
+            by_word
+                .get("chats")
+                .is_some_and(|v| v.iter().any(|(l, t)| l == "chat" && t.starts_with("N m p"))),
+            "chats→chat/N m p: {:?}",
+            by_word.get("chats"),
+        );
+        // An accented common noun «canapé» (couch) must read back cleanly as a masculine noun.
+        assert!(
+            by_word
+                .get("canapé")
+                .is_some_and(|v| v.iter().any(|(_, t)| t.starts_with("N m"))),
+            "canapé should be a known masculine noun: {:?}",
+            by_word.get("canapé"),
+        );
+    }
+
+    #[test]
     fn rejects_fsa5_with_clean_error() {
         // FSA5 (`\fsa\x05`) is a different format we don't yet read — the guard must error cleanly,
         // never panic, so a language that ships FSA5 fails with an actionable message (future branch).

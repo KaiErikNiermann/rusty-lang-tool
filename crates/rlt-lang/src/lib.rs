@@ -252,6 +252,7 @@ pub fn config(code: &str) -> Option<&'static LangConfig> {
         "de" => Some(&DE),
         "ru" => Some(&RU),
         "ar" => Some(&AR),
+        "fr" => Some(&FR),
         _ => None,
     }
 }
@@ -424,13 +425,57 @@ pub static AR: LangConfig = LangConfig {
     compounds: None,
 };
 
+/// French — the first Romance language. The morfologik dict is Maven-shipped
+/// (`org.languagetool:french-pos-dict`, CFSA2, UTF-8, SUFFIX encoder, `_` separator), not in the
+/// repo. Latin alphabet plus the accented base letters `àâçéèêëîïôûùüÿœæ` (ligatures œ/æ included —
+/// the dict treats them as single letters). No combining-mark normalization: French accents are
+/// precomposed in the dict keys, so `Normalization::None`. Tagset derived via
+/// `cargo xtask lang-inspect --code fr` + `tagset.txt`: `Y` = cardinal digits, `Z` = proper name,
+/// `M` = punctuation marker (`M fin` sentence-final, `M nonfin` comma/semicolon — grammar references
+/// the bare-`M` class). L3 confusion deferred (28 pairs exist upstream but `confusion:false`).
+pub static FR: LangConfig = LangConfig {
+    code: "fr",
+    lt_module: "fr",
+    pos_dict: PosDict::Maven {
+        group_id: "org.languagetool",
+        artifact_id: "french-pos-dict",
+        version: "0.7",
+        jar_dict_path: "org/languagetool/resource/fr/french.dict",
+        jar_info_path: "org/languagetool/resource/fr/french.info",
+    },
+    tagset: TagSet {
+        digit_tag: "Y",
+        punctuation_tag: "M",
+        punctuation_classes: &[],
+        punctuation_chars: PCT_CHARS,
+        proper_noun_tag: "Z",
+        oov_tag: "UNKNOWN",
+        sent_start: "SENT_START",
+        sent_end: "SENT_END",
+    },
+    sources: Sources {
+        uses_agid: false,
+        closed_class: None,
+        confusion: false,
+        neural_l4: false,
+    },
+    spell: SpellConfig {
+        alphabet: "abcdefghijklmnopqrstuvwxyzàâçéèêëîïôûùüÿœæ",
+    },
+    normalization: Normalization::None,
+    compounds: None,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn config_lookup_and_paths() {
-        assert!(config("fr").is_none());
+        assert!(config("xx").is_none());
+        let fr = config("fr").unwrap();
+        assert!(fr.pos_dict.jar_url().as_deref().is_some_and(|u| u.ends_with("french-pos-dict-0.7.jar")));
+        assert_eq!(fr.tagset.digit_tag, "Y");
         let en = config("en").unwrap();
         assert_eq!(en.tagger_path(), "resources/en/tagger.rkyv");
         assert_eq!(en.grammar_blob_path(), "resources/en/grammar.rkyv");

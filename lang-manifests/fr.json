@@ -1,0 +1,54 @@
+{
+  "code": "fr",
+  "lt_version": "v6.7",
+  "inputs": {
+    "added.txt": {
+      "sha256": "39a32c755ccd6f4ee3127f839c02128f9b3b7a2d8a4092e05b3c69894c079065",
+      "bytes": 13554,
+      "feeds": "tagger.rkyv",
+      "optional": true
+    },
+    "confusion_sets.txt": {
+      "sha256": "89843ed11e36eb9e95909fe4145c525880434e855e5a56bbd47ad0e00007b065",
+      "bytes": 11545,
+      "feeds": "confusion.rkyv",
+      "optional": true
+    },
+    "disambiguation.xml": {
+      "sha256": "d65c0691d8daf44f164d15d6cea80a86a7ea37c6a143e6787787c7f5d6195013",
+      "bytes": 443255,
+      "feeds": "disambig.rkyv",
+      "optional": false
+    },
+    "grammar.xml": {
+      "sha256": "513f8d87fc4905bf6f63717f010c2baed636453eba3899dbdb264bce1b50ceeb",
+      "bytes": 9056613,
+      "feeds": "grammar.rkyv",
+      "optional": false
+    },
+    "pos.dict": {
+      "sha256": "ec8af90493eac0797e16755503dcaeeab1333204ca63896497a87c05baa3675a",
+      "bytes": 1137949,
+      "feeds": "tagger.rkyv",
+      "optional": true
+    },
+    "pos.info": {
+      "sha256": "4270fa91f3ec08b91f26ff7d4298fa5253df003b24a0a3a9e0aef2836c3ece7f",
+      "bytes": 1013,
+      "feeds": "tagger.rkyv",
+      "optional": true
+    },
+    "removed.txt": {
+      "sha256": "d7fa0762b46de7747567b5f8691d91a6e9d202434b426b78e9a9549f243dc837",
+      "bytes": 242,
+      "feeds": "tagger.rkyv",
+      "optional": true
+    }
+  },
+  "tagset_values": {
+    "digit_tag": "Y",
+    "oov_tag": "UNKNOWN",
+    "proper_noun_tag": "Z",
+    "punctuation_tag": "M"
+  }
+}
