@@ -95,20 +95,66 @@ fn decode_field(bytes: &[u8], meta: &DictMeta) -> Option<String> {
     }
 }
 
-/// Read a CFSA2 `<lang>.dict` into `(inflected, lemma, tag)` triples.
+/// Read a morfologik `<lang>.dict` into `(inflected, lemma, tag)` triples. Dispatches on the FSA
+/// version byte: CFSA2 (`0xc6`, the compressed format en/de/ru/ar ship) or FSA5 (`0x05`, the older
+/// format Italian ships).
 ///
 /// # Errors
-/// Returns an error if the bytes are not a CFSA2 automaton.
+/// Returns an error if the bytes are not a supported morfologik automaton.
 pub fn read_triples(dict: &[u8], meta: &DictMeta) -> Result<Vec<(String, String, String)>> {
-    let fsa = Cfsa2::parse(dict)?;
+    ensure!(dict.len() > 8 && &dict[..4] == b"\\fsa", "not a morfologik FSA (bad magic)");
     let mut out = Vec::new();
+    match dict[4] {
+        0xc6 => collect_triples(&Cfsa2::parse(dict)?, meta, &mut out),
+        0x05 => collect_triples(&Fsa5::parse(dict)?, meta, &mut out),
+        v => bail!("unsupported FSA version {v:#x} (expected CFSA2 0xc6 or FSA5 0x05)"),
+    }
+    Ok(out)
+}
+
+/// Walk an automaton, decoding each accepted byte sequence into a triple.
+fn collect_triples(fsa: &impl Fsa, meta: &DictMeta, out: &mut Vec<(String, String, String)>) {
     let mut seq = Vec::new();
-    fsa.visit(fsa.root, &mut seq, &mut |entry| {
+    visit(fsa, fsa.root(), &mut seq, &mut |entry| {
         if let Some(triple) = decode_entry(entry, meta) {
             out.push(triple);
         }
     });
-    Ok(out)
+}
+
+/// The arc primitives shared by the CFSA2 and FSA5 readers; the [`visit`] DFS is identical for both.
+trait Fsa {
+    /// Offset of the start node.
+    fn root(&self) -> usize;
+    /// The label byte consumed by `arc`.
+    fn label(&self, arc: usize) -> u8;
+    /// Whether `arc` accepts (ends a dictionary entry).
+    fn is_final(&self, arc: usize) -> bool;
+    /// Whether `arc` is the last in its node.
+    fn is_last(&self, arc: usize) -> bool;
+    /// The destination node of `arc`, or `None` if it has no continuation (a leaf).
+    fn target(&self, arc: usize) -> Option<usize>;
+    /// The next sibling arc within the node, or `0` when `arc` is the last.
+    fn next_arc(&self, arc: usize) -> usize;
+}
+
+/// Depth-first walk yielding every accepted byte sequence (one per dictionary entry).
+fn visit(fsa: &impl Fsa, node: usize, seq: &mut Vec<u8>, emit: &mut impl FnMut(&[u8])) {
+    let mut arc = node; // getFirstArc(node) == node for LT dicts (no node-data prefix)
+    loop {
+        seq.push(fsa.label(arc));
+        if fsa.is_final(arc) {
+            emit(seq);
+        }
+        if let Some(dest) = fsa.target(arc) {
+            visit(fsa, dest, seq, emit);
+        }
+        seq.pop();
+        if fsa.is_last(arc) {
+            break;
+        }
+        arc = fsa.next_arc(arc);
+    }
 }
 
 /// Split an FSA entry `inflected SEP encoded-base SEP tag` and reconstruct the base form.
@@ -191,24 +237,6 @@ impl<'a> Cfsa2<'a> {
         self.arcs[arc]
     }
 
-    /// The label byte of `arc` (from the table when the index is non-zero, else the explicit byte).
-    fn label(&self, arc: usize) -> u8 {
-        let index = (self.flags(arc) & LABEL_INDEX_MASK) as usize;
-        if index > 0 {
-            self.labels[index]
-        } else {
-            self.arcs[arc + 1]
-        }
-    }
-
-    fn is_final(&self, arc: usize) -> bool {
-        self.flags(arc) & BIT_FINAL_ARC != 0
-    }
-
-    fn is_last(&self, arc: usize) -> bool {
-        self.flags(arc) & BIT_LAST_ARC != 0
-    }
-
     /// Advance past the v-int starting at `offset`; returns the offset just after it.
     fn skip_vint(&self, mut offset: usize) -> usize {
         while self.arcs[offset] & 0x80 != 0 {
@@ -245,8 +273,31 @@ impl<'a> Cfsa2<'a> {
         }
         offset
     }
+}
 
-    /// The next sibling arc, or `0` when `arc` is the last in its node.
+impl Fsa for Cfsa2<'_> {
+    fn root(&self) -> usize {
+        self.root
+    }
+
+    /// The label byte of `arc` (from the table when the index is non-zero, else the explicit byte).
+    fn label(&self, arc: usize) -> u8 {
+        let index = (self.flags(arc) & LABEL_INDEX_MASK) as usize;
+        if index > 0 {
+            self.labels[index]
+        } else {
+            self.arcs[arc + 1]
+        }
+    }
+
+    fn is_final(&self, arc: usize) -> bool {
+        self.flags(arc) & BIT_FINAL_ARC != 0
+    }
+
+    fn is_last(&self, arc: usize) -> bool {
+        self.flags(arc) & BIT_LAST_ARC != 0
+    }
+
     fn next_arc(&self, arc: usize) -> usize {
         if self.is_last(arc) {
             0
@@ -255,7 +306,6 @@ impl<'a> Cfsa2<'a> {
         }
     }
 
-    /// The destination node of `arc`, or `None` if the arc is terminal (a leaf — no continuation).
     fn target(&self, arc: usize) -> Option<usize> {
         let flags = self.flags(arc);
         if flags & BIT_TARGET_NEXT != 0 {
@@ -273,23 +323,118 @@ impl<'a> Cfsa2<'a> {
             }
         }
     }
+}
 
-    /// Depth-first walk yielding every accepted byte sequence (one per dictionary entry).
-    fn visit(&self, node: usize, seq: &mut Vec<u8>, emit: &mut impl FnMut(&[u8])) {
-        let mut arc = node; // getFirstArc(node) == node (NUMBERS flag is off)
-        loop {
-            seq.push(self.label(arc));
-            if self.is_final(arc) {
-                emit(seq);
+// FSA5 arc flags live in the byte at `arc + 1` (the first goto byte); the label is at `arc`.
+const FSA5_BIT_FINAL: u8 = 1 << 0;
+const FSA5_BIT_LAST: u8 = 1 << 1;
+const FSA5_BIT_NEXT: u8 = 1 << 2;
+
+/// The older, uncompressed morfologik FSA5 automaton (version `0x05`) — what Italian's `italian.dict`
+/// ships. Unlike CFSA2 there is no label table (labels are inline bytes) and the goto field is a
+/// fixed `gtl` bytes wide; the flags occupy the low 3 bits of the first goto byte and the destination
+/// address is the goto field decoded little-endian and shifted right by 3. (Ported from morfologik's
+/// `FSA5.java`.)
+struct Fsa5<'a> {
+    /// Everything after the 8-byte header; arc/node offsets index into this.
+    arcs: &'a [u8],
+    /// Goto-field width in bytes (`hgtl & 0x0f`).
+    gtl: usize,
+    /// Per-node header bytes before the first arc (`hgtl >> 4`; 0 for LT dicts).
+    node_data_length: usize,
+    /// Offset of the start node.
+    root: usize,
+}
+
+impl<'a> Fsa5<'a> {
+    fn parse(file: &'a [u8]) -> Result<Self> {
+        ensure!(file.len() > 8, "file too short for an FSA5 header");
+        ensure!(&file[..4] == b"\\fsa", "not a morfologik FSA (bad magic)");
+        ensure!(file[4] == 0x05, "expected FSA5 version 0x05, got {:#x}", file[4]);
+        // file[5] = filler, file[6] = annotation separator, file[7] = hgtl.
+        let hgtl = file[7];
+        let node_data_length = usize::from(hgtl >> 4);
+        let gtl = usize::from(hgtl & 0x0f);
+        ensure!(gtl >= 1, "FSA5 goto length must be >= 1 (hgtl {hgtl:#x})");
+        let mut fsa = Self {
+            arcs: &file[8..],
+            gtl,
+            node_data_length,
+            root: 0,
+        };
+        // getRootNode(): skip the dummy first arc from node 0, then take the destination of the
+        // first arc of the node it reaches.
+        let epsilon = fsa.skip_arc(fsa.first_arc(0));
+        fsa.root = fsa.target(fsa.first_arc(epsilon)).unwrap_or(0);
+        ensure!(fsa.root != 0, "empty FSA5 automaton");
+        Ok(fsa)
+    }
+
+    /// First arc of `node` (skips any node-data prefix; a no-op for LT dicts).
+    fn first_arc(&self, node: usize) -> usize {
+        self.node_data_length + node
+    }
+
+    /// The flag byte (first goto byte) of `arc`.
+    fn flag_byte(&self, arc: usize) -> u8 {
+        self.arcs[arc + 1]
+    }
+
+    fn is_next(&self, arc: usize) -> bool {
+        self.flag_byte(arc) & FSA5_BIT_NEXT != 0
+    }
+
+    /// Offset of the arc after `arc`: a next-arc is `label + 1 flag byte` (2 bytes); otherwise
+    /// `label + gtl goto bytes`.
+    fn skip_arc(&self, arc: usize) -> usize {
+        arc + if self.is_next(arc) { 2 } else { 1 + self.gtl }
+    }
+
+    /// The destination address packed into the `gtl` goto bytes (little-endian), with the low 3 flag
+    /// bits dropped.
+    fn address(&self, arc: usize) -> usize {
+        let mut value = 0usize;
+        for i in (0..self.gtl).rev() {
+            value = (value << 8) | usize::from(self.arcs[arc + 1 + i]);
+        }
+        value >> 3
+    }
+}
+
+impl Fsa for Fsa5<'_> {
+    fn root(&self) -> usize {
+        self.root
+    }
+
+    fn label(&self, arc: usize) -> u8 {
+        self.arcs[arc]
+    }
+
+    fn is_final(&self, arc: usize) -> bool {
+        self.flag_byte(arc) & FSA5_BIT_FINAL != 0
+    }
+
+    fn is_last(&self, arc: usize) -> bool {
+        self.flag_byte(arc) & FSA5_BIT_LAST != 0
+    }
+
+    fn next_arc(&self, arc: usize) -> usize {
+        if self.is_last(arc) {
+            0
+        } else {
+            self.skip_arc(arc)
+        }
+    }
+
+    fn target(&self, arc: usize) -> Option<usize> {
+        if self.is_next(arc) {
+            // The destination node immediately follows this arc.
+            Some(self.skip_arc(arc))
+        } else {
+            match self.address(arc) {
+                0 => None,
+                node => Some(node),
             }
-            if let Some(dest) = self.target(arc) {
-                self.visit(dest, seq, emit);
-            }
-            seq.pop();
-            if self.is_last(arc) {
-                break;
-            }
-            arc = self.next_arc(arc);
         }
     }
 }
@@ -578,15 +723,62 @@ mod tests {
     }
 
     #[test]
-    fn rejects_fsa5_with_clean_error() {
-        // FSA5 (`\fsa\x05`) is a different format we don't yet read — the guard must error cleanly,
-        // never panic, so a language that ships FSA5 fails with an actionable message (future branch).
-        let fsa5 = b"\\fsa\x05\x00\x00\x00rest";
+    fn reads_real_languagetool_italian_dict() {
+        // Italian's italian.dict ships in the LT repo in the **FSA5** format (version 0x05, not CFSA2)
+        // and is ISO-8859-15 encoded — this exercises both the FSA5 sibling reader and the `encoding`
+        // seam at once. The dict is unvocalized Latin (no combining marks → `Normalization::None`).
+        let base = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../resources/lt/_repo/languagetool-language-modules/it/src/main/resources/org/languagetool/resource/it"
+        ));
+        let (Ok(dict), Ok(info)) = (
+            std::fs::read(base.join("italian.dict")),
+            std::fs::read_to_string(base.join("italian.info")),
+        ) else {
+            eprintln!("skip: italian.dict not present (run `cargo xtask fetch-lt`)");
+            return;
+        };
+        assert_eq!(dict[4], 0x05, "italian.dict is the FSA5 format");
+        let meta = parse_info(&info).expect("parse .info");
+        assert_eq!(meta.separator, b'_');
+        assert_eq!(meta.encoder, Encoder::Suffix);
+        assert_eq!(
+            meta.encoding.map(|e| e.name()),
+            Some("ISO-8859-15"),
+            "italian.info declares fsa.dict.encoding=ISO-8859-15",
+        );
+
+        let triples = read_triples(&dict, &meta).expect("read FSA5 dict");
+        eprintln!("italian.dict (FSA5): {} triples", triples.len());
+        assert!(triples.len() > 400_000, "Italian morphology is rich; got {}", triples.len());
+
+        let mut by_word: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+        for (inflected, lemma, tag) in &triples {
+            by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
+        }
+        // «gatto» (cat) → masculine noun; «città» (accented, ISO-8859-15 à) must be a clean key —
+        // proving the FSA5 traversal + ISO-8859-15 decode reconstruct real Italian forms.
+        assert!(
+            by_word.get("gatto").is_some_and(|v| v.iter().any(|(_, t)| t.starts_with("NOUN-M"))),
+            "gatto should be a masculine noun: {:?}",
+            by_word.get("gatto"),
+        );
+        assert!(
+            by_word.get("città").is_some_and(|v| v.iter().any(|(_, t)| t.starts_with("NOUN"))),
+            "accented città should decode as a clean noun key: {:?}",
+            by_word.get("città"),
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_fsa_version() {
+        // A version byte that is neither CFSA2 (0xc6) nor FSA5 (0x05) must error cleanly, never panic.
+        let bad = b"\\fsa\x07\x00\x00\x00rest";
         let err = read_triples(
-            fsa5,
+            bad,
             &DictMeta { separator: b'+', encoder: Encoder::Suffix, encoding: None },
         )
-        .expect_err("FSA5 must be rejected");
-        assert!(err.to_string().contains("CFSA2"), "actionable error: {err}");
+        .expect_err("unknown FSA version must be rejected");
+        assert!(err.to_string().contains("unsupported FSA version"), "actionable error: {err}");
     }
 }

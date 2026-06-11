@@ -1,0 +1,54 @@
+{
+  "code": "it",
+  "lt_version": "v6.7",
+  "inputs": {
+    "added.txt": {
+      "sha256": "0075ccec4cc1143f4d9604a96b2e84995fba612a97f9502bcd944f99cad766d2",
+      "bytes": 584,
+      "feeds": "tagger.rkyv",
+      "optional": true
+    },
+    "confusion_sets.txt": {
+      "sha256": "820f6e815760f400e348224105cbddbad5feae4c3b57c429f44dad05126d1617",
+      "bytes": 72,
+      "feeds": "confusion.rkyv",
+      "optional": true
+    },
+    "disambiguation.xml": {
+      "sha256": "d6ec626f5e63909f7c812e7a63fd51dadfb22e27f83d507d38ea70f10216d5fc",
+      "bytes": 4042,
+      "feeds": "disambig.rkyv",
+      "optional": false
+    },
+    "grammar.xml": {
+      "sha256": "df860863c51949b141c69149518914e7e1d3c36fc590f7c1a3817374cdfd7ffb",
+      "bytes": 114132,
+      "feeds": "grammar.rkyv",
+      "optional": false
+    },
+    "pos.dict": {
+      "sha256": "3a0a11fb570051074e8e1fd0e15d1c34483fe0c3e557c95d0767ec567521b9f6",
+      "bytes": 456530,
+      "feeds": "tagger.rkyv",
+      "optional": true
+    },
+    "pos.info": {
+      "sha256": "0697fcd8a36731fdf38989f62ab2f92926f765ea0293be8a471ee6487ecf206a",
+      "bytes": 105,
+      "feeds": "tagger.rkyv",
+      "optional": true
+    },
+    "removed.txt": {
+      "sha256": "b840a31465a40eaf6401e4262db9d9980cd81246e7ef23357cbc54bb6e8da31c",
+      "bytes": 223,
+      "feeds": "tagger.rkyv",
+      "optional": true
+    }
+  },
+  "tagset_values": {
+    "digit_tag": "DET-NUM-CARD",
+    "oov_tag": "UNKNOWN",
+    "proper_noun_tag": "NPR",
+    "punctuation_tag": "PON"
+  }
+}

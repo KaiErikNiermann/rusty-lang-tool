@@ -254,6 +254,7 @@ pub fn config(code: &str) -> Option<&'static LangConfig> {
         "ar" => Some(&AR),
         "fr" => Some(&FR),
         "es" => Some(&ES),
+        "it" => Some(&IT),
         _ => None,
     }
 }
@@ -497,6 +498,41 @@ pub static ES: LangConfig = LangConfig {
     },
     spell: SpellConfig {
         alphabet: "abcdefghijklmnopqrstuvwxyzáéíóúüñ",
+    },
+    normalization: Normalization::None,
+    compounds: None,
+};
+
+/// Italian — Romance, but the **first FSA5** language: `italian.dict` ships in the LT repo in the older
+/// uncompressed morfologik FSA5 format (version `0x05`, read by the FSA5 sibling reader) rather than
+/// CFSA2, and is **ISO-8859-15** encoded (handled by the `encoding_rs` seam, like Russian's KOI8-R).
+/// Tagset via `lang-inspect --code it`: `PON` = punctuation, `NPR` = proper noun, `DET-NUM-CARD` =
+/// cardinal. Accents `àèéìíîïòóùú` are precomposed dict letters → `Normalization::None`. L3 deferred.
+pub static IT: LangConfig = LangConfig {
+    code: "it",
+    lt_module: "it",
+    pos_dict: PosDict::Repo {
+        dict_file: "italian.dict",
+        info_file: "italian.info",
+    },
+    tagset: TagSet {
+        digit_tag: "DET-NUM-CARD",
+        punctuation_tag: "PON",
+        punctuation_classes: &[],
+        punctuation_chars: PCT_CHARS,
+        proper_noun_tag: "NPR",
+        oov_tag: "UNKNOWN",
+        sent_start: "SENT_START",
+        sent_end: "SENT_END",
+    },
+    sources: Sources {
+        uses_agid: false,
+        closed_class: None,
+        confusion: false,
+        neural_l4: false,
+    },
+    spell: SpellConfig {
+        alphabet: "abcdefghijklmnopqrstuvwxyzàèéìîïòóùú",
     },
     normalization: Normalization::None,
     compounds: None,

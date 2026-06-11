@@ -43,6 +43,7 @@ const SPARSE_PATHS: &[&str] = &[
     "languagetool-language-modules/ar/src/main/resources/org/languagetool",
     "languagetool-language-modules/fr/src/main/resources/org/languagetool",
     "languagetool-language-modules/es/src/main/resources/org/languagetool",
+    "languagetool-language-modules/it/src/main/resources/org/languagetool",
 ];
 
 /// LT's top-level rules schema (it `xs:include`s `pattern.xsd`); the entry point for codegen.
@@ -942,7 +943,7 @@ fn build_disambig(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
 /// Resolve an ISO language code to its static config.
 fn lang_cfg(code: &str) -> Result<&'static rlt_lang::LangConfig> {
     rlt_lang::config(code)
-        .ok_or_else(|| anyhow::anyhow!("unknown language {code:?} (known: en, de, ru, ar, fr, es)"))
+        .ok_or_else(|| anyhow::anyhow!("unknown language {code:?} (known: en, de, ru, ar, fr, es, it)"))
 }
 
 /// Read-only accelerator: dump everything a human needs to author a `LangConfig` + derive the
@@ -985,8 +986,8 @@ fn lang_inspect(
     let version = bytes.get(4).copied().unwrap_or(0);
     let fsa = match version {
         0xc6 => "CFSA2(0xc6)",
-        0x05 => "FSA5(0x05) — UNSUPPORTED, needs a sibling reader",
-        _ => "unknown FSA version",
+        0x05 => "FSA5(0x05)",
+        _ => "unknown FSA version — UNSUPPORTED",
     };
     let meta = rlt_convert::parse_info(
         &std::fs::read_to_string(&info_path).with_context(|| format!("reading {info_path}"))?,
@@ -1095,7 +1096,7 @@ fn find_repo_dict(dir: &str) -> Result<(String, String)> {
 }
 
 /// The languages with a `LangConfig` — the default set for `lang-status`.
-const CONFIGURED_LANGS: &[&str] = &["en", "de", "ru", "ar", "fr", "es"];
+const CONFIGURED_LANGS: &[&str] = &["en", "de", "ru", "ar", "fr", "es", "it"];
 
 /// One hashed upstream input in a language manifest.
 #[derive(serde::Serialize, serde::Deserialize)]

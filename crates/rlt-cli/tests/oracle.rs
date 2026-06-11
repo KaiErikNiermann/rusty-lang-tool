@@ -254,6 +254,48 @@ fn es_native_reproduces_examples() {
     assert!(report.false_positives <= 340, "es false positives regressed: {}", report.false_positives);
 }
 
+/// Italian — the first FSA5-format language (`italian.dict` is morfologik FSA5 + ISO-8859-15, read by
+/// the FSA5 sibling reader, not CFSA2). Precomposed accents → `Normalization::None`. Floors just below
+/// the first measured values (61.5% reproduction / 1.5% FP — the best non-English reproduction).
+#[test]
+#[ignore = "slow, needs the it artifacts; build via `cargo xtask build-lang --lang it`"]
+fn it_native_reproduces_examples() {
+    let cfg = rlt_lang::config("it").expect("it config");
+    let srx = root(cfg.segment_srx_path());
+    let tagger = root(&cfg.tagger_path());
+    let disambig = root(&cfg.disambig_path());
+    let blob = root(&cfg.grammar_blob_path());
+    let grammar = root(&cfg.grammar_xml_path());
+    if missing(&[
+        ("segment.srx", &srx),
+        ("it tagger", &tagger),
+        ("it grammar blob", &blob),
+        ("it grammar.xml", &grammar),
+    ]) {
+        return;
+    }
+    let report = rlt_cli::oracle_score::score_ir_native(
+        cfg,
+        &srx,
+        &tagger,
+        disambig.exists().then_some(disambig.as_path()),
+        &blob,
+        &grammar,
+    )
+    .expect("score the Italian native oracle");
+    eprintln!(
+        "it native oracle: reproduced {}/{} ({:.1}%); false positives {}/{} ({:.1}%)",
+        report.reproduced,
+        report.positive_total,
+        report.reproduced_pct,
+        report.false_positives,
+        report.negative_total,
+        report.false_positive_pct,
+    );
+    assert!(report.reproduced >= 50, "it reproduction regressed: {}", report.reproduced);
+    assert!(report.false_positives <= 15, "it false positives regressed: {}", report.false_positives);
+}
+
 #[test]
 #[ignore = "slow (~45s) and needs fetched data; run via `cargo xtask run-oracle`"]
 fn nlprule_baseline_reproduces_examples() {
