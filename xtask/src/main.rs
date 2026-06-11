@@ -40,6 +40,7 @@ const SPARSE_PATHS: &[&str] = &[
     "languagetool-language-modules/en/src/main/resources/org/languagetool",
     "languagetool-language-modules/de/src/main/resources/org/languagetool",
     "languagetool-language-modules/ru/src/main/resources/org/languagetool",
+    "languagetool-language-modules/ar/src/main/resources/org/languagetool",
 ];
 
 /// LT's top-level rules schema (it `xs:include`s `pattern.xsd`); the entry point for codegen.
@@ -174,6 +175,39 @@ enum Task {
         #[arg(last = true)]
         args: Vec<String>,
     },
+    /// Read-only: dump everything needed to author a `LangConfig` + structural tagset for a language
+    /// from the fetched LT checkout (FSA version, .info, dict tag stats, vocalized verdict, candidate
+    /// tags, confusion-pair count). Works before the language has a config — pass `--code`/`--lt-module`.
+    LangInspect {
+        /// ISO code (labels + the `resources/<code>/` artifact dir; usually == lt-module).
+        #[arg(long)]
+        code: String,
+        /// LT module dir under `languagetool-language-modules/` (defaults to `--code`).
+        #[arg(long)]
+        lt_module: Option<String>,
+        /// Override the `.dict` path (default: the repo `resource/<m>/<m_name>.dict`).
+        #[arg(long)]
+        dict: Option<String>,
+        /// Override the `.info` path.
+        #[arg(long)]
+        info: Option<String>,
+    },
+    /// Compare the currently-fetched upstream inputs against the committed `lang-manifests/<code>.json`
+    /// and report per-file drift (unchanged / changed / missing) + pinned-vs-manifest LT version.
+    /// Exits non-zero on drift, so it can gate CI. Detects *linguistic* upstream changes, not just
+    /// version bumps (bump `LT_VERSION` → `fetch-lt` → `lang-status` to see what changed).
+    LangStatus {
+        /// Limit to one language (default: all configured languages).
+        #[arg(long)]
+        lang: Option<String>,
+    },
+    /// (Re)write `lang-manifests/<code>.json` from the currently-fetched upstream inputs — run once
+    /// after a build validates (oracle green) to pin the content we built from.
+    LangManifest {
+        /// Language ISO code.
+        #[arg(long)]
+        lang: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -210,6 +244,14 @@ fn main() -> Result<()> {
                 "--nocapture",
             ],
         ),
+        Task::LangInspect {
+            code,
+            lt_module,
+            dict,
+            info,
+        } => lang_inspect(&code, lt_module.as_deref(), dict.as_deref(), info.as_deref()),
+        Task::LangStatus { lang } => lang_status(lang.as_deref()),
+        Task::LangManifest { lang } => lang_manifest(lang_cfg(&lang)?),
         Task::BuildL4 => build_l4(),
         Task::RunL4Oracle => run(
             "cargo",
@@ -898,7 +940,304 @@ fn build_disambig(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
 /// Resolve an ISO language code to its static config.
 fn lang_cfg(code: &str) -> Result<&'static rlt_lang::LangConfig> {
     rlt_lang::config(code)
-        .ok_or_else(|| anyhow::anyhow!("unknown language {code:?} (known: en, de, ru)"))
+        .ok_or_else(|| anyhow::anyhow!("unknown language {code:?} (known: en, de, ru, ar)"))
+}
+
+/// Read-only accelerator: dump everything a human needs to author a `LangConfig` + derive the
+/// structural tagset for `code`, from the fetched LT checkout. Reuses the morfologik reader and the
+/// repo path layout; works before the language has a config (so it can guide that config). The grep
+/// of `grammar.xml`/`disambiguation.xml` surfaces the most-referenced postags so the author picks the
+/// `proper_noun_tag`/`punctuation_tag`/`digit_tag` that match the most rules.
+#[allow(clippy::too_many_lines, reason = "a single linear diagnostic dump; splitting hurts readability")]
+fn lang_inspect(
+    code: &str,
+    lt_module: Option<&str>,
+    dict: Option<&str>,
+    info: Option<&str>,
+) -> Result<()> {
+    use std::collections::BTreeMap;
+    use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+
+    let m = lt_module.unwrap_or(code);
+    let resource = format!(
+        "resources/lt/_repo/languagetool-language-modules/{m}/src/main/resources/org/languagetool/resource/{m}"
+    );
+    let rules = format!(
+        "resources/lt/_repo/languagetool-language-modules/{m}/src/main/resources/org/languagetool/rules/{m}"
+    );
+    if !Path::new(&resource).exists() {
+        bail!("{resource} not found — add {m:?} to SPARSE_PATHS and run `cargo xtask fetch-lt`");
+    }
+
+    // Locate the POS dict: an explicit override, else the repo `.dict` that has a sibling `.info`,
+    // preferring the non-synthesis dictionary (`*_synth.dict` is the generator, not the analyzer).
+    let (dict_path, info_path) = match (dict, info) {
+        (Some(d), Some(i)) => (d.to_owned(), i.to_owned()),
+        _ => find_repo_dict(&resource)
+            .with_context(|| format!("no *.dict + *.info pair under {resource}"))?,
+    };
+    println!("lang-inspect {code} (module={m})");
+    println!("  dict: {dict_path}");
+
+    let bytes = std::fs::read(&dict_path).with_context(|| format!("reading {dict_path}"))?;
+    let version = bytes.get(4).copied().unwrap_or(0);
+    let fsa = match version {
+        0xc6 => "CFSA2(0xc6)",
+        0x05 => "FSA5(0x05) — UNSUPPORTED, needs a sibling reader",
+        _ => "unknown FSA version",
+    };
+    let meta = rlt_convert::parse_info(
+        &std::fs::read_to_string(&info_path).with_context(|| format!("reading {info_path}"))?,
+    )?;
+    println!(
+        "  fsa: {fsa}  sep={:?} encoder={:?} encoding={}",
+        meta.separator as char,
+        meta.encoder,
+        meta.encoding.map_or("utf-8", |e| e.name()),
+    );
+
+    let triples = rlt_convert::read_triples(&bytes, &meta)
+        .with_context(|| format!("reading {dict_path}"))?;
+    // Top-level tag = the part before the first ':' or ';' (the word-class group across tagsets).
+    let top_level = |tag: &str| tag.split([':', ';']).next().unwrap_or(tag).to_owned();
+    let mut tag_freq: BTreeMap<String, u64> = BTreeMap::new();
+    let mut marks = 0u64;
+    let mut letters: std::collections::BTreeSet<char> = std::collections::BTreeSet::new();
+    for (inflected, _, tag) in &triples {
+        *tag_freq.entry(top_level(tag)).or_default() += 1;
+        if inflected.chars().any(|c| c.general_category() == GeneralCategory::NonspacingMark) {
+            marks += 1;
+        }
+        // The spell alphabet: distinct lower-case base letters (skip marks/digits/punct).
+        for c in inflected.chars().filter(|c| c.is_alphabetic()) {
+            letters.extend(c.to_lowercase());
+        }
+    }
+    let mut top: Vec<_> = tag_freq.iter().collect();
+    top.sort_by(|a, b| b.1.cmp(a.1));
+    println!("  triples: {}   distinct top-level tags: {}", triples.len(), tag_freq.len());
+    print!("    top tags:");
+    for (tag, n) in top.iter().take(10) {
+        print!(" {tag}({n})");
+    }
+    println!();
+    for (inflected, lemma, tag) in triples.iter().take(3) {
+        println!("    sample: {inflected} | {lemma} | {tag}");
+    }
+    let alphabet: String = letters.iter().collect();
+    println!("  spell.alphabet ({} letters): {alphabet}", letters.len());
+    println!(
+        "  dict keys: {marks}/{} carry combining marks → {}",
+        triples.len(),
+        if marks > 0 {
+            "VOCALIZED dict → Normalization::None (preserve input marks to match keys)"
+        } else {
+            "UNVOCALIZED dict → Normalization::StripCombiningMarks if the script's input can carry \
+             combining marks (Arabic tashkeel, Hebrew niqqud); else None"
+        },
+    );
+
+    // Most-referenced postags in the grammar/disambiguation rules — the structural-tag candidates.
+    for (label, path) in [
+        ("grammar.xml", format!("{rules}/grammar.xml")),
+        ("disambiguation.xml", format!("{resource}/disambiguation.xml")),
+    ] {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            let examples = text.matches("<example").count();
+            let mut refs: BTreeMap<String, u64> = BTreeMap::new();
+            for after in text.split("postag=\"").skip(1) {
+                if let Some(tag) = after.split('"').next() {
+                    *refs.entry(tag.to_owned()).or_default() += 1;
+                }
+            }
+            let mut r: Vec<_> = refs.iter().collect();
+            r.sort_by(|a, b| b.1.cmp(a.1));
+            print!("  {label}: {examples} examples; top postags:");
+            for (tag, n) in r.iter().take(8) {
+                print!(" {tag}({n})");
+            }
+            println!();
+        }
+    }
+
+    let confusion = format!("{resource}/confusion_sets.txt");
+    let pairs = confusion_words(&confusion).map_or(0, |w| w.len());
+    println!(
+        "  confusion_sets.txt: {pairs} words → {}",
+        if pairs == 0 { "L3 skip (confusion:false)" } else { "L3 available (confusion:true)" },
+    );
+    Ok(())
+}
+
+/// Find a morfologik `(.dict, .info)` pair under `dir`, preferring the analyzer dict over a
+/// `*_synth.dict` generator and skipping the hunspell subdir.
+fn find_repo_dict(dir: &str) -> Result<(String, String)> {
+    let mut best: Option<String> = None;
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if let Some(stem) = name.strip_suffix(".dict") {
+            let info = path.with_file_name(format!("{stem}.info"));
+            if info.exists() {
+                let p = path.to_string_lossy().into_owned();
+                // Prefer the non-synth dict; take the first otherwise.
+                if !name.contains("synth") {
+                    return Ok((p.clone(), info.to_string_lossy().into_owned()));
+                }
+                best.get_or_insert(p);
+            }
+        }
+    }
+    let dict = best.context("no .dict with a sibling .info")?;
+    Ok((dict.clone(), dict.replace(".dict", ".info")))
+}
+
+/// The languages with a `LangConfig` — the default set for `lang-status`.
+const CONFIGURED_LANGS: &[&str] = &["en", "de", "ru", "ar"];
+
+/// One hashed upstream input in a language manifest.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ManifestInput {
+    /// Hex SHA-256 of the file's bytes; `None` if the (optional) input is absent.
+    sha256: Option<String>,
+    /// Byte length (0 if absent).
+    bytes: u64,
+    /// Which built artifact this input feeds.
+    feeds: String,
+    /// Whether the input is optional (absence is not drift).
+    optional: bool,
+}
+
+/// A committed record of the *content* (not just the LT version) of every upstream input that feeds
+/// a language's artifacts, so linguistic drift is detectable. Lives at `lang-manifests/<code>.json`.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LangManifest {
+    code: String,
+    lt_version: String,
+    inputs: std::collections::BTreeMap<String, ManifestInput>,
+    /// The structural-tag strings chosen in the `LangConfig`, pinned for review.
+    tagset_values: std::collections::BTreeMap<String, String>,
+}
+
+/// The upstream inputs that feed a language's artifacts: `(key, path, feeds, optional)`. One place so
+/// `lang-manifest` and `lang-status` agree on the set. Paths come from the `LangConfig` getters.
+fn manifest_inputs(cfg: &'static rlt_lang::LangConfig) -> Vec<(&'static str, String, &'static str, bool)> {
+    let res = cfg.lt_resource_dir();
+    vec![
+        ("grammar.xml", cfg.grammar_xml_path(), "grammar.rkyv", false),
+        ("disambiguation.xml", cfg.disambiguation_xml_path(), "disambig.rkyv", false),
+        // Optional: en reconstructs its tagger from AGID (no morfologik dict); de/ru/ar ship one.
+        ("pos.dict", cfg.pos_dict_local(), "tagger.rkyv", true),
+        ("pos.info", cfg.pos_info_local(), "tagger.rkyv", true),
+        ("added.txt", format!("{res}/added.txt"), "tagger.rkyv", true),
+        ("removed.txt", format!("{res}/removed.txt"), "tagger.rkyv", true),
+        ("confusion_sets.txt", format!("{res}/confusion_sets.txt"), "confusion.rkyv", true),
+    ]
+}
+
+/// Hex SHA-256 + byte length of a file, or `None` if it doesn't exist.
+fn sha256_file(path: &str) -> Option<(String, u64)> {
+    use std::fmt::Write as _;
+
+    use sha2::{Digest, Sha256};
+    let bytes = std::fs::read(path).ok()?;
+    let hash = Sha256::digest(&bytes);
+    let hex = hash.iter().fold(String::with_capacity(64), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    });
+    Some((hex, bytes.len() as u64))
+}
+
+/// Write `lang-manifests/<code>.json` from the currently-fetched upstream inputs (run after a build
+/// validates). Required inputs must be present; optional ones are recorded as absent.
+fn lang_manifest(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+    let mut inputs = std::collections::BTreeMap::new();
+    for (key, path, feeds, optional) in manifest_inputs(cfg) {
+        let (sha256, bytes) = match sha256_file(&path) {
+            Some((s, b)) => (Some(s), b),
+            None if optional => (None, 0),
+            None => bail!("required input {key} missing at {path} — run `build-lang --lang {}` first", cfg.code),
+        };
+        inputs.insert(key.to_owned(), ManifestInput { sha256, bytes, feeds: feeds.to_owned(), optional });
+    }
+    let tagset_values = [
+        ("digit_tag", cfg.tagset.digit_tag),
+        ("punctuation_tag", cfg.tagset.punctuation_tag),
+        ("proper_noun_tag", cfg.tagset.proper_noun_tag),
+        ("oov_tag", cfg.tagset.oov_tag),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_owned(), v.to_owned()))
+    .collect();
+    let manifest = LangManifest {
+        code: cfg.code.to_owned(),
+        lt_version: lt_version(),
+        inputs,
+        tagset_values,
+    };
+    std::fs::create_dir_all("lang-manifests")?;
+    let path = format!("lang-manifests/{}.json", cfg.code);
+    std::fs::write(&path, serde_json::to_string_pretty(&manifest)? + "\n")?;
+    println!(
+        "wrote {path}: {} inputs, lt_version {}",
+        manifest.inputs.len(),
+        manifest.lt_version
+    );
+    Ok(())
+}
+
+/// Compare current upstream inputs to each committed manifest and report per-file drift. Exits
+/// non-zero if anything changed since the manifest was written (so CI can gate on it).
+fn lang_status(opt_lang: Option<&str>) -> Result<()> {
+    let codes: Vec<&str> = opt_lang.map_or_else(|| CONFIGURED_LANGS.to_vec(), |l| vec![l]);
+    let mut drifted = false;
+    for code in codes {
+        let cfg = lang_cfg(code)?;
+        let manifest_path = format!("lang-manifests/{code}.json");
+        let Ok(text) = std::fs::read_to_string(&manifest_path) else {
+            println!("{code}: no manifest — run `cargo xtask lang-manifest --lang {code}`");
+            drifted = true;
+            continue;
+        };
+        let manifest: LangManifest = serde_json::from_str(&text)
+            .with_context(|| format!("parsing {manifest_path}"))?;
+        let pinned = lt_version();
+        if pinned == manifest.lt_version {
+            println!("{code}: LT {pinned}");
+        } else {
+            println!("{code}: LT pinned {pinned} ≠ manifest {} — re-validate + re-pin", manifest.lt_version);
+        }
+        for (key, path, _feeds, optional) in manifest_inputs(cfg) {
+            let current = sha256_file(&path).map(|(s, _)| s);
+            let recorded = manifest.inputs.get(key).and_then(|i| i.sha256.clone());
+            match (current.as_deref(), recorded.as_deref()) {
+                (Some(c), Some(r)) if c == r => {}
+                (Some(c), Some(r)) => {
+                    println!("  CHANGED  {key}: {}… → {}…", &r[..12], &c[..12]);
+                    drifted = true;
+                }
+                (Some(c), None) => {
+                    println!("  NEW      {key}: {}… (not in manifest)", &c[..12]);
+                    drifted = true;
+                }
+                (None, Some(r)) => {
+                    println!("  MISSING  {key}: was {}…", &r[..12]);
+                    drifted = true;
+                }
+                (None, None) => {
+                    if !optional {
+                        println!("  ABSENT   {key} (required, not fetched — run `fetch-lt`)");
+                    }
+                }
+            }
+        }
+    }
+    if drifted {
+        bail!("upstream drift (or missing manifest) detected — review above");
+    }
+    println!("all upstream inputs unchanged");
+    Ok(())
 }
 
 /// Leipzig Corpora Collection — a clean, fetchable German news corpus (tagged sentences) used as the
