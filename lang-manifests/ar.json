@@ -1,0 +1,54 @@
+{
+  "code": "ar",
+  "lt_version": "v6.7",
+  "inputs": {
+    "added.txt": {
+      "sha256": "c82b2e4210b84f5c1381788a20680ab26e2464fb96e6472d2e85169a5d54676a",
+      "bytes": 2929,
+      "feeds": "tagger.rkyv",
+      "optional": true
+    },
+    "confusion_sets.txt": {
+      "sha256": "53a775a91c6f745046412d9f7c665d230c59f0c70d3e6b2d6c07d97b557c8564",
+      "bytes": 611,
+      "feeds": "confusion.rkyv",
+      "optional": true
+    },
+    "disambiguation.xml": {
+      "sha256": "15a60105847f3387ce6cec651960635a09c50234ce23863c1695c10beb8ed407",
+      "bytes": 5316,
+      "feeds": "disambig.rkyv",
+      "optional": false
+    },
+    "grammar.xml": {
+      "sha256": "f22dcbfe4a25476820193096d9d713f4b3ca4bfd7b0f430b7e3f22b9202beef3",
+      "bytes": 418407,
+      "feeds": "grammar.rkyv",
+      "optional": false
+    },
+    "pos.dict": {
+      "sha256": "5241ff265d6851c5b2af02af09701990f3a5132a42d5464fece76a0ee2daa2e2",
+      "bytes": 11950573,
+      "feeds": "tagger.rkyv",
+      "optional": true
+    },
+    "pos.info": {
+      "sha256": "778dc468e9f6f60e2235c280048383101100a7b9aab45a68b974127b9fa50cb5",
+      "bytes": 186,
+      "feeds": "tagger.rkyv",
+      "optional": true
+    },
+    "removed.txt": {
+      "sha256": "b840a31465a40eaf6401e4262db9d9980cd81246e7ef23357cbc54bb6e8da31c",
+      "bytes": 223,
+      "feeds": "tagger.rkyv",
+      "optional": true
+    }
+  },
+  "tagset_values": {
+    "digit_tag": "CD",
+    "oov_tag": "UNKNOWN",
+    "proper_noun_tag": "NA-;-1U-;---",
+    "punctuation_tag": "PCT"
+  }
+}

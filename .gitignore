@@ -42,8 +42,9 @@ node_modules/
 /resources/agid-infl.txt
 /resources/agid-pos.txt
 
-# Claude Code local state
-/.claude/
+# Claude Code local state (but commit the project skills under .claude/skills/)
+/.claude/*
+!/.claude/skills/
 
 # LanguageTool morfologik POS dictionaries (fetched per-language from *-pos-dict jars, LGPL).
 # *.dict is globbed above; the .info / jar are not:
