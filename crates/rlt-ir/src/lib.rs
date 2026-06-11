@@ -122,16 +122,23 @@ pub fn deserialize_rules(bytes: &[u8]) -> Result<Vec<Rule>, rkyv::rancor::Error>
 pub struct ConfusionModel {
     /// Easily-confused word pairs (from LanguageTool's `confusion_sets.txt`).
     pub pairs: Vec<ConfusionPair>,
-    /// Unigram counts for confusion words (lower-cased) — context-free backoff.
-    pub unigrams: Vec<(String, u32)>,
-    /// Bigram counts (`"w1 w2"`, lower-cased) pruned to those touching a confusion word.
-    pub bigrams: Vec<(String, u32)>,
-    /// Left-POS context: `"POS member"` → summed count of bigrams whose left word has that primary
-    /// POS and whose right word is the confusion member. Generalises sparse word bigrams.
-    pub left_pos: Vec<(String, u32)>,
-    /// Right-POS context: `"member POS"` → summed count of bigrams whose left word is the member
-    /// and whose right word has that primary POS.
-    pub right_pos: Vec<(String, u32)>,
+    /// Interned string table for the count tables below: every word (lower-cased) and POS tag is
+    /// stored once here and referenced by its `u32` index elsewhere — the same side-table trick the
+    /// tagger uses. Ordered by descending reference frequency, so the hottest tokens get the
+    /// smallest indices (mostly-zero `u32`s ⇒ the artifact gzips well).
+    pub vocab: Vec<String>,
+    /// Unigram counts as `(word_idx, count)` — context-free backoff for confusion words.
+    pub unigrams: Vec<(u32, u32)>,
+    /// Bigram counts as `(w1_idx, w2_idx, count)`, pruned to those touching a confusion word.
+    /// Sorted by `(w1_idx, w2_idx)` so a count can be found by binary search without a hash map.
+    pub bigrams: Vec<(u32, u32, u32)>,
+    /// Left-POS context as `(pos_idx, member_idx, count)`: summed count of bigrams whose left word
+    /// has that primary POS and whose right word is the confusion member. Sorted; generalises
+    /// sparse word bigrams.
+    pub left_pos: Vec<(u32, u32, u32)>,
+    /// Right-POS context as `(member_idx, pos_idx, count)`: summed count of bigrams whose left word
+    /// is the member and whose right word has that primary POS. Sorted.
+    pub right_pos: Vec<(u32, u32, u32)>,
 }
 
 /// One easily-confused pair. `symmetric` pairs are checked both ways; directional ones only `a→b`.

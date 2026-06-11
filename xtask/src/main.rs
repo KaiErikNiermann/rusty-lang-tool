@@ -965,11 +965,16 @@ fn build_confusion_de_lt_ngrams(cfg: &'static rlt_lang::LangConfig) -> Result<()
         std::fs::create_dir_all("tools/out")?;
         run("javac", &["-cp", "tools/lib/*", "-d", "tools/out", "tools/NgramDump.java"])?;
     }
+    // 3. Dump each index to a Norvig-format TSV (resumable — the dump is the slow step, so skip it
+    //    when both TSVs are already present and non-empty).
     let count_1w = format!("{dir}/count_1w.txt");
     let count_2w = format!("{dir}/count_2w.txt");
-    let cp = "tools/lib/*:tools/out";
-    run("java", &["-cp", cp, "NgramDump", &format!("{index_dir}/{}/1grams", cfg.lt_module), &count_1w])?;
-    run("java", &["-cp", cp, "NgramDump", &format!("{index_dir}/{}/2grams", cfg.lt_module), &count_2w])?;
+    let cached = |p: &str| Path::new(p).metadata().is_ok_and(|m| m.len() > 0);
+    if !(cached(&count_1w) && cached(&count_2w)) {
+        let cp = "tools/lib/*:tools/out";
+        run("java", &["-cp", cp, "NgramDump", &format!("{index_dir}/{}/1grams", cfg.lt_module), &count_1w])?;
+        run("java", &["-cp", cp, "NgramDump", &format!("{index_dir}/{}/2grams", cfg.lt_module), &count_2w])?;
+    }
 
     build_confusion_from_counts(cfg, &count_1w, &count_2w)
 }

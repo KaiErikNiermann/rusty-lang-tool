@@ -34,15 +34,21 @@ const MIN_EVIDENCE: u32 = 5000;
 /// Add-one (Laplace) smoothing for bigram and unigram counts.
 const SMOOTH: f64 = 1.0;
 
-/// L3 confusion-pair checker, compiled from a [`ConfusionModel`].
+/// L3 confusion-pair checker, compiled from a [`ConfusionModel`]. The count tables are keyed by
+/// `u32` indices into a shared `vocab` (the artifact's interned side-table), so a surface word is
+/// resolved to its index once and the heavy bigram table stays a packed, binary-searchable `Vec`
+/// rather than a string-keyed hash map.
 pub struct ConfusionChecker {
     /// Confusion word (lower-cased) → alternatives to test (with each pair's factor) when it occurs.
     alternatives: HashMap<String, Vec<(String, f32)>>,
-    unigrams: HashMap<String, u32>,
-    bigrams: HashMap<String, u32>,
-    /// `"leftPOS member"` → count, and `"member rightPOS"` → count (POS-generalised context).
-    left_pos: HashMap<String, u32>,
-    right_pos: HashMap<String, u32>,
+    /// Interned token (word or POS tag) → its index in the count tables.
+    vocab: HashMap<String, u32>,
+    unigrams: HashMap<u32, u32>,
+    /// `(w1_idx, w2_idx, count)`, sorted by the index pair for binary-search lookup.
+    bigrams: Vec<(u32, u32, u32)>,
+    /// `(leftPOS_idx, member_idx)` → count, and `(member_idx, rightPOS_idx)` → count.
+    left_pos: HashMap<(u32, u32), u32>,
+    right_pos: HashMap<(u32, u32), u32>,
 }
 
 impl ConfusionChecker {
@@ -63,12 +69,23 @@ impl ConfusionChecker {
                     .push((p.a.clone(), p.factor));
             }
         }
+        // The artifact builder already sorts `bigrams`; sort defensively so binary search is sound
+        // even for a hand-built model (cheap: a single near-sorted pass at load time).
+        let mut bigrams = model.bigrams.clone();
+        bigrams.sort_unstable();
         Self {
             alternatives,
-            unigrams: model.unigrams.iter().cloned().collect(),
-            bigrams: model.bigrams.iter().cloned().collect(),
-            left_pos: model.left_pos.iter().cloned().collect(),
-            right_pos: model.right_pos.iter().cloned().collect(),
+            // `vocab.len()` is bounded by the artifact builder's `u32` indices, so the cast is total.
+            vocab: model
+                .vocab
+                .iter()
+                .enumerate()
+                .map(|(i, s)| (s.clone(), u32::try_from(i).unwrap_or(u32::MAX)))
+                .collect(),
+            unigrams: model.unigrams.iter().copied().collect(),
+            bigrams,
+            left_pos: model.left_pos.iter().map(|&(p, m, c)| ((p, m), c)).collect(),
+            right_pos: model.right_pos.iter().map(|&(m, p, c)| ((m, p), c)).collect(),
         }
     }
 
@@ -78,8 +95,9 @@ impl ConfusionChecker {
     pub fn empty() -> Self {
         Self {
             alternatives: HashMap::new(),
+            vocab: HashMap::new(),
             unigrams: HashMap::new(),
-            bigrams: HashMap::new(),
+            bigrams: Vec::new(),
             left_pos: HashMap::new(),
             right_pos: HashMap::new(),
         }
@@ -93,12 +111,23 @@ impl ConfusionChecker {
         Ok(Self::new(&rlt_ir::deserialize_confusion(bytes)?))
     }
 
+    /// Resolve a surface token to its vocab index (`None` ⇒ unseen ⇒ count 0 everywhere).
+    fn idx(&self, w: &str) -> Option<u32> {
+        self.vocab.get(w).copied()
+    }
+
     fn bigram(&self, a: &str, b: &str) -> u32 {
-        *self.bigrams.get(&format!("{a} {b}")).unwrap_or(&0)
+        let (Some(ia), Some(ib)) = (self.idx(a), self.idx(b)) else {
+            return 0;
+        };
+        self.bigrams
+            .binary_search_by(|&(x, y, _)| (x, y).cmp(&(ia, ib)))
+            .map_or(0, |i| self.bigrams[i].2)
     }
 
     fn unigram_smoothed(&self, w: &str) -> f64 {
-        f64::from(*self.unigrams.get(w).unwrap_or(&0)) + SMOOTH
+        let count = self.idx(w).and_then(|i| self.unigrams.get(&i)).copied().unwrap_or(0);
+        f64::from(count) + SMOOTH
     }
 
     /// `log P(alt | context) − log P(word | context)` under a bigram model with add-one smoothing.
@@ -127,16 +156,21 @@ impl ConfusionChecker {
     /// (context-disambiguated) POS instead of their surface words — so it still discriminates even
     /// when the exact word bigram was unseen. Generalises e.g. "the/to before a noun".
     fn pos_log_ratio(&self, lpos: Option<&str>, word: &str, rpos: Option<&str>, alt: &str) -> f64 {
-        let count =
-            |map: &HashMap<String, u32>, key: String| f64::from(*map.get(&key).unwrap_or(&0));
+        // `(a, b)` → count via the interned indices; an unseen token (or POS) ⇒ 0.
+        let count = |map: &HashMap<(u32, u32), u32>, a: &str, b: &str| -> f64 {
+            let (Some(ia), Some(ib)) = (self.idx(a), self.idx(b)) else {
+                return 0.0;
+            };
+            f64::from(map.get(&(ia, ib)).copied().unwrap_or(0))
+        };
         let mut lr = 0.0;
         if let Some(p) = lpos {
-            lr += (count(&self.left_pos, format!("{p} {alt}")) + SMOOTH).ln()
-                - (count(&self.left_pos, format!("{p} {word}")) + SMOOTH).ln();
+            lr += (count(&self.left_pos, p, alt) + SMOOTH).ln()
+                - (count(&self.left_pos, p, word) + SMOOTH).ln();
         }
         if let Some(p) = rpos {
-            lr += (count(&self.right_pos, format!("{alt} {p}")) + SMOOTH).ln()
-                - (count(&self.right_pos, format!("{word} {p}")) + SMOOTH).ln();
+            lr += (count(&self.right_pos, alt, p) + SMOOTH).ln()
+                - (count(&self.right_pos, word, p) + SMOOTH).ln();
         }
         lr
     }
@@ -226,6 +260,7 @@ mod tests {
     use crate::{Span, Token};
 
     fn model() -> ConfusionModel {
+        // vocab indices: their=0, there=1, over=2, car=3.
         ConfusionModel {
             pairs: vec![ConfusionPair {
                 a: "their".to_owned(),
@@ -233,15 +268,15 @@ mod tests {
                 factor: 10.0,
                 symmetric: true,
             }],
-            unigrams: vec![
-                ("their".to_owned(), 5_000_000),
-                ("there".to_owned(), 5_000_000),
+            vocab: vec![
+                "their".to_owned(),
+                "there".to_owned(),
+                "over".to_owned(),
+                "car".to_owned(),
             ],
+            unigrams: vec![(0, 5_000_000), (1, 5_000_000)],
             // "over there" is common; "over their" is not — context favours "there".
-            bigrams: vec![
-                ("over there".to_owned(), 50000),
-                ("their car".to_owned(), 40000),
-            ],
+            bigrams: vec![(0, 3, 40000), (2, 1, 50000)],
             left_pos: vec![],
             right_pos: vec![],
         }

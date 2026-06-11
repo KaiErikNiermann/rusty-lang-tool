@@ -88,13 +88,7 @@ pub fn build_confusion_model(
         pairs: pairs.len(),
         bigrams: bigrams.len(),
     };
-    let model = rlt_ir::ConfusionModel {
-        pairs,
-        unigrams,
-        bigrams,
-        left_pos,
-        right_pos,
-    };
+    let model = intern_confusion(pairs, &unigrams, &bigrams, &left_pos, &right_pos);
     let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&model)
         .map_err(|e| anyhow!("rkyv serialize: {e}"))?;
     if let Some(parent) = out.parent() {
@@ -104,6 +98,53 @@ pub fn build_confusion_model(
     std::fs::write(out, &bytes).with_context(|| format!("writing {}", out.display()))?;
     tracing::info!(pairs = report.pairs, bigrams = report.bigrams, out = %out.display(), "wrote confusion model");
     Ok(report)
+}
+
+/// Intern every word/POS string from the count tables into a single frequency-ranked `vocab`, then
+/// re-express each count entry as `u32` indices into it (the tagger's side-table trick). Hot tokens
+/// get the lowest indices and each table is sorted, so the artifact gzips well and the runtime can
+/// binary-search bigrams without a string-keyed hash map.
+fn intern_confusion(
+    pairs: Vec<rlt_ir::ConfusionPair>,
+    unigrams: &[(String, u32)],
+    bigrams: &[(String, String, u32)],
+    left_pos: &[(String, String, u32)],
+    right_pos: &[(String, String, u32)],
+) -> rlt_ir::ConfusionModel {
+    use std::collections::HashMap;
+    let mut freq: HashMap<&str, u64> = HashMap::new();
+    for (w, _) in unigrams {
+        *freq.entry(w.as_str()).or_default() += 1;
+    }
+    for (a, b, _) in bigrams.iter().chain(left_pos).chain(right_pos) {
+        *freq.entry(a.as_str()).or_default() += 1;
+        *freq.entry(b.as_str()).or_default() += 1;
+    }
+
+    let mut vocab: Vec<String> = freq.keys().map(|s| (*s).to_owned()).collect();
+    vocab.sort_unstable_by(|a, b| freq[b.as_str()].cmp(&freq[a.as_str()]).then_with(|| a.cmp(b)));
+    let idx: HashMap<&str, u32> = vocab
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.as_str(), u32::try_from(i).unwrap_or(u32::MAX)))
+        .collect();
+
+    let mut unigrams: Vec<(u32, u32)> = unigrams.iter().map(|(w, c)| (idx[w.as_str()], *c)).collect();
+    unigrams.sort_unstable();
+    let intern3 = |t: &[(String, String, u32)]| -> Vec<(u32, u32, u32)> {
+        let mut v: Vec<(u32, u32, u32)> =
+            t.iter().map(|(a, b, c)| (idx[a.as_str()], idx[b.as_str()], *c)).collect();
+        v.sort_unstable();
+        v
+    };
+    rlt_ir::ConfusionModel {
+        pairs,
+        unigrams,
+        bigrams: intern3(bigrams),
+        left_pos: intern3(left_pos),
+        right_pos: intern3(right_pos),
+        vocab,
+    }
 }
 
 /// Parse `confusion_sets.txt` into [`rlt_ir::ConfusionPair`]s. Lines are `a; b; factor` (symmetric)
@@ -165,11 +206,15 @@ fn prune_unigrams(
     Ok(out)
 }
 
-/// The pruned bigrams plus the POS-context aggregations derived from them.
+/// The pruned bigrams plus the POS-context aggregations derived from them, as un-interned string
+/// components (`build_confusion_model` interns them into the artifact's shared vocab).
 struct Bigrams {
-    counts: Vec<(String, u32)>,
-    left_pos: Vec<(String, u32)>,
-    right_pos: Vec<(String, u32)>,
+    /// `(w1, w2, count)`.
+    counts: Vec<(String, String, u32)>,
+    /// `(left_pos, member, count)`.
+    left_pos: Vec<(String, String, u32)>,
+    /// `(member, right_pos, count)`.
+    right_pos: Vec<(String, String, u32)>,
 }
 
 /// Keep `"w1 w2"\tcount` bigram lines touching a confusion word, and aggregate POS-context counts:
@@ -183,8 +228,8 @@ fn prune_bigrams(
     use std::collections::HashMap;
     let text = std::fs::read_to_string(path)?;
     let mut out = Vec::new();
-    let mut left_pos: HashMap<String, u32> = HashMap::new();
-    let mut right_pos: HashMap<String, u32> = HashMap::new();
+    let mut left_pos: HashMap<(String, String), u32> = HashMap::new();
+    let mut right_pos: HashMap<(String, String), u32> = HashMap::new();
     let mut pos_cache: HashMap<String, Option<String>> = HashMap::new();
     let mut primary_pos = |w: &str| -> Option<String> {
         pos_cache
@@ -210,22 +255,28 @@ fn prune_bigrams(
         };
         if words.contains(&w2) {
             if let Some(p1) = primary_pos(&w1) {
-                let e = left_pos.entry(format!("{p1} {w2}")).or_default();
+                let e = left_pos.entry((p1, w2.clone())).or_default();
                 *e = e.saturating_add(count);
             }
         }
         if words.contains(&w1) {
             if let Some(p2) = primary_pos(&w2) {
-                let e = right_pos.entry(format!("{w1} {p2}")).or_default();
+                let e = right_pos.entry((w1.clone(), p2)).or_default();
                 *e = e.saturating_add(count);
             }
         }
-        out.push((gram, count));
+        out.push((w1, w2, count));
     }
     Ok(Bigrams {
         counts: out,
-        left_pos: left_pos.into_iter().collect(),
-        right_pos: right_pos.into_iter().collect(),
+        left_pos: left_pos
+            .into_iter()
+            .map(|((p, m), c)| (p, m, c))
+            .collect(),
+        right_pos: right_pos
+            .into_iter()
+            .map(|((m, p), c)| (m, p, c))
+            .collect(),
     })
 }
 

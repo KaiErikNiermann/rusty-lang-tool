@@ -376,6 +376,7 @@ dependencies = [
  "libfuzzer-sys",
  "rlt-core",
  "rlt-ir",
+ "rlt-lang",
  "rlt-native",
 ]
 
@@ -389,12 +390,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rlt-lang"
+version = "0.0.0"
+
+[[package]]
 name = "rlt-native"
 version = "0.0.0"
 dependencies = [
  "fst",
  "rkyv",
  "rlt-core",
+ "rlt-ir",
+ "rlt-lang",
  "serde",
  "srx",
  "thiserror 2.0.18",
