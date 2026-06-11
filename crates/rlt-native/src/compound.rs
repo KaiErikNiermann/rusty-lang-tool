@@ -24,13 +24,13 @@ pub(crate) fn analyze_compound(
 ) -> Option<Vec<WordData>> {
     let parts = split(word, tagger, rules)?;
     let head = if rules.head_is_last { parts.last()? } else { parts.first()? };
-    let analyses = lookup_part(tagger, head)?;
+    let analyses = head_analyses(tagger, head)?;
     Some(
         analyses
-            .iter()
+            .into_iter()
             .map(|wd| WordData {
                 lemma: word.to_owned(),
-                tag: wd.tag.clone(),
+                tag: wd.tag,
             })
             .collect(),
     )
@@ -43,8 +43,13 @@ pub(crate) fn is_compound(word: &str, tagger: &Tagger, rules: &Compounding) -> b
 
 /// A constituent is known if the dictionary has it as-is or capitalized (German nouns are capitalized
 /// but appear lower-cased inside a compound).
-fn lookup_part<'a>(tagger: &'a Tagger, part: &str) -> Option<&'a [WordData]> {
-    tagger.lookup(part).or_else(|| tagger.lookup(&capitalize(part)))
+fn known_part(tagger: &Tagger, part: &str) -> bool {
+    tagger.is_known(part) || tagger.is_known(&capitalize(part))
+}
+
+/// The head constituent's analyses (as-is or capitalized lookup).
+fn head_analyses(tagger: &Tagger, part: &str) -> Option<Vec<WordData>> {
+    tagger.analyses(part).or_else(|| tagger.analyses(&capitalize(part)))
 }
 
 /// Upper-case the first character (Unicode-aware).
@@ -79,7 +84,7 @@ fn rec(s: &str, tagger: &Tagger, rules: &Compounding, depth: usize) -> Option<Ve
             continue;
         }
         let prefix = &s[..end];
-        if lookup_part(tagger, prefix).is_none() {
+        if !known_part(tagger, prefix) {
             continue;
         }
         let rest = &s[end..];

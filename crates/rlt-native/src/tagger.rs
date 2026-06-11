@@ -5,6 +5,11 @@
 //! set of `(lemma, tag)` pairs LanguageTool's dictionary records for it — e.g. `left → {(leave,VBD),
 //! (leave,VBN), (left,JJ), (left,NN)}`. The same artifact backs `is_known` (membership) and tagging.
 //!
+//! Lemmas and tags are **interned**: the side-table stores `(lemma_index, tag_index)` `u32` pairs into
+//! two string tables, not the strings themselves. A rich morphology repeats the same few hundred tags
+//! and a base lemma across all its inflections, so interning shrinks the artifact dramatically (German:
+//! 5M analyses, ~239 MB → tens of MB) without changing the runtime API.
+//!
 //! The offline build (`build_artifact`) is fed by the P1 bootstrap (nlprule's tags) and, later, the
 //! AGID/Moby dictionary build.
 
@@ -24,13 +29,18 @@ pub struct WordData {
     pub tag: String,
 }
 
-/// The serialized tagger artifact: the fst bytes + the per-word analysis table.
+/// The serialized tagger artifact: the fst bytes + interned lemma/tag tables + the per-word analysis
+/// table of `(lemma_index, tag_index)` pairs.
 #[derive(Debug, Archive, Serialize, Deserialize)]
 struct TaggerData {
-    /// Serialized `fst::Map` bytes: lower-cased surface → index into `entries`.
+    /// Serialized `fst::Map` bytes: surface → index into `entries`.
     fst_bytes: Vec<u8>,
-    /// `entries[i]` = the analyses for the word whose fst value is `i`.
-    entries: Vec<Vec<WordData>>,
+    /// Distinct lemmas; indexed by the first element of each `entries` pair.
+    lemmas: Vec<String>,
+    /// Distinct tags; indexed by the second element of each `entries` pair.
+    tags: Vec<String>,
+    /// `entries[i]` = the `(lemma_index, tag_index)` analyses for the word whose fst value is `i`.
+    entries: Vec<Vec<(u32, u32)>>,
 }
 
 /// Errors loading or building the tagger.
@@ -47,7 +57,9 @@ pub enum TaggerError {
 /// A loaded POS tagger.
 pub struct Tagger {
     fst: Map<Vec<u8>>,
-    entries: Vec<Vec<WordData>>,
+    lemmas: Vec<String>,
+    tags: Vec<String>,
+    entries: Vec<Vec<(u32, u32)>>,
 }
 
 impl Tagger {
@@ -64,34 +76,51 @@ impl Tagger {
         let fst = Map::new(data.fst_bytes).map_err(|e| TaggerError::Fst(e.to_string()))?;
         Ok(Self {
             fst,
+            lemmas: data.lemmas,
+            tags: data.tags,
             entries: data.entries,
         })
     }
 
-    /// The analyses for `word` — exact match first, then a lower-cased fallback (so sentence-initial
-    /// capitalization still resolves). `None` if the word is unknown.
-    #[must_use]
-    pub fn lookup(&self, word: &str) -> Option<&[WordData]> {
+    /// The `entries` index for `word` — exact match first, then a lower-cased fallback (so sentence-
+    /// initial capitalization still resolves). `None` if the word is unknown.
+    fn index(&self, word: &str) -> Option<usize> {
         let idx = self
             .fst
             .get(word.as_bytes())
             .or_else(|| self.fst.get(word.to_lowercase().as_bytes()))?;
-        self.entries.get(usize::try_from(idx).ok()?).map(Vec::as_slice)
+        usize::try_from(idx).ok()
+    }
+
+    /// The analyses for `word` as owned `(lemma, tag)` pairs (resolving the interned indices). `None`
+    /// if unknown. Not the hot path — [`tag_token`](Self::tag_token) writes directly without allocating.
+    #[must_use]
+    pub fn analyses(&self, word: &str) -> Option<Vec<WordData>> {
+        let entry = self.entries.get(self.index(word)?)?;
+        Some(
+            entry
+                .iter()
+                .map(|&(li, ti)| WordData {
+                    lemma: self.lemmas[li as usize].clone(),
+                    tag: self.tags[ti as usize].clone(),
+                })
+                .collect(),
+        )
     }
 
     /// Whether `word` is in the lexicon (the L1 spelling membership oracle).
     #[must_use]
     pub fn is_known(&self, word: &str) -> bool {
-        self.lookup(word).is_some()
+        self.index(word).is_some()
     }
 
     /// Fill `token.tags` and `token.lemmas` from its analyses (deduplicated, order-preserving —
-    /// matching the vendored engine's behaviour).
+    /// matching the vendored engine's behaviour). Resolves interned indices in place.
     pub fn tag_token(&self, token: &mut Token) {
-        if let Some(analyses) = self.lookup(&token.text) {
-            for wd in analyses {
-                push_unique(&mut token.tags, &wd.tag);
-                push_unique(&mut token.lemmas, &wd.lemma);
+        if let Some(entry) = self.index(&token.text).and_then(|i| self.entries.get(i)) {
+            for &(li, ti) in entry {
+                push_unique(&mut token.tags, &self.tags[ti as usize]);
+                push_unique(&mut token.lemmas, &self.lemmas[li as usize]);
             }
         }
     }
@@ -135,18 +164,45 @@ where
 /// # Errors
 /// Returns [`TaggerError`] if the fst cannot be built or the table cannot be serialized.
 pub fn build_artifact(words: &BTreeMap<String, Vec<WordData>>) -> Result<Vec<u8>, TaggerError> {
+    use std::collections::HashMap;
+
+    // Intern lemmas + tags into tables keyed by string slices borrowed from `words` (which outlives the
+    // build), so the side-table stores small `u32` indices instead of repeating the strings.
     let mut builder = MapBuilder::memory();
-    let mut entries: Vec<Vec<WordData>> = Vec::with_capacity(words.len());
+    let mut lemma_ids: HashMap<&str, u32> = HashMap::new();
+    let mut tag_ids: HashMap<&str, u32> = HashMap::new();
+    let mut lemmas: Vec<String> = Vec::new();
+    let mut tags: Vec<String> = Vec::new();
+    let mut entries: Vec<Vec<(u32, u32)>> = Vec::with_capacity(words.len());
     for (word, analyses) in words {
         builder
             .insert(word.as_bytes(), entries.len() as u64)
             .map_err(|e| TaggerError::Fst(e.to_string()))?;
-        entries.push(analyses.clone());
+        let mut entry = Vec::with_capacity(analyses.len());
+        for wd in analyses {
+            let li = *lemma_ids.entry(wd.lemma.as_str()).or_insert_with(|| {
+                let id = u32::try_from(lemmas.len()).expect("< 4B lemmas");
+                lemmas.push(wd.lemma.clone());
+                id
+            });
+            let ti = *tag_ids.entry(wd.tag.as_str()).or_insert_with(|| {
+                let id = u32::try_from(tags.len()).expect("< 4B tags");
+                tags.push(wd.tag.clone());
+                id
+            });
+            entry.push((li, ti));
+        }
+        entries.push(entry);
     }
     let fst_bytes = builder
         .into_inner()
         .map_err(|e| TaggerError::Fst(e.to_string()))?;
-    let data = TaggerData { fst_bytes, entries };
+    let data = TaggerData {
+        fst_bytes,
+        lemmas,
+        tags,
+        entries,
+    };
     rkyv::to_bytes::<rkyv::rancor::Error>(&data)
         .map(|b| b.to_vec())
         .map_err(|e| TaggerError::Rkyv(e.to_string()))
@@ -191,13 +247,13 @@ mod tests {
         let unaligned = &offset[1..]; // shifts the base pointer off any large alignment
 
         let tagger = Tagger::from_bytes(unaligned).expect("load from unaligned slice");
-        assert_eq!(tagger.lookup("cat").unwrap()[0].tag, "NN");
+        assert_eq!(tagger.analyses("cat").unwrap()[0].tag, "NN");
     }
 
     #[test]
     fn looks_up_multiple_analyses() {
         let t = fixture();
-        let left = t.lookup("left").expect("known");
+        let left = t.analyses("left").expect("known");
         assert_eq!(left.len(), 3);
         assert_eq!(left[0].lemma, "leave");
     }
@@ -225,12 +281,12 @@ mod tests {
         .map(|(i, l, t)| (i.to_owned(), l.to_owned(), t.to_owned()));
         let tagger = Tagger::from_bytes(&build_from_triples(triples).unwrap()).unwrap();
 
-        let left = tagger.lookup("left").unwrap();
+        let left = tagger.analyses("left").unwrap();
         assert_eq!(left.len(), 3, "deduped to leave/VBD, leave/VBN, left/JJ");
         // Case-sensitive keys keep US (NNP) and us (PRP) from colliding.
-        assert_eq!(tagger.lookup("US").unwrap()[0].tag, "NNP");
-        assert_eq!(tagger.lookup("us").unwrap()[0].tag, "PRP");
-        assert!(tagger.lookup("bad").is_none(), "empty-tag row dropped");
+        assert_eq!(tagger.analyses("US").unwrap()[0].tag, "NNP");
+        assert_eq!(tagger.analyses("us").unwrap()[0].tag, "PRP");
+        assert!(tagger.analyses("bad").is_none(), "empty-tag row dropped");
     }
 
     #[test]

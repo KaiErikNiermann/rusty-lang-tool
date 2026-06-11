@@ -84,7 +84,7 @@ impl NativeEngine {
     #[must_use]
     pub fn pos_tags(&self, word: &str) -> Vec<String> {
         let mut tags = Vec::new();
-        if let Some(analyses) = self.tagger.lookup(word) {
+        if let Some(analyses) = self.tagger.analyses(word) {
             for wd in analyses {
                 push_tag(&mut tags, &wd.tag);
             }
