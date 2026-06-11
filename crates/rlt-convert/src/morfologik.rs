@@ -25,6 +25,10 @@ pub struct DictMeta {
     /// Russian's KOI8-R, decoded via `encoding_rs`. The separator/encoder operate on the raw encoded
     /// bytes; only the final inflected/base/tag fields are decoded to UTF-8.
     pub encoding: Option<&'static encoding_rs::Encoding>,
+    /// `fsa.dict.frequency-included` — when true, every entry's tag field has a single trailing
+    /// frequency byte (a printable code, e.g. `'K'`) appended after the real tag; it must be dropped
+    /// so tags match the grammar (French/Spanish ship this; en/de/ru/ar/it do not).
+    pub frequency_included: bool,
 }
 
 /// The lemma-encoding scheme. LanguageTool's English POS dict uses `SUFFIX`; the others are here for
@@ -46,6 +50,7 @@ pub fn parse_info(info: &str) -> Result<DictMeta> {
     let mut separator = None;
     let mut encoder = None;
     let mut encoding = None;
+    let mut frequency_included = false;
     for line in info.lines() {
         let line = line.split('#').next().unwrap_or("").trim();
         let Some((key, value)) = line.split_once('=') else {
@@ -75,6 +80,9 @@ pub fn parse_info(info: &str) -> Result<DictMeta> {
                     );
                 }
             }
+            "fsa.dict.frequency-included" => {
+                frequency_included = value.trim().eq_ignore_ascii_case("true");
+            }
             _ => {}
         }
     }
@@ -82,6 +90,7 @@ pub fn parse_info(info: &str) -> Result<DictMeta> {
         separator: separator.unwrap_or(b'+'),
         encoder: encoder.unwrap_or(Encoder::Suffix),
         encoding,
+        frequency_included,
     })
 }
 
@@ -165,7 +174,12 @@ fn decode_entry(entry: &[u8], meta: &DictMeta) -> Option<(String, String, String
     let rest = &entry[i1 + 1..];
     let i2 = rest.iter().position(|&b| b == sep)?;
     let encoded_base = &rest[..i2];
-    let tag = &rest[i2 + 1..];
+    let mut tag = &rest[i2 + 1..];
+    // Drop the trailing frequency byte (a single appended printable code) so the tag matches the
+    // grammar's postags, e.g. `N m pK` → `N m p`. No-op for dicts without `frequency-included`.
+    if meta.frequency_included && !tag.is_empty() {
+        tag = &tag[..tag.len() - 1];
+    }
 
     let base = match meta.encoder {
         Encoder::None => encoded_base.to_vec(),
@@ -658,12 +672,13 @@ mod tests {
         for (inflected, lemma, tag) in &triples {
             by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
         }
-        // «chats» (cats) is a SUFFIX diff from lemma «chat», masculine-plural noun `N m p`.
+        // «chats» (cats) → lemma «chat», masculine-plural noun. The tag is exactly `N m p` — the
+        // trailing `frequency-included` byte (`N m pK` in the raw dict) is stripped by the reader.
         assert!(
             by_word
                 .get("chats")
-                .is_some_and(|v| v.iter().any(|(l, t)| l == "chat" && t.starts_with("N m p"))),
-            "chats→chat/N m p: {:?}",
+                .is_some_and(|v| v.iter().any(|(l, t)| l == "chat" && t == "N m p")),
+            "chats→chat/N m p (freq byte stripped): {:?}",
             by_word.get("chats"),
         );
         // An accented common noun «canapé» (couch) must read back cleanly as a masculine noun.
@@ -776,7 +791,12 @@ mod tests {
         let bad = b"\\fsa\x07\x00\x00\x00rest";
         let err = read_triples(
             bad,
-            &DictMeta { separator: b'+', encoder: Encoder::Suffix, encoding: None },
+            &DictMeta {
+                separator: b'+',
+                encoder: Encoder::Suffix,
+                encoding: None,
+                frequency_included: false,
+            },
         )
         .expect_err("unknown FSA version must be rejected");
         assert!(err.to_string().contains("unsupported FSA version"), "actionable error: {err}");

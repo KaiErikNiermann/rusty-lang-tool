@@ -172,7 +172,7 @@ fn ar_native_reproduces_examples() {
 
 /// French — Romance, Maven-shipped CFSA2/UTF-8 dict with precomposed Latin accents (é/à/ç/ù) and
 /// ligatures (œ/æ) under `Normalization::None`. Floors just below the first measured values
-/// (37.0% / 8.2% FP); the higher FP reflects un-modelled French elision/clitics (`l'`, `j'`).
+/// (42.9% / 8.8% FP); the higher FP reflects un-modelled French elision/clitics (`l'`, `j'`).
 #[test]
 #[ignore = "slow, needs the fr artifacts; build via `cargo xtask build-lang --lang fr`"]
 fn fr_native_reproduces_examples() {
@@ -208,13 +208,13 @@ fn fr_native_reproduces_examples() {
         report.negative_total,
         report.false_positive_pct,
     );
-    assert!(report.reproduced >= 2600, "fr reproduction regressed: {}", report.reproduced);
-    assert!(report.false_positives <= 610, "fr false positives regressed: {}", report.false_positives);
+    assert!(report.reproduced >= 3000, "fr reproduction regressed: {}", report.reproduced);
+    assert!(report.false_positives <= 660, "fr false positives regressed: {}", report.false_positives);
 }
 
 /// Spanish — Romance, Maven-shipped (Softcatalà) POS dict, EAGLES/Freeling tagset, precomposed accents
 /// `áéíóúüñ` under `Normalization::None`, plus the shared external `entities.ent` parameter-entity DTD
-/// the Romance grammars use. Floors just below the first measured values (41.1% / 8.8% FP).
+/// the Romance grammars use. Floors just below the first measured values (46.3% / 7.3% FP).
 #[test]
 #[ignore = "slow, needs the es artifacts; build via `cargo xtask build-lang --lang es`"]
 fn es_native_reproduces_examples() {
@@ -250,8 +250,8 @@ fn es_native_reproduces_examples() {
         report.negative_total,
         report.false_positive_pct,
     );
-    assert!(report.reproduced >= 1150, "es reproduction regressed: {}", report.reproduced);
-    assert!(report.false_positives <= 340, "es false positives regressed: {}", report.false_positives);
+    assert!(report.reproduced >= 1300, "es reproduction regressed: {}", report.reproduced);
+    assert!(report.false_positives <= 280, "es false positives regressed: {}", report.false_positives);
 }
 
 /// Italian — the first FSA5-format language (`italian.dict` is morfologik FSA5 + ISO-8859-15, read by
