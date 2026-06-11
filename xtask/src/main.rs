@@ -127,9 +127,13 @@ enum Task {
     FetchNgrams,
     /// Build the L3 confusion model from LT's confusion sets + the n-gram subsets.
     BuildConfusion {
-        /// Language ISO code (`en` uses Norvig via `rlt convert`; others use a Leipzig corpus).
+        /// Language ISO code (`en` uses Norvig via `rlt convert`; others use an n-gram `--source`).
         #[arg(long, default_value = "en")]
         lang: String,
+        /// Non-English n-gram source: `lt-ngrams` (LanguageTool's tuned Lucene data via the JVM
+        /// extractor — best recall) or `leipzig` (pure-Rust corpus count — no JVM).
+        #[arg(long, default_value = "lt-ngrams")]
+        source: String,
     },
     /// Package the WASM surface with wasm-pack (Node target).
     BuildWasm,
@@ -187,10 +191,10 @@ fn main() -> Result<()> {
         }
         Task::Bench => run("cargo", &["bench", "-p", "rlt-native", "--bench", "engine"]),
         Task::FetchNgrams => fetch_ngrams(),
-        Task::BuildConfusion { lang } if lang == "en" => {
+        Task::BuildConfusion { lang, .. } if lang == "en" => {
             run("cargo", &["run", "-p", "rlt-cli", "--", "build-confusion"])
         }
-        Task::BuildConfusion { lang } => build_confusion_de(lang_cfg(&lang)?),
+        Task::BuildConfusion { lang, source } => build_confusion_de(lang_cfg(&lang)?, &source),
         Task::BuildWasm => build_wasm(),
         Task::RunOracle => run(
             "cargo",
@@ -887,15 +891,94 @@ fn lang_cfg(code: &str) -> Result<&'static rlt_lang::LangConfig> {
 const LEIPZIG_DE_URL: &str =
     "https://downloads.wortschatz-leipzig.de/corpora/deu_news_2021_1M.tar.gz";
 
-/// Build the L3 confusion model for a non-English language from a Leipzig corpus: fetch + extract the
-/// tagged sentences, count unigrams + (confusion-touching) bigrams in pure Rust, then reuse
-/// `build_confusion_model` with the native engine's POS tags. (English uses Norvig via `rlt convert`.)
-fn build_confusion_de(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+/// LanguageTool's own German n-gram dataset (a Java Lucene index). The tuned source — extracted to TSV
+/// via `tools/NgramDump.java`; gives far better recall than Leipzig (more coverage + the confusion
+/// `factor` thresholds were calibrated against it). 1.6 GB; build-time only.
+const LT_NGRAM_DE_URL: &str = "https://languagetool.org/download/ngram-data/ngrams-de-20150819.zip";
+
+/// Build the German L3 confusion model. `source` selects the n-gram frequency data: `lt-ngrams`
+/// (LanguageTool's own tuned Lucene data, via the JVM extractor — best recall) or `leipzig` (a
+/// pure-Rust corpus count — no JVM, lower recall). Falls back to Leipzig if `lt-ngrams` is unavailable.
+fn build_confusion_de(cfg: &'static rlt_lang::LangConfig, source: &str) -> Result<()> {
+    if source == "lt-ngrams" {
+        match build_confusion_de_lt_ngrams(cfg) {
+            Ok(()) => return Ok(()),
+            Err(e) => println!("lt-ngrams source unavailable ({e}) — falling back to Leipzig"),
+        }
+    }
+    build_confusion_de_leipzig(cfg)
+}
+
+/// Build the model from already-counted Norvig-format TSVs, using the native engine's POS tags.
+fn build_confusion_from_counts(
+    cfg: &'static rlt_lang::LangConfig,
+    count_1w: &str,
+    count_2w: &str,
+) -> Result<()> {
+    let confusion_sets = format!("{}/confusion_sets.txt", cfg.lt_resource_dir());
+    let engine = rlt_native::NativeEngine::from_paths(
+        cfg,
+        Path::new(cfg.segment_srx_path()),
+        &std::path::PathBuf::from(cfg.tagger_path()),
+        None,
+    )
+    .map_err(|e| anyhow::anyhow!("loading {} native engine: {e}", cfg.code))?;
+    let out = cfg.confusion_path();
+    let report = rlt_convert::build_confusion_model(
+        Path::new(&confusion_sets),
+        Path::new(count_1w),
+        Path::new(count_2w),
+        Path::new(&out),
+        |w| engine.pos_tags(w),
+    )?;
+    println!("wrote {out}: {} pairs, {} bigrams", report.pairs, report.bigrams);
+    Ok(())
+}
+
+/// L3 source: LanguageTool's own (Lucene) German n-grams, dumped to TSV by the JVM extractor.
+fn build_confusion_de_lt_ngrams(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+    if Command::new("java").arg("-version").output().is_err() {
+        bail!("no JDK on PATH (needed to read LT's Lucene n-grams)");
+    }
+    let dir = format!("{}/ngrams", cfg.resource_dir());
+    std::fs::create_dir_all(&dir)?;
+
+    // 1. Fetch + extract LT's 1-gram and 2-gram Lucene indexes (resumable; ~1.6 GB).
+    let index_dir = format!("{dir}/lt-index");
+    if !Path::new(&format!("{index_dir}/{lt}/2grams", lt = cfg.lt_module)).exists() {
+        let zip = format!("{dir}/lt-ngrams.zip");
+        fetch_if_absent(&zip, LT_NGRAM_DE_URL)?;
+        let one = format!("{}/1grams/*", cfg.lt_module);
+        let two = format!("{}/2grams/*", cfg.lt_module);
+        run("unzip", &["-o", "-q", &zip, &one, &two, "-d", &index_dir])?;
+    }
+
+    // 2. Compile the extractor (if needed), fetching the Lucene 6.x jars (read the 2015 5.0 index).
+    if !Path::new("tools/out/NgramDump.class").exists() {
+        std::fs::create_dir_all("tools/lib")?;
+        for jar in ["lucene-core", "lucene-backward-codecs"] {
+            fetch_if_absent(
+                &format!("tools/lib/{jar}-6.6.6.jar"),
+                &format!("https://repo1.maven.org/maven2/org/apache/lucene/{jar}/6.6.6/{jar}-6.6.6.jar"),
+            )?;
+        }
+        std::fs::create_dir_all("tools/out")?;
+        run("javac", &["-cp", "tools/lib/*", "-d", "tools/out", "tools/NgramDump.java"])?;
+    }
+    let count_1w = format!("{dir}/count_1w.txt");
+    let count_2w = format!("{dir}/count_2w.txt");
+    let cp = "tools/lib/*:tools/out";
+    run("java", &["-cp", cp, "NgramDump", &format!("{index_dir}/{}/1grams", cfg.lt_module), &count_1w])?;
+    run("java", &["-cp", cp, "NgramDump", &format!("{index_dir}/{}/2grams", cfg.lt_module), &count_2w])?;
+
+    build_confusion_from_counts(cfg, &count_1w, &count_2w)
+}
+
+/// L3 source: a Leipzig corpus counted in pure Rust (no JVM). Lower recall than LT's tuned n-grams.
+fn build_confusion_de_leipzig(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
     let dir = format!("{}/ngrams", cfg.resource_dir());
     std::fs::create_dir_all(&dir)?;
     let sentences = format!("{dir}/sentences.txt");
-
-    // 1. Fetch + extract the Leipzig tagged sentences (resumable).
     if !Path::new(&sentences).exists() {
         let tar = format!("{dir}/leipzig.tar.gz");
         fetch_if_absent(&tar, LEIPZIG_DE_URL)?;
@@ -907,32 +990,11 @@ fn build_confusion_de(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
             .context("Leipzig tar had no *-sentences_tagged.txt")?;
         std::fs::rename(extracted, &sentences)?;
     }
-
-    // 2. Count unigrams + (confusion-touching) bigrams into Norvig-format TSVs.
-    let confusion_sets = format!("{}/confusion_sets.txt", cfg.lt_resource_dir());
-    let words = confusion_words(&confusion_sets)?;
+    let words = confusion_words(&format!("{}/confusion_sets.txt", cfg.lt_resource_dir()))?;
     let count_1w = format!("{dir}/count_1w.txt");
     let count_2w = format!("{dir}/count_2w.txt");
     count_corpus(&sentences, &words, &count_1w, &count_2w)?;
-
-    // 3. Build the model with the native engine's POS tags (POS-context aggregation).
-    let engine = rlt_native::NativeEngine::from_paths(
-        cfg,
-        Path::new(cfg.segment_srx_path()),
-        &std::path::PathBuf::from(cfg.tagger_path()),
-        None,
-    )
-    .map_err(|e| anyhow::anyhow!("loading {} native engine: {e}", cfg.code))?;
-    let out = cfg.confusion_path();
-    let report = rlt_convert::build_confusion_model(
-        Path::new(&confusion_sets),
-        Path::new(&count_1w),
-        Path::new(&count_2w),
-        Path::new(&out),
-        |w| engine.pos_tags(w),
-    )?;
-    println!("wrote {out}: {} pairs, {} bigrams", report.pairs, report.bigrams);
-    Ok(())
+    build_confusion_from_counts(cfg, &count_1w, &count_2w)
 }
 
 /// The lower-cased word set of a `confusion_sets.txt` (the prune set for n-gram counting).

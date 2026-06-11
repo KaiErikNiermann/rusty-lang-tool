@@ -49,3 +49,7 @@ node_modules/
 # *.dict is globbed above; the .info / jar are not:
 /resources/*/pos.info
 /resources/*/pos-dict.jar
+
+# Java extractor build deps (NgramDump.java source IS committed)
+/tools/lib/
+/tools/out/

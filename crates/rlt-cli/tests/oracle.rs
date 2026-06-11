@@ -274,9 +274,10 @@ fn l3_confusion_precision_recall() {
 }
 
 /// German L3 quality via the same synthetic-perturbation harness, over the **native** German engine
-/// (real LT POS dict + STTS tagset) and a Leipzig-corpus confusion model. German confusion data is
-/// thinner (71 pairs, a 100K-sentence corpus) than English's, so the floors are correspondingly lower —
-/// this gates that L3 *functions* for the second language, not that it matches English's recall.
+/// (real LT POS dict + STTS tagset) and a confusion model built from **LanguageTool's own German
+/// n-grams** (extracted from their Lucene index by `tools/NgramDump.java`). Measured: 1774/2925 = 60.6%
+/// recall, 43 false positives — close to English's 82.6% (a Leipzig-corpus fallback gives only ~1.9%,
+/// so LT's tuned data is the difference).
 #[test]
 #[ignore = "needs the de confusion model; build via `cargo xtask build-confusion --lang de`"]
 fn de_l3_confusion_precision_recall() {
@@ -339,12 +340,10 @@ fn de_l3_confusion_precision_recall() {
         "ORACLE [de l3]: recall {tp}/{total} over {} sentences / {perturbations} perturbations; {fp} false positives",
         sentences.len(),
     );
-    // Measured with the Leipzig 1M corpus: 55/2925 recovered, 0 false positives. Recall is far below
-    // English's 82.6% because the corpus (~20M words) is tiny next to Norvig's (trillion), so most
-    // grammar-example bigrams are absent — full parity needs LT's own (Lucene) German n-grams. The
-    // zero-FP precision is the important property for shipping; the floors guard both.
-    assert!(tp >= 30, "de L3 recall regressed: recovered {tp}; expected >= 30");
-    assert!(fp <= 50, "de L3 false positives regressed: {fp}; expected <= 50");
+    // Measured with LanguageTool's own German n-grams (via tools/NgramDump.java): 1774/2925 = 60.6%
+    // recovered, 43 false positives. Floors guard both (a Leipzig fallback drops recall to ~1.9%).
+    assert!(tp >= 1500, "de L3 recall regressed: recovered {tp}; expected >= 1500");
+    assert!(fp <= 120, "de L3 false positives regressed: {fp}; expected <= 120");
 }
 
 /// L4 quality smoke/regression: a curated set of grammatical errors the neural tagger should fix,
