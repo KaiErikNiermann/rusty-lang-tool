@@ -18,6 +18,8 @@
 mod disambig;
 mod matcher;
 mod spell;
+#[doc(hidden)]
+pub use spell::fuzz_edits1;
 
 pub use disambig::ConfusionChecker;
 pub use matcher::{Disambiguator, IrMatcher};

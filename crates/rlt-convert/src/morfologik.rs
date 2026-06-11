@@ -375,6 +375,60 @@ mod tests {
     }
 
     #[test]
+    fn reads_real_languagetool_russian_dict() {
+        // Russian's russian.dict ships in the LT repo and is KOI8-R encoded (not UTF-8) — this proves
+        // the `fsa.dict.encoding` path decodes Cyrillic correctly (every triple would be dropped if we
+        // treated the bytes as UTF-8), and that SUFFIX trimming works in that single-byte encoding.
+        let base = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../resources/lt/_repo/languagetool-language-modules/ru/src/main/resources/org/languagetool/resource/ru"
+        ));
+        let (Ok(dict), Ok(info)) = (
+            std::fs::read(base.join("russian.dict")),
+            std::fs::read_to_string(base.join("russian.info")),
+        ) else {
+            eprintln!("skip: russian.dict not present (run `cargo xtask fetch-lt`)");
+            return;
+        };
+        let meta = parse_info(&info).expect("parse .info");
+        assert_eq!(meta.separator, b'+');
+        assert_eq!(meta.encoder, Encoder::Suffix);
+        assert_eq!(
+            meta.encoding.map(encoding_rs::Encoding::name),
+            Some("KOI8-R"),
+            "russian.info declares fsa.dict.encoding=koi8-r",
+        );
+
+        let triples = read_triples(&dict, &meta).expect("read dict");
+        eprintln!("russian.dict: {} triples", triples.len());
+        assert!(triples.len() > 1_000_000, "Russian morphology is rich; got {}", triples.len());
+
+        // Every decoded string must be valid UTF-8 Cyrillic (no KOI8-R bytes leaked through, no
+        // replacement chars from a mis-decode).
+        assert!(
+            triples
+                .iter()
+                .take(10_000)
+                .all(|(i, l, _)| !i.contains('\u{fffd}') && !l.contains('\u{fffd}')),
+            "decoded forms must be clean UTF-8",
+        );
+
+        let mut by_word: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+        for (inflected, lemma, tag) in &triples {
+            by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
+        }
+        // Lemma + tag-prefix spot-checks (exact morphology strings aren't pinned): «книги» (a non-Nom
+        // form of «книга», book) is a SUFFIX diff that must reconstruct the base; «читаю» → «читать».
+        let lemma_with_tag = |w: &str, lemma: &str, tag_prefix: &str| {
+            by_word
+                .get(w)
+                .is_some_and(|v| v.iter().any(|(l, t)| l == lemma && t.starts_with(tag_prefix)))
+        };
+        assert!(lemma_with_tag("книги", "книга", "NN"), "книги→книга/NN: {:?}", by_word.get("книги"));
+        assert!(lemma_with_tag("читаю", "читать", "VB"), "читаю→читать/VB: {:?}", by_word.get("читаю"));
+    }
+
+    #[test]
     fn rejects_fsa5_with_clean_error() {
         // FSA5 (`\fsa\x05`) is a different format we don't yet read — the guard must error cleanly,
         // never panic, so a language that ships FSA5 fails with an actionable message (future branch).

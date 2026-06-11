@@ -59,6 +59,16 @@ fn is_checkable(word: &str, alphabet: &[char]) -> bool {
     len >= MIN_LEN
 }
 
+/// Fuzz/test hook: the count of edit-distance-1 candidates for `word` over `alphabet`. Exercises the
+/// char-based [`edits1`] — the historical panic surface (byte edits on multibyte input) — without
+/// exposing internals. Hidden from the public API.
+#[doc(hidden)]
+#[must_use]
+pub fn fuzz_edits1(word: &str, alphabet: &str) -> usize {
+    let alphabet: Vec<char> = alphabet.chars().collect();
+    edits1(&word.to_lowercase(), &alphabet).len()
+}
+
 /// Edit-distance-1 corrections that the engine recognizes, re-cased to match `word`, ranked.
 fn suggestions<E: Engine>(engine: &E, word: &str, alphabet: &[char]) -> Vec<Suggestion> {
     let lower = word.to_lowercase();

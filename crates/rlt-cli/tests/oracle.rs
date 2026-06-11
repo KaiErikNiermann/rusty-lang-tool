@@ -83,6 +83,49 @@ fn de_native_reproduces_examples() {
     assert!(report.false_positives <= 600, "de false positives regressed: {}", report.false_positives);
 }
 
+/// Russian — the first far-from-Latin language end-to-end. Proves the infra generalizes to Cyrillic
+/// (a KOI8-R-encoded dict, a non-Penn tagset, multibyte tokens). Floors are set just below the first
+/// measured values (48.5% reproduction / 3.9% FP); lower reproduction than en/de is expected for v1
+/// (a larger opaque set + still-rough structural tags), but the false-positive rate stays low.
+#[test]
+#[ignore = "slow, needs the ru artifacts; build via `cargo xtask build-lang --lang ru`"]
+fn ru_native_reproduces_examples() {
+    let cfg = rlt_lang::config("ru").expect("ru config");
+    let srx = root(cfg.segment_srx_path());
+    let tagger = root(&cfg.tagger_path());
+    let disambig = root(&cfg.disambig_path());
+    let blob = root(&cfg.grammar_blob_path());
+    let grammar = root(&cfg.grammar_xml_path());
+    if missing(&[
+        ("segment.srx", &srx),
+        ("ru tagger", &tagger),
+        ("ru grammar blob", &blob),
+        ("ru grammar.xml", &grammar),
+    ]) {
+        return;
+    }
+    let report = rlt_cli::oracle_score::score_ir_native(
+        cfg,
+        &srx,
+        &tagger,
+        disambig.exists().then_some(disambig.as_path()),
+        &blob,
+        &grammar,
+    )
+    .expect("score the Russian native oracle");
+    eprintln!(
+        "ru native oracle: reproduced {}/{} ({:.1}%); false positives {}/{} ({:.1}%)",
+        report.reproduced,
+        report.positive_total,
+        report.reproduced_pct,
+        report.false_positives,
+        report.negative_total,
+        report.false_positive_pct,
+    );
+    assert!(report.reproduced >= 450, "ru reproduction regressed: {}", report.reproduced);
+    assert!(report.false_positives <= 120, "ru false positives regressed: {}", report.false_positives);
+}
+
 #[test]
 #[ignore = "slow (~45s) and needs fetched data; run via `cargo xtask run-oracle`"]
 fn nlprule_baseline_reproduces_examples() {

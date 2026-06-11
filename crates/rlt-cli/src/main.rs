@@ -87,6 +87,9 @@ enum Command {
     Tokens {
         /// The sentence to analyze.
         text: String,
+        /// Language (ISO code, e.g. `en`, `de`, `ru`) — selects the native engine + artifacts.
+        #[arg(long, default_value = "en")]
+        lang: String,
     },
     /// Score the IR matcher against LT's `<example>` corpus and print the numbers (no asserts).
     /// `--json` feeds the adaptability sweep; works on any LT version's grammar/blob.
@@ -175,7 +178,7 @@ fn main() -> Result<()> {
             );
             Ok(())
         }
-        Command::Tokens { text } => run_tokens(&text),
+        Command::Tokens { text, lang } => run_tokens(&text, resolve_lang(&lang)?),
         Command::ScoreOracle {
             lang,
             engine,
@@ -324,10 +327,8 @@ fn check_with_layers<B: Engine + GrammarChecker>(
 }
 
 /// Load the engine and print the tokenize + POS-tag analysis of `text`.
-fn run_tokens(text: &str) -> Result<()> {
-    let bin = rlt_engine::DEFAULT_TOKENIZER_BIN;
-    let engine = VendoredEngine::from_path(std::path::Path::new(bin))
-        .with_context(|| format!("loading engine from {bin} (run `cargo xtask fetch-engine`?)"))?;
+fn run_tokens(text: &str, cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+    let engine = load_native_engine(cfg)?;
     for token in rlt_core::Engine::analyze(&engine, text).tokens {
         println!(
             "{:>3}..{:<3} {:<14} [{}]",

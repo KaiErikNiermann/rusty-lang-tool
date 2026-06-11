@@ -83,6 +83,20 @@ doc = false
 bench = false
 
 [[bin]]
+name = "engine_analyze_ru"
+path = "fuzz_targets/engine_analyze_ru.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "spell_edits1"
+path = "fuzz_targets/spell_edits1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "disambig_apply"
 path = "fuzz_targets/disambig_apply.rs"
 test = false
