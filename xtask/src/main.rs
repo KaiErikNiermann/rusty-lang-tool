@@ -991,12 +991,29 @@ fn lang_inspect(
         bail!("{resource} not found — add {m:?} to SPARSE_PATHS and run `cargo xtask fetch-lt`");
     }
 
-    // Locate the POS dict: an explicit override, else the repo `.dict` that has a sibling `.info`,
-    // preferring the non-synthesis dictionary (`*_synth.dict` is the generator, not the analyzer).
+    // Locate the POS dict: an explicit override; else the repo `.dict` (preferring the analyzer over
+    // a `*_synth.dict` generator); else — if a `LangConfig` already names a Maven dict for this code —
+    // auto-fetch it (so authoring the Maven coords is enough, no manual `build-tagger` round-trip).
     let (dict_path, info_path) = match (dict, info) {
         (Some(d), Some(i)) => (d.to_owned(), i.to_owned()),
-        _ => find_repo_dict(&resource)
-            .with_context(|| format!("no *.dict + *.info pair under {resource}"))?,
+        _ => match find_repo_dict(&resource) {
+            Ok(pair) => pair,
+            Err(repo_err) => {
+                let Ok(cfg) = lang_cfg(code) else {
+                    return Err(repo_err.context(format!(
+                        "no repo .dict under {resource} and no LangConfig for {code:?} — pass --dict/--info"
+                    )));
+                };
+                if !matches!(cfg.pos_dict, rlt_lang::PosDict::Maven { .. }) {
+                    return Err(repo_err.context(format!("no repo .dict under {resource}")));
+                }
+                if !Path::new(&cfg.pos_dict_local()).exists() {
+                    println!("  fetching Maven POS dict for {code}…");
+                    fetch_pos_dict(cfg)?;
+                }
+                (cfg.pos_dict_local(), cfg.pos_info_local())
+            }
+        },
     };
     println!("lang-inspect {code} (module={m})");
     println!("  dict: {dict_path}");

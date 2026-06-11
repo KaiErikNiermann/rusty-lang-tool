@@ -11,9 +11,10 @@ The pipeline is per-language data behind one seam (`crates/rlt-lang/src/lib.rs` 
 
 During every language addition, when the new script breaks an `is_ascii_*` / `is_alphanumeric` / `is_ascii_digit`-shaped assumption, prefer a **category-based, library-backed (`unicode-properties`), provably-en/de/ru/ar-non-regressing** generalization over a per-language special-case — and add a unit test proving the byte-identical gate for the existing languages. Already generalized this way:
 - per-language **alphabet** (`SpellConfig.alphabet`; ru Cyrillic, ar Arabic base letters);
-- dict **encoding** (`fsa.dict.encoding` via `encoding_rs`; ru KOI8-R) and **repo-vs-Maven** dict source (`PosDict::{Maven,Repo}`);
+- dict **encoding** (`fsa.dict.encoding` via `encoding_rs`; ru KOI8-R, it ISO-8859-15) and **FSA format** (CFSA2 `0xc6` + FSA5 `0x05`, dispatched in the morfologik reader; it FSA5) and **repo-vs-Maven** dict source (`PosDict::{Maven,Repo}`);
 - combining-mark **word-internality + lookup normalization** (`is_word_char` Mn clause + `Normalization::StripCombiningMarks`; ar tashkeel);
-- **Unicode-Nd digits** (`is_decimal_digit`; ar Arabic-Indic).
+- **Unicode-Nd digits** (`is_decimal_digit`; ar Arabic-Indic);
+- morfologik **`frequency-included`** tag-byte stripping (fr/es) and **apostrophe elision** (`LangConfig.elision`; fr/it `l'`/`dell'`).
 
 If the new language needs none of these, it is pure data. If it needs a NEW one, generalize at the right altitude and record it here.
 
@@ -21,7 +22,7 @@ If the new language needs none of these, it is pure data. If it needs a NEW one,
 
 1. **Sparse path + fetch.** Add `languagetool-language-modules/<m>/src/main/resources/org/languagetool` to `SPARSE_PATHS` (`xtask/src/main.rs`); run `cargo xtask fetch-lt`. **Gate:** the `resources/lt/_repo/.../<m>/` tree exists.
 
-2. **Inspect (the accelerator).** Run `cargo xtask lang-inspect --code <code>` (works before a config exists). It prints: FSA version byte (**must be `0xc6` CFSA2** — `0x05` FSA5 is unsupported, stop), `.info` separator/encoder/encoding, triple/tag counts, sample entries, the **vocalized verdict** (→ whether `Normalization::StripCombiningMarks` is needed), the **spell alphabet** (distinct base letters), grammar/disambig **candidate postags**, and the **confusion-pair count**. **Gate:** capture all of these — they fill the config and decide L3.
+2. **Inspect (the accelerator).** Run `cargo xtask lang-inspect --code <code>` (works before a config exists; for a Maven dict it auto-fetches once the config names the coords, else pass `--dict`/`--info`). It prints: FSA version byte (`0xc6` CFSA2 or `0x05` FSA5 — both supported; anything else stops), `.info` separator/encoder/encoding, triple/tag counts, sample entries, the **vocalized verdict** (→ whether `Normalization::StripCombiningMarks` is needed), the **spell alphabet** (distinct base letters), grammar/disambig **candidate postags**, and the **confusion-pair count**. **Gate:** capture all of these — they fill the config and decide L3.
 
 3. **Author the `LangConfig`.** Add a `static XX` const + a `config()` arm in `crates/rlt-lang/src/lib.rs`. Fields from inspect:
    - `pos_dict`: `PosDict::Repo { dict_file, info_file }` if the dict ships in the repo (ru/ar), else `PosDict::Maven {…}` (en/de — verify the artifact/version).
