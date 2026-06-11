@@ -273,7 +273,7 @@ pub static DE: LangConfig = LangConfig {
     sources: Sources {
         uses_agid: false,
         closed_class: None,
-        confusion: false,
+        confusion: true,
         neural_l4: false,
     },
     compounds: Some(Compounding {

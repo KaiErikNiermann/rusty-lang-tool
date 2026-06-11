@@ -126,7 +126,11 @@ enum Task {
     /// Download Norvig's n-gram subsets for the L3 confusion model (resumable).
     FetchNgrams,
     /// Build the L3 confusion model from LT's confusion sets + the n-gram subsets.
-    BuildConfusion,
+    BuildConfusion {
+        /// Language ISO code (`en` uses Norvig via `rlt convert`; others use a Leipzig corpus).
+        #[arg(long, default_value = "en")]
+        lang: String,
+    },
     /// Package the WASM surface with wasm-pack (Node target).
     BuildWasm,
     /// Run the differential `<example>` oracle test suite.
@@ -183,7 +187,10 @@ fn main() -> Result<()> {
         }
         Task::Bench => run("cargo", &["bench", "-p", "rlt-native", "--bench", "engine"]),
         Task::FetchNgrams => fetch_ngrams(),
-        Task::BuildConfusion => run("cargo", &["run", "-p", "rlt-cli", "--", "build-confusion"]),
+        Task::BuildConfusion { lang } if lang == "en" => {
+            run("cargo", &["run", "-p", "rlt-cli", "--", "build-confusion"])
+        }
+        Task::BuildConfusion { lang } => build_confusion_de(lang_cfg(&lang)?),
         Task::BuildWasm => build_wasm(),
         Task::RunOracle => run(
             "cargo",
@@ -872,6 +879,129 @@ fn build_disambig(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
 /// Resolve an ISO language code to its static config.
 fn lang_cfg(code: &str) -> Result<&'static rlt_lang::LangConfig> {
     rlt_lang::config(code).ok_or_else(|| anyhow::anyhow!("unknown language {code:?} (known: en, de)"))
+}
+
+/// Leipzig Corpora Collection — a clean, fetchable German news corpus (tagged sentences) used as the
+/// L3 n-gram source. LanguageTool's own German n-grams are a Java Lucene index (no Rust reader), and
+/// our English L3 already uses a non-LT corpus (Norvig), so a non-LT German corpus is consistent.
+const LEIPZIG_DE_URL: &str =
+    "https://downloads.wortschatz-leipzig.de/corpora/deu_news_2021_1M.tar.gz";
+
+/// Build the L3 confusion model for a non-English language from a Leipzig corpus: fetch + extract the
+/// tagged sentences, count unigrams + (confusion-touching) bigrams in pure Rust, then reuse
+/// `build_confusion_model` with the native engine's POS tags. (English uses Norvig via `rlt convert`.)
+fn build_confusion_de(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+    let dir = format!("{}/ngrams", cfg.resource_dir());
+    std::fs::create_dir_all(&dir)?;
+    let sentences = format!("{dir}/sentences.txt");
+
+    // 1. Fetch + extract the Leipzig tagged sentences (resumable).
+    if !Path::new(&sentences).exists() {
+        let tar = format!("{dir}/leipzig.tar.gz");
+        fetch_if_absent(&tar, LEIPZIG_DE_URL)?;
+        run("tar", &["xzf", &tar, "-C", &dir, "--strip-components=1", "--wildcards", "*-sentences_tagged.txt"])?;
+        let extracted = std::fs::read_dir(&dir)?
+            .filter_map(std::result::Result::ok)
+            .map(|e| e.path())
+            .find(|p| p.to_string_lossy().contains("sentences_tagged"))
+            .context("Leipzig tar had no *-sentences_tagged.txt")?;
+        std::fs::rename(extracted, &sentences)?;
+    }
+
+    // 2. Count unigrams + (confusion-touching) bigrams into Norvig-format TSVs.
+    let confusion_sets = format!("{}/confusion_sets.txt", cfg.lt_resource_dir());
+    let words = confusion_words(&confusion_sets)?;
+    let count_1w = format!("{dir}/count_1w.txt");
+    let count_2w = format!("{dir}/count_2w.txt");
+    count_corpus(&sentences, &words, &count_1w, &count_2w)?;
+
+    // 3. Build the model with the native engine's POS tags (POS-context aggregation).
+    let engine = rlt_native::NativeEngine::from_paths(
+        cfg,
+        Path::new(cfg.segment_srx_path()),
+        &std::path::PathBuf::from(cfg.tagger_path()),
+        None,
+    )
+    .map_err(|e| anyhow::anyhow!("loading {} native engine: {e}", cfg.code))?;
+    let out = cfg.confusion_path();
+    let report = rlt_convert::build_confusion_model(
+        Path::new(&confusion_sets),
+        Path::new(&count_1w),
+        Path::new(&count_2w),
+        Path::new(&out),
+        |w| engine.pos_tags(w),
+    )?;
+    println!("wrote {out}: {} pairs, {} bigrams", report.pairs, report.bigrams);
+    Ok(())
+}
+
+/// The lower-cased word set of a `confusion_sets.txt` (the prune set for n-gram counting).
+fn confusion_words(confusion_sets: &str) -> Result<std::collections::HashSet<String>> {
+    let text = std::fs::read_to_string(confusion_sets)
+        .with_context(|| format!("reading {confusion_sets}"))?;
+    let mut words = std::collections::HashSet::new();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        // Format: `a -> b; factor` or `a; b; factor` — collect the word tokens before the `;`.
+        let head = line.split(';').next().unwrap_or("");
+        for w in head.split("->").flat_map(|s| s.split_whitespace()) {
+            words.insert(w.trim().to_lowercase());
+        }
+    }
+    Ok(words)
+}
+
+/// Stream Leipzig tagged sentences (`id⇥word|POS word|POS …`), counting unigrams (all) + bigrams that
+/// touch a confusion word, writing Norvig-format TSVs (`word⇥count`, `w1 w2⇥count`).
+fn count_corpus(
+    sentences: &str,
+    confusion_words: &std::collections::HashSet<String>,
+    out_1w: &str,
+    out_2w: &str,
+) -> Result<()> {
+    use std::collections::HashMap;
+    use std::io::{BufRead, BufReader, BufWriter, Write};
+
+    let reader = BufReader::new(std::fs::File::open(sentences)?);
+    let mut uni: HashMap<String, u32> = HashMap::new();
+    let mut bi: HashMap<String, u32> = HashMap::new();
+    for line in reader.lines() {
+        let line = line?;
+        let Some((_, rest)) = line.split_once('\t') else {
+            continue;
+        };
+        let mut prev: Option<String> = None;
+        for tok in rest.split(' ') {
+            let word = tok.split('|').next().unwrap_or(tok);
+            if word.is_empty() {
+                continue;
+            }
+            let w = word.to_lowercase();
+            *uni.entry(w.clone()).or_default() += 1;
+            if let Some(p) = prev.take() {
+                if confusion_words.contains(&p) || confusion_words.contains(&w) {
+                    *bi.entry(format!("{p} {w}")).or_default() += 1;
+                }
+            }
+            prev = Some(w);
+        }
+    }
+    // count_1w: prune to count ≥ 2 to bound the file (singletons add only noise).
+    let mut w1 = BufWriter::new(std::fs::File::create(out_1w)?);
+    for (w, c) in &uni {
+        if *c >= 2 {
+            writeln!(w1, "{w}\t{c}")?;
+        }
+    }
+    let mut w2 = BufWriter::new(std::fs::File::create(out_2w)?);
+    for (g, c) in &bi {
+        writeln!(w2, "{g}\t{c}")?;
+    }
+    println!("counted {} unigrams, {} confusion-touching bigrams", uni.len(), bi.len());
+    Ok(())
 }
 
 /// Download `url` to `dest` unless a non-empty file is already there (resumable).

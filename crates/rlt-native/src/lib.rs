@@ -79,6 +79,19 @@ impl NativeEngine {
         self
     }
 
+    /// The distinct POS tags the lexicon assigns to `word` (deduplicated) — used at build time to
+    /// derive the L3 confusion model's POS-context statistics. Empty for unknown words.
+    #[must_use]
+    pub fn pos_tags(&self, word: &str) -> Vec<String> {
+        let mut tags = Vec::new();
+        if let Some(analyses) = self.tagger.lookup(word) {
+            for wd in analyses {
+                push_tag(&mut tags, &wd.tag);
+            }
+        }
+        tags
+    }
+
     /// Load from in-memory bytes — the wasm path. `segment_srx` is the SRX XML; `tagger` is the rkyv
     /// tagger artifact; `cfg` selects the SRX language + the structural tagset. Disambiguation is
     /// attached via [`with_disambiguator`](Self::with_disambiguator).

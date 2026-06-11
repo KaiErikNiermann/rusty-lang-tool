@@ -273,6 +273,80 @@ fn l3_confusion_precision_recall() {
     );
 }
 
+/// German L3 quality via the same synthetic-perturbation harness, over the **native** German engine
+/// (real LT POS dict + STTS tagset) and a Leipzig-corpus confusion model. German confusion data is
+/// thinner (71 pairs, a 100K-sentence corpus) than English's, so the floors are correspondingly lower —
+/// this gates that L3 *functions* for the second language, not that it matches English's recall.
+#[test]
+#[ignore = "needs the de confusion model; build via `cargo xtask build-confusion --lang de`"]
+fn de_l3_confusion_precision_recall() {
+    let cfg = rlt_lang::config("de").expect("de config");
+    let srx = root(cfg.segment_srx_path());
+    let tagger = root(&cfg.tagger_path());
+    let model_path = root(&cfg.confusion_path());
+    let grammar = root(&cfg.grammar_xml_path());
+    if missing(&[
+        ("segment.srx", &srx),
+        ("de tagger", &tagger),
+        ("de confusion.rkyv", &model_path),
+        ("de grammar.xml", &grammar),
+    ]) {
+        return;
+    }
+    let engine =
+        rlt_native::NativeEngine::from_paths(cfg, &srx, &tagger, None).expect("load native de engine");
+    let model = rlt_ir::deserialize_confusion(&std::fs::read(&model_path).expect("read de confusion"))
+        .expect("deserialize de confusion model");
+    let checker = ConfusionChecker::new(&model);
+
+    let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
+    for p in &model.pairs {
+        reverse.entry(p.b.clone()).or_default().push(p.a.clone());
+        if p.symmetric {
+            reverse.entry(p.a.clone()).or_default().push(p.b.clone());
+        }
+    }
+
+    let sentences = correct_sentences(&grammar);
+    let (mut tp, mut fneg, mut fp, mut perturbations) = (0usize, 0usize, 0usize, 0usize);
+    for s in &sentences {
+        let analysis = engine.analyze(s);
+        fp += checker.grammar_diagnostics(s, &analysis).len();
+        for i in 0..analysis.tokens.len() {
+            let word = analysis.tokens[i].text.to_lowercase();
+            let Some(errors) = reverse.get(&word) else {
+                continue;
+            };
+            let span = analysis.tokens[i].span;
+            for err in errors {
+                perturbations += 1;
+                let mut perturbed = analysis.clone();
+                perturbed.tokens[i].text.clone_from(err);
+                let recovered = checker.grammar_diagnostics(s, &perturbed).iter().any(|d| {
+                    d.span == span
+                        && d.suggestions.iter().any(|sg| sg.replacement.eq_ignore_ascii_case(&word))
+                });
+                if recovered {
+                    tp += 1;
+                } else {
+                    fneg += 1;
+                }
+            }
+        }
+    }
+    let total = tp + fneg;
+    eprintln!(
+        "ORACLE [de l3]: recall {tp}/{total} over {} sentences / {perturbations} perturbations; {fp} false positives",
+        sentences.len(),
+    );
+    // Measured with the Leipzig 1M corpus: 55/2925 recovered, 0 false positives. Recall is far below
+    // English's 82.6% because the corpus (~20M words) is tiny next to Norvig's (trillion), so most
+    // grammar-example bigrams are absent — full parity needs LT's own (Lucene) German n-grams. The
+    // zero-FP precision is the important property for shipping; the floors guard both.
+    assert!(tp >= 30, "de L3 recall regressed: recovered {tp}; expected >= 30");
+    assert!(fp <= 50, "de L3 false positives regressed: {fp}; expected <= 50");
+}
+
 /// L4 quality smoke/regression: a curated set of grammatical errors the neural tagger should fix,
 /// and correct sentences it must leave untouched. A floor that guards against decode/quantization
 /// regressions — *not* a full GEC benchmark (that is the pipeline's offline ERRANT F0.5 gate). The

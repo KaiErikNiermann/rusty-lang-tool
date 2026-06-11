@@ -12,6 +12,7 @@ Cargo.lock.orig
 /resources/*.bin.gz
 # Norvig n-gram subsets (fetched via `cargo xtask fetch-ngrams`)
 /resources/ngrams/
+/resources/*/ngrams/
 
 # wasm-pack output
 /crates/rlt-wasm/pkg/
