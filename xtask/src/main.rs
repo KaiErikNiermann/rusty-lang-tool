@@ -695,6 +695,25 @@ fn fetch_lt(version: &str) -> Result<()> {
     run("git", &sparse)?;
     run("git", &["-C", repo, "checkout", version])?;
 
+    // Provision the shared multilingual segmenter. `segment.srx` lives in `languagetool-core`'s
+    // *resource* dir, which the sparse checkout (rules-only) excludes — so extract the blob straight
+    // from git into resources/segment.srx. (Previously this had to be copied by hand on a fresh clone.)
+    let srx_dest = "resources/segment.srx";
+    if !Path::new(srx_dest).exists() {
+        let blob = format!(
+            "{version}:languagetool-core/src/main/resources/org/languagetool/resource/segment.srx"
+        );
+        let out = Command::new("git")
+            .args(["-C", repo, "show", &blob])
+            .output()
+            .context("extracting segment.srx from the LT checkout")?;
+        if !out.status.success() {
+            bail!("git show {blob} failed: {}", String::from_utf8_lossy(&out.stderr));
+        }
+        std::fs::write(srx_dest, &out.stdout).with_context(|| format!("writing {srx_dest}"))?;
+        println!("provisioned {srx_dest} ({} bytes)", out.stdout.len());
+    }
+
     println!("fetched LT {version} resources into {}", repo_dir.display());
     println!("next: `cargo xtask build-blob` to compile the rkyv artifact");
     Ok(())
