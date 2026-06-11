@@ -243,7 +243,7 @@ mod tests {
     use super::*;
 
     fn artifact_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../resources/l4")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../resources/en/l4")
     }
 
     #[test]

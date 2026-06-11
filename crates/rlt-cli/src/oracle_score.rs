@@ -113,13 +113,14 @@ pub fn score_ir(tokenizer: &Path, blob: &Path, grammar: &Path) -> Result<ScoreRe
 /// # Errors
 /// Returns an error if the artifacts can't load or the grammar can't be parsed.
 pub fn score_ir_native(
+    cfg: &'static rlt_lang::LangConfig,
     segment_srx: &Path,
     tagger: &Path,
     disambig: Option<&Path>,
     blob: &Path,
     grammar: &Path,
 ) -> Result<ScoreReport> {
-    let engine = rlt_native::NativeEngine::from_paths(segment_srx, tagger, disambig)
+    let engine = rlt_native::NativeEngine::from_paths(cfg, segment_srx, tagger, disambig)
         .map_err(|e| anyhow!("loading native engine: {e}"))?;
     score_ir_with_engine(engine, blob, grammar)
 }

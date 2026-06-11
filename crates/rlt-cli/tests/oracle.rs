@@ -40,6 +40,49 @@ fn missing(paths: &[(&str, &PathBuf)]) -> bool {
     false
 }
 
+/// The native German engine (real LT POS dict + STTS tagset + compound splitting + disambiguation)
+/// over German's `<example>` corpus — the second-language end-to-end gate. Floors are set just below
+/// the first measured values (73.2% reproduction / 12.5% FP); compound-coverage gaps keep FP higher
+/// than English's, which is expected for v1.
+#[test]
+#[ignore = "slow, needs the de artifacts; build via `cargo xtask build-lang --lang de`"]
+fn de_native_reproduces_examples() {
+    let cfg = rlt_lang::config("de").expect("de config");
+    let srx = root(cfg.segment_srx_path());
+    let tagger = root(&cfg.tagger_path());
+    let disambig = root(&cfg.disambig_path());
+    let blob = root(&cfg.grammar_blob_path());
+    let grammar = root(&cfg.grammar_xml_path());
+    if missing(&[
+        ("segment.srx", &srx),
+        ("de tagger", &tagger),
+        ("de grammar blob", &blob),
+        ("de grammar.xml", &grammar),
+    ]) {
+        return;
+    }
+    let report = rlt_cli::oracle_score::score_ir_native(
+        cfg,
+        &srx,
+        &tagger,
+        disambig.exists().then_some(disambig.as_path()),
+        &blob,
+        &grammar,
+    )
+    .expect("score the German native oracle");
+    eprintln!(
+        "de native oracle: reproduced {}/{} ({:.1}%); false positives {}/{} ({:.1}%)",
+        report.reproduced,
+        report.positive_total,
+        report.reproduced_pct,
+        report.false_positives,
+        report.negative_total,
+        report.false_positive_pct,
+    );
+    assert!(report.reproduced >= 4500, "de reproduction regressed: {}", report.reproduced);
+    assert!(report.false_positives <= 600, "de false positives regressed: {}", report.false_positives);
+}
+
 #[test]
 #[ignore = "slow (~45s) and needs fetched data; run via `cargo xtask run-oracle`"]
 fn nlprule_baseline_reproduces_examples() {
@@ -76,7 +119,7 @@ fn nlprule_baseline_reproduces_examples() {
 #[ignore = "slow and needs fetched data + en.rkyv; run via `cargo xtask run-oracle`"]
 fn ir_matcher_reproduces_examples() {
     let tokenizer = root("resources/en_tokenizer.bin");
-    let blob = root("resources/en.rkyv");
+    let blob = root("resources/en/grammar.rkyv");
     let grammar = root(rlt_convert::DEFAULT_GRAMMAR);
     if missing(&[
         ("tokenizer", &tokenizer),
@@ -149,7 +192,7 @@ fn correct_sentences(grammar: &Path) -> Vec<String> {
 #[ignore = "slow and needs fetched data + confusion.rkyv; run via `cargo xtask run-oracle`"]
 fn l3_confusion_precision_recall() {
     let tokenizer = root("resources/en_tokenizer.bin");
-    let model_path = root("resources/confusion.rkyv");
+    let model_path = root("resources/en/confusion.rkyv");
     let grammar = root(rlt_convert::DEFAULT_GRAMMAR);
     if missing(&[
         ("tokenizer", &tokenizer),
@@ -230,6 +273,80 @@ fn l3_confusion_precision_recall() {
     );
 }
 
+/// German L3 quality via the same synthetic-perturbation harness, over the **native** German engine
+/// (real LT POS dict + STTS tagset) and a Leipzig-corpus confusion model. German confusion data is
+/// thinner (71 pairs, a 100K-sentence corpus) than English's, so the floors are correspondingly lower —
+/// this gates that L3 *functions* for the second language, not that it matches English's recall.
+#[test]
+#[ignore = "needs the de confusion model; build via `cargo xtask build-confusion --lang de`"]
+fn de_l3_confusion_precision_recall() {
+    let cfg = rlt_lang::config("de").expect("de config");
+    let srx = root(cfg.segment_srx_path());
+    let tagger = root(&cfg.tagger_path());
+    let model_path = root(&cfg.confusion_path());
+    let grammar = root(&cfg.grammar_xml_path());
+    if missing(&[
+        ("segment.srx", &srx),
+        ("de tagger", &tagger),
+        ("de confusion.rkyv", &model_path),
+        ("de grammar.xml", &grammar),
+    ]) {
+        return;
+    }
+    let engine =
+        rlt_native::NativeEngine::from_paths(cfg, &srx, &tagger, None).expect("load native de engine");
+    let model = rlt_ir::deserialize_confusion(&std::fs::read(&model_path).expect("read de confusion"))
+        .expect("deserialize de confusion model");
+    let checker = ConfusionChecker::new(&model);
+
+    let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
+    for p in &model.pairs {
+        reverse.entry(p.b.clone()).or_default().push(p.a.clone());
+        if p.symmetric {
+            reverse.entry(p.a.clone()).or_default().push(p.b.clone());
+        }
+    }
+
+    let sentences = correct_sentences(&grammar);
+    let (mut tp, mut fneg, mut fp, mut perturbations) = (0usize, 0usize, 0usize, 0usize);
+    for s in &sentences {
+        let analysis = engine.analyze(s);
+        fp += checker.grammar_diagnostics(s, &analysis).len();
+        for i in 0..analysis.tokens.len() {
+            let word = analysis.tokens[i].text.to_lowercase();
+            let Some(errors) = reverse.get(&word) else {
+                continue;
+            };
+            let span = analysis.tokens[i].span;
+            for err in errors {
+                perturbations += 1;
+                let mut perturbed = analysis.clone();
+                perturbed.tokens[i].text.clone_from(err);
+                let recovered = checker.grammar_diagnostics(s, &perturbed).iter().any(|d| {
+                    d.span == span
+                        && d.suggestions.iter().any(|sg| sg.replacement.eq_ignore_ascii_case(&word))
+                });
+                if recovered {
+                    tp += 1;
+                } else {
+                    fneg += 1;
+                }
+            }
+        }
+    }
+    let total = tp + fneg;
+    eprintln!(
+        "ORACLE [de l3]: recall {tp}/{total} over {} sentences / {perturbations} perturbations; {fp} false positives",
+        sentences.len(),
+    );
+    // Measured with the Leipzig 1M corpus: 55/2925 recovered, 0 false positives. Recall is far below
+    // English's 82.6% because the corpus (~20M words) is tiny next to Norvig's (trillion), so most
+    // grammar-example bigrams are absent — full parity needs LT's own (Lucene) German n-grams. The
+    // zero-FP precision is the important property for shipping; the floors guard both.
+    assert!(tp >= 30, "de L3 recall regressed: recovered {tp}; expected >= 30");
+    assert!(fp <= 50, "de L3 false positives regressed: {fp}; expected <= 50");
+}
+
 /// L4 quality smoke/regression: a curated set of grammatical errors the neural tagger should fix,
 /// and correct sentences it must leave untouched. A floor that guards against decode/quantization
 /// regressions — *not* a full GEC benchmark (that is the pipeline's offline ERRANT F0.5 gate). The
@@ -237,7 +354,7 @@ fn l3_confusion_precision_recall() {
 #[test]
 #[ignore = "needs resources/l4 artifact; run via `cargo xtask run-l4-oracle`"]
 fn l4_edit_tagger_precision_recall() {
-    let dir = root("resources/l4");
+    let dir = root("resources/en/l4");
     if !dir.join("model.int8.onnx").exists() {
         eprintln!(
             "skipping L4 oracle: {} missing (run `cargo xtask build-l4`)",

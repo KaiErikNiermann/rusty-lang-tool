@@ -22,6 +22,7 @@ nlprule = ["dep:rlt-engine"]
 rlt-core.workspace = true
 rlt-engine = { workspace = true, optional = true }
 rlt-native.workspace = true
+rlt-lang.workspace = true
 rlt-tagger.workspace = true
 wasm-bindgen.workspace = true
 serde-wasm-bindgen.workspace = true

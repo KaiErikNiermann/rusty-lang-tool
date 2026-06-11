@@ -7,23 +7,20 @@ use libfuzzer_sys::fuzz_target;
 use rlt_core::Engine;
 use rlt_native::NativeEngine;
 
-// The richest native-engine target: run `analyze` over arbitrary Unicode and assert the span
-// arithmetic holds. Segmentation (srx), the word tokenizer, FST tagging, structural tagging
-// (CD/PCT/NNP/SENT_START/SENT_END) and disambiguation all manipulate byte offsets; a single off-by-one
-// would surface here as an out-of-bounds or non-char-boundary span. The engine is loaded once from the
-// real artifacts (skipped when absent, e.g. a fresh checkout).
+// The German engine over arbitrary Unicode — the richest new UB surface: the STTS structural tagset,
+// and especially the **compound splitter**, whose longest-match byte arithmetic runs over multibyte
+// UTF-8 (umlauts ä/ö/ü/ß). Asserts every token span is in-bounds, on a char boundary, and equals its
+// source text. Loads the real German artifacts once (skipped when absent).
 fn engine() -> Option<&'static NativeEngine> {
-    // Anchor to the workspace `resources/` via the fuzz crate's manifest dir, so the artifacts resolve
-    // regardless of the fuzzer's working directory.
     const RES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../resources");
     static ENGINE: OnceLock<Option<NativeEngine>> = OnceLock::new();
     ENGINE
         .get_or_init(|| {
-            let disambig = Path::new(RES).join("en/disambig.rkyv");
+            let disambig = Path::new(RES).join("de/disambig.rkyv");
             NativeEngine::from_paths(
-                &rlt_lang::EN,
+                &rlt_lang::DE,
                 &Path::new(RES).join("segment.srx"),
-                &Path::new(RES).join("en/tagger.rkyv"),
+                &Path::new(RES).join("de/tagger.rkyv"),
                 disambig.exists().then_some(disambig.as_path()),
             )
             .ok()
@@ -40,7 +37,6 @@ fuzz_target!(|text: String| {
             text.is_char_boundary(start) && text.is_char_boundary(end),
             "span {start}..{end} not on a char boundary",
         );
-        // Tagging + disambiguation never alter a token's surface text.
         assert_eq!(token.text, text[start..end], "token surface must equal its source span");
     }
 });

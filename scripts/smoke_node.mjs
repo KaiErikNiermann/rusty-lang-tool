@@ -72,10 +72,10 @@ function loadOpt(name) {
   }
 }
 const srx = loadText("segment.srx");
-const taggerRkyv = loadOpt("tagger.rkyv");
-const irBlob = loadOpt("en.rkyv");
+const taggerRkyv = loadOpt("en/tagger.rkyv");
+const irBlob = loadOpt("en/grammar.rkyv");
 if (srx && taggerRkyv && irBlob) {
-  const native = RltChecker.with_native(srx, taggerRkyv, loadOpt("disambig.rkyv") ?? new Uint8Array(), irBlob);
+  const native = RltChecker.with_native("en", srx, taggerRkyv, loadOpt("en/disambig.rkyv") ?? new Uint8Array(), irBlob);
   const nvInput = "I should of went their yesterday. I recieve teh msg.";
   const nvDiags = native.check(nvInput);
   console.log(`native input: ${JSON.stringify(nvInput)} -> ${nvDiags.length} diagnostics`);

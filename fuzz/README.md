@@ -26,6 +26,7 @@ is off in every normal/runtime build.
 | `tagger_load` | **Untrusted input.** The native engine's POS tagger artifact (`resources/tagger.rkyv`), loaded in a web build from a URL — rkyv + embedded-fst validation must reject malformed bytes. | raw `&[u8]` |
 | `disambig_rkyv` | Same boundary for the native disambiguation artifact (`resources/disambig.rkyv`); also fuzzes rule **compilation** (regex building). | raw `&[u8]` |
 | `engine_analyze` | The native engine's `analyze` over arbitrary Unicode: segmentation, the word tokenizer, FST tagging, structural tagging (CD/PCT/NNP/SENT_START/SENT_END) and disambiguation. Asserts every token span is in-bounds, on a char boundary, and equals its source text. Loads the real artifacts once (no-ops if absent). | `Arbitrary` `String` |
+| `engine_analyze_de` | Same invariants for the **German** engine — additionally exercises the STTS tagset and the **compound splitter**, whose longest-match byte arithmetic runs over multibyte UTF-8 (umlauts). The richest new UB surface for the second language. | `Arbitrary` `String` |
 | `disambig_apply` | The disambiguation pass over arbitrary rules + an arbitrary token graph: regex compilation, marker resolution, the reused backtracking matcher, and tag-action application (retain/push over tags & lemmas). | `Arbitrary` `{ rules, tokens }` |
 
 The `*_rkyv` + `tagger_load` targets are the security-relevant boundary (deserialising

@@ -33,10 +33,12 @@ const LT_VERSION: &str = "v6.7";
 const LT_REPO: &str = "https://github.com/languagetool-org/languagetool.git";
 const LT_DEST: &str = "resources/lt";
 
-/// Sparse paths to pull from the LT monorepo: the core rule schemas + English language resources.
+/// Sparse paths to pull from the LT monorepo: the core rule schemas + each supported language's
+/// resources (one entry per `rlt_lang` config; add a language → add its module here).
 const SPARSE_PATHS: &[&str] = &[
     "languagetool-core/src/main/resources/org/languagetool/rules",
     "languagetool-language-modules/en/src/main/resources/org/languagetool",
+    "languagetool-language-modules/de/src/main/resources/org/languagetool",
 ];
 
 /// LT's top-level rules schema (it `xs:include`s `pattern.xsd`); the entry point for codegen.
@@ -66,15 +68,6 @@ const AGID_POS_URL: &str =
 /// LT's English resource directory (the `remap.awk` build script + `added`/`removed` supplements live
 /// here after `fetch-lt`).
 const LT_EN_RESOURCE: &str = "resources/lt/_repo/languagetool-language-modules/en/src/main/resources/org/languagetool/resource/en";
-/// LanguageTool's morfologik English POS dictionary + its metadata (preferred tagger source — read
-/// directly via the pure-Rust CFSA2 reader). Distributed in the `english-pos-dict` Maven jar.
-const POS_DICT: &str = "resources/english.dict";
-const POS_INFO: &str = "resources/english.info";
-const POS_DICT_JAR_URL: &str =
-    "https://repo1.maven.org/maven2/org/languagetool/english-pos-dict/0.6/english-pos-dict-0.6.jar";
-
-/// The native engine's POS tagger artifact (fst + side-table), built by `build-tagger`.
-const TAGGER_OUT: &str = "resources/tagger.rkyv";
 /// Hand-authored closed-class supplement (committed; license-clean). Overrides the awk output for the
 /// high-frequency function words AGID lacks and `remap.awk` mistags (the, a, is, and, to, pronouns…).
 const CLOSED_CLASS: &str = "data/en-closed-class.tsv";
@@ -101,23 +94,43 @@ enum Task {
     GenSchema,
     /// Download nlprule's prebuilt English tokenizer/rules binaries into resources/ (resumable).
     FetchEngine,
-    /// Run the offline converter to (re)build the runtime rkyv artifact.
-    BuildBlob,
-    /// Build the native engine's POS tagger dictionary (`resources/tagger.rkyv`) from AGID's
-    /// `infl.txt` via LanguageTool's own `remap.awk`, plus the `added.txt`/`removed.txt` supplements.
-    /// Fetches AGID if absent (resumable); needs `fetch-lt` for the awk script + supplements, and
-    /// `gawk` on PATH.
-    BuildTagger,
-    /// Lower LanguageTool's `disambiguation.xml` into the native engine's `resources/disambig.rkyv`
-    /// tag-action artifact (needs `fetch-lt`).
-    BuildDisambig,
+    /// Run the offline converter to (re)build the grammar rkyv artifact for `--lang`.
+    BuildBlob {
+        /// Language ISO code (e.g. `en`, `de`).
+        #[arg(long, default_value = "en")]
+        lang: String,
+    },
+    /// Build the native engine's POS tagger dictionary (`resources/<lang>/tagger.rkyv`) for `--lang`
+    /// from LanguageTool's morfologik `.dict` (auto-fetched from the `*-pos-dict` Maven jar), falling
+    /// back to AGID + `remap.awk` (English only). Needs `fetch-lt` for the supplements.
+    BuildTagger {
+        /// Language ISO code (e.g. `en`, `de`).
+        #[arg(long, default_value = "en")]
+        lang: String,
+    },
+    /// Lower LanguageTool's `disambiguation.xml` for `--lang` into `resources/<lang>/disambig.rkyv`.
+    BuildDisambig {
+        /// Language ISO code (e.g. `en`, `de`).
+        #[arg(long, default_value = "en")]
+        lang: String,
+    },
+    /// Build all per-language artifacts for `--lang` (tagger + disambig + grammar blob).
+    BuildLang {
+        /// Language ISO code (e.g. `en`, `de`).
+        #[arg(long, default_value = "en")]
+        lang: String,
+    },
     /// Run the criterion benchmark comparing the native engine to the nlprule baseline (analyze,
     /// is_known, load time). Needs `build-tagger` + `fetch-engine` for the head-to-head.
     Bench,
     /// Download Norvig's n-gram subsets for the L3 confusion model (resumable).
     FetchNgrams,
     /// Build the L3 confusion model from LT's confusion sets + the n-gram subsets.
-    BuildConfusion,
+    BuildConfusion {
+        /// Language ISO code (`en` uses Norvig via `rlt convert`; others use a Leipzig corpus).
+        #[arg(long, default_value = "en")]
+        lang: String,
+    },
     /// Package the WASM surface with wasm-pack (Node target).
     BuildWasm,
     /// Run the differential `<example>` oracle test suite.
@@ -163,12 +176,21 @@ fn main() -> Result<()> {
         Task::FetchLt => fetch_lt(&lt_version()),
         Task::GenSchema => gen_schema(),
         Task::FetchEngine => fetch_engine(),
-        Task::BuildBlob => run("cargo", &["run", "-p", "rlt-convert"]),
-        Task::BuildTagger => build_tagger(),
-        Task::BuildDisambig => build_disambig(),
+        Task::BuildBlob { lang } => build_blob(lang_cfg(&lang)?),
+        Task::BuildTagger { lang } => build_tagger(lang_cfg(&lang)?),
+        Task::BuildDisambig { lang } => build_disambig(lang_cfg(&lang)?),
+        Task::BuildLang { lang } => {
+            let cfg = lang_cfg(&lang)?;
+            build_tagger(cfg)?;
+            build_disambig(cfg)?;
+            build_blob(cfg)
+        }
         Task::Bench => run("cargo", &["bench", "-p", "rlt-native", "--bench", "engine"]),
         Task::FetchNgrams => fetch_ngrams(),
-        Task::BuildConfusion => run("cargo", &["run", "-p", "rlt-cli", "--", "build-confusion"]),
+        Task::BuildConfusion { lang } if lang == "en" => {
+            run("cargo", &["run", "-p", "rlt-cli", "--", "build-confusion"])
+        }
+        Task::BuildConfusion { lang } => build_confusion_de(lang_cfg(&lang)?),
         Task::BuildWasm => build_wasm(),
         Task::RunOracle => run(
             "cargo",
@@ -723,69 +745,89 @@ fn fetch_ngrams() -> Result<()> {
 /// supplements, then serializing the fst artifact. The dictionary comes from **LanguageTool's own
 /// morfologik `.dict`** (read directly — its tagset/coverage is exactly LT's) when available, falling
 /// back to reconstructing it from AGID via LT's `remap.awk` otherwise.
-fn build_tagger() -> Result<()> {
-    let (mut triples, source) = match morfologik_triples()? {
+fn build_tagger(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+    std::fs::create_dir_all(cfg.resource_dir())?;
+    let (mut triples, source) = match morfologik_triples(cfg)? {
         Some(t) => (t, "LT morfologik .dict".to_owned()),
-        None => (agid_triples()?, "AGID/POS + remap.awk + closed-class".to_owned()),
+        None if cfg.sources.uses_agid => {
+            (agid_triples()?, "AGID/POS + remap.awk + closed-class".to_owned())
+        }
+        None => bail!("no morfologik POS dict for {} and no AGID fallback", cfg.code),
     };
     let from_dict = triples.len();
 
-    // Supplements: + added.txt, − removed.txt (both `fullform⇥baseform⇥postag`, `#` comments). These
-    // are LT's additions-to / removals-from the binary dict, so they apply to either source.
-    let added = read_triple_file(&format!("{LT_EN_RESOURCE}/added.txt"))?;
+    // Supplements: + added.txt, − removed.txt (both `fullform⇥baseform⇥postag`, `#` comments) — LT's
+    // additions-to / removals-from the binary dict. Apply when present (every language ships them).
+    let res = cfg.lt_resource_dir();
+    let added = read_triple_file_opt(&format!("{res}/added.txt"))?;
     let removed: std::collections::HashSet<(String, String, String)> =
-        read_triple_file(&format!("{LT_EN_RESOURCE}/removed.txt"))?
-            .into_iter()
-            .collect();
+        read_triple_file_opt(&format!("{res}/removed.txt"))?.into_iter().collect();
     let n_added = added.len();
     triples.extend(added);
     let before = triples.len();
     triples.retain(|t| !removed.contains(t));
     let n_removed = before - triples.len();
 
+    let out = cfg.tagger_path();
     let bytes = rlt_native::build_from_triples(triples)
         .map_err(|e| anyhow::anyhow!("building tagger artifact: {e}"))?;
-    std::fs::write(TAGGER_OUT, &bytes).with_context(|| format!("writing {TAGGER_OUT}"))?;
+    std::fs::write(&out, &bytes).with_context(|| format!("writing {out}"))?;
     println!(
-        "wrote {TAGGER_OUT}: {from_dict} triples from {source} + {n_added} added − {n_removed} \
-         removed, {} bytes",
+        "wrote {out}: {from_dict} triples from {source} + {n_added} added − {n_removed} removed, \
+         {} bytes",
         bytes.len(),
     );
     Ok(())
 }
 
-/// Read triples straight from LanguageTool's morfologik POS dictionary, fetching the `*-pos-dict` jar
-/// if needed. Returns `None` (→ AGID fallback) only if the dict can't be obtained.
-fn morfologik_triples() -> Result<Option<Vec<(String, String, String)>>> {
-    if !Path::new(POS_DICT).exists() {
-        if let Err(e) = fetch_pos_dict() {
+/// Build the grammar IR blob for `cfg` (grammar.xml → `resources/<lang>/grammar.rkyv`) via `rlt convert`.
+fn build_blob(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+    std::fs::create_dir_all(cfg.resource_dir())?;
+    run("cargo", &[
+        "run", "-p", "rlt-cli", "--", "convert",
+        "--grammar", &cfg.grammar_xml_path(),
+        "--out", &cfg.grammar_blob_path(),
+    ])
+}
+
+/// Read triples straight from LanguageTool's morfologik POS dictionary for `cfg`, fetching the
+/// `*-pos-dict` jar if needed. Returns `None` (→ AGID fallback) only if the dict can't be obtained.
+fn morfologik_triples(
+    cfg: &'static rlt_lang::LangConfig,
+) -> Result<Option<Vec<(String, String, String)>>> {
+    let dict = cfg.pos_dict_local();
+    if !Path::new(&dict).exists() {
+        if let Err(e) = fetch_pos_dict(cfg) {
             println!("morfologik POS dict unavailable ({e}) — falling back to AGID");
             return Ok(None);
         }
     }
-    let meta = rlt_convert::parse_info(&std::fs::read_to_string(POS_INFO)?)?;
-    let triples = rlt_convert::read_triples(&std::fs::read(POS_DICT)?, &meta)
-        .with_context(|| format!("reading {POS_DICT}"))?;
-    println!("read {} triples from {POS_DICT}", triples.len());
+    let meta = rlt_convert::parse_info(&std::fs::read_to_string(cfg.pos_info_local())?)?;
+    let triples = rlt_convert::read_triples(&std::fs::read(&dict)?, &meta)
+        .with_context(|| format!("reading {dict}"))?;
+    println!("read {} triples from {dict}", triples.len());
     Ok(Some(triples))
 }
 
-/// Download LT's `english-pos-dict` jar and extract `english.dict` + `english.info` into `resources/`.
-fn fetch_pos_dict() -> Result<()> {
-    let jar = "resources/english-pos-dict.jar";
-    fetch_if_absent(jar, POS_DICT_JAR_URL)?;
-    // jars are zip archives; pull the two files flat into resources/.
-    run("unzip", &[
-        "-o", "-j", jar,
-        "org/languagetool/resource/en/english.dict",
-        "org/languagetool/resource/en/english.info",
-        "-d", "resources",
-    ])
+/// Download `cfg`'s `*-pos-dict` jar and extract its `.dict` + `.info` into `resources/<lang>/`.
+fn fetch_pos_dict(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+    std::fs::create_dir_all(cfg.resource_dir())?;
+    let jar = cfg.pos_jar_local();
+    fetch_if_absent(&jar, &cfg.pos_dict.jar_url())?;
+    // jars are zip archives; extract the two files flat into resources/<lang>/, renaming to pos.*.
+    run("unzip", &["-o", "-j", &jar, cfg.pos_dict.jar_dict_path, cfg.pos_dict.jar_info_path, "-d", &cfg.resource_dir()])?;
+    // unzip -j strips the dir but keeps the basename (english.dict / german.dict); rename to pos.*.
+    let dir = cfg.resource_dir();
+    let dict_name = cfg.pos_dict.jar_dict_path.rsplit('/').next().unwrap_or("pos.dict");
+    let info_name = cfg.pos_dict.jar_info_path.rsplit('/').next().unwrap_or("pos.info");
+    std::fs::rename(format!("{dir}/{dict_name}"), cfg.pos_dict_local())?;
+    std::fs::rename(format!("{dir}/{info_name}"), cfg.pos_info_local())?;
+    Ok(())
 }
 
 /// Reconstruct the POS dictionary from AGID + the Moby/WordNet part-of-speech list via LT's own
-/// `remap.awk`, plus the hand-authored closed-class supplement. The fallback when LT's binary dict
-/// isn't available.
+/// `remap.awk`, plus the hand-authored closed-class supplement. The English-only fallback when LT's
+/// binary dict isn't available.
 fn agid_triples() -> Result<Vec<(String, String, String)>> {
     fetch_if_absent(AGID_INFL, AGID_URL)?;
     fetch_if_absent(AGID_POS, AGID_POS_URL)?;
@@ -816,21 +858,149 @@ fn agid_triples() -> Result<Vec<(String, String, String)>> {
     Ok(triples)
 }
 
-/// Lower `disambiguation.xml` into the `disambig.rkyv` tag-action artifact the native engine loads.
-fn build_disambig() -> Result<()> {
-    let src = Path::new(rlt_convert::DEFAULT_DISAMBIGUATION);
-    if !src.exists() {
-        bail!("missing {} — run `cargo xtask fetch-lt` first", src.display());
+/// Lower `cfg`'s `disambiguation.xml` into `resources/<lang>/disambig.rkyv`.
+fn build_disambig(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+    std::fs::create_dir_all(cfg.resource_dir())?;
+    let src = cfg.disambiguation_xml_path();
+    if !Path::new(&src).exists() {
+        bail!("missing {src} — run `cargo xtask fetch-lt` first");
     }
-    let out = Path::new("resources/disambig.rkyv");
-    let report = rlt_convert::convert_disambiguation(src, out)?;
+    let out = cfg.disambig_path();
+    let report = rlt_convert::convert_disambiguation(Path::new(&src), Path::new(&out))?;
     println!(
-        "wrote {}: {} rules ({} applicable, {} unsupported)",
-        out.display(),
+        "wrote {out}: {} rules ({} applicable, {} unsupported)",
         report.rules.len(),
         report.applicable,
         report.rules.len() - report.applicable,
     );
+    Ok(())
+}
+
+/// Resolve an ISO language code to its static config.
+fn lang_cfg(code: &str) -> Result<&'static rlt_lang::LangConfig> {
+    rlt_lang::config(code).ok_or_else(|| anyhow::anyhow!("unknown language {code:?} (known: en, de)"))
+}
+
+/// Leipzig Corpora Collection — a clean, fetchable German news corpus (tagged sentences) used as the
+/// L3 n-gram source. LanguageTool's own German n-grams are a Java Lucene index (no Rust reader), and
+/// our English L3 already uses a non-LT corpus (Norvig), so a non-LT German corpus is consistent.
+const LEIPZIG_DE_URL: &str =
+    "https://downloads.wortschatz-leipzig.de/corpora/deu_news_2021_1M.tar.gz";
+
+/// Build the L3 confusion model for a non-English language from a Leipzig corpus: fetch + extract the
+/// tagged sentences, count unigrams + (confusion-touching) bigrams in pure Rust, then reuse
+/// `build_confusion_model` with the native engine's POS tags. (English uses Norvig via `rlt convert`.)
+fn build_confusion_de(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+    let dir = format!("{}/ngrams", cfg.resource_dir());
+    std::fs::create_dir_all(&dir)?;
+    let sentences = format!("{dir}/sentences.txt");
+
+    // 1. Fetch + extract the Leipzig tagged sentences (resumable).
+    if !Path::new(&sentences).exists() {
+        let tar = format!("{dir}/leipzig.tar.gz");
+        fetch_if_absent(&tar, LEIPZIG_DE_URL)?;
+        run("tar", &["xzf", &tar, "-C", &dir, "--strip-components=1", "--wildcards", "*-sentences_tagged.txt"])?;
+        let extracted = std::fs::read_dir(&dir)?
+            .filter_map(std::result::Result::ok)
+            .map(|e| e.path())
+            .find(|p| p.to_string_lossy().contains("sentences_tagged"))
+            .context("Leipzig tar had no *-sentences_tagged.txt")?;
+        std::fs::rename(extracted, &sentences)?;
+    }
+
+    // 2. Count unigrams + (confusion-touching) bigrams into Norvig-format TSVs.
+    let confusion_sets = format!("{}/confusion_sets.txt", cfg.lt_resource_dir());
+    let words = confusion_words(&confusion_sets)?;
+    let count_1w = format!("{dir}/count_1w.txt");
+    let count_2w = format!("{dir}/count_2w.txt");
+    count_corpus(&sentences, &words, &count_1w, &count_2w)?;
+
+    // 3. Build the model with the native engine's POS tags (POS-context aggregation).
+    let engine = rlt_native::NativeEngine::from_paths(
+        cfg,
+        Path::new(cfg.segment_srx_path()),
+        &std::path::PathBuf::from(cfg.tagger_path()),
+        None,
+    )
+    .map_err(|e| anyhow::anyhow!("loading {} native engine: {e}", cfg.code))?;
+    let out = cfg.confusion_path();
+    let report = rlt_convert::build_confusion_model(
+        Path::new(&confusion_sets),
+        Path::new(&count_1w),
+        Path::new(&count_2w),
+        Path::new(&out),
+        |w| engine.pos_tags(w),
+    )?;
+    println!("wrote {out}: {} pairs, {} bigrams", report.pairs, report.bigrams);
+    Ok(())
+}
+
+/// The lower-cased word set of a `confusion_sets.txt` (the prune set for n-gram counting).
+fn confusion_words(confusion_sets: &str) -> Result<std::collections::HashSet<String>> {
+    let text = std::fs::read_to_string(confusion_sets)
+        .with_context(|| format!("reading {confusion_sets}"))?;
+    let mut words = std::collections::HashSet::new();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        // Format: `a -> b; factor` or `a; b; factor` — collect the word tokens before the `;`.
+        let head = line.split(';').next().unwrap_or("");
+        for w in head.split("->").flat_map(|s| s.split_whitespace()) {
+            words.insert(w.trim().to_lowercase());
+        }
+    }
+    Ok(words)
+}
+
+/// Stream Leipzig tagged sentences (`id⇥word|POS word|POS …`), counting unigrams (all) + bigrams that
+/// touch a confusion word, writing Norvig-format TSVs (`word⇥count`, `w1 w2⇥count`).
+fn count_corpus(
+    sentences: &str,
+    confusion_words: &std::collections::HashSet<String>,
+    out_1w: &str,
+    out_2w: &str,
+) -> Result<()> {
+    use std::collections::HashMap;
+    use std::io::{BufRead, BufReader, BufWriter, Write};
+
+    let reader = BufReader::new(std::fs::File::open(sentences)?);
+    let mut uni: HashMap<String, u32> = HashMap::new();
+    let mut bi: HashMap<String, u32> = HashMap::new();
+    for line in reader.lines() {
+        let line = line?;
+        let Some((_, rest)) = line.split_once('\t') else {
+            continue;
+        };
+        let mut prev: Option<String> = None;
+        for tok in rest.split(' ') {
+            let word = tok.split('|').next().unwrap_or(tok);
+            if word.is_empty() {
+                continue;
+            }
+            let w = word.to_lowercase();
+            *uni.entry(w.clone()).or_default() += 1;
+            if let Some(p) = prev.take() {
+                if confusion_words.contains(&p) || confusion_words.contains(&w) {
+                    *bi.entry(format!("{p} {w}")).or_default() += 1;
+                }
+            }
+            prev = Some(w);
+        }
+    }
+    // count_1w: prune to count ≥ 2 to bound the file (singletons add only noise).
+    let mut w1 = BufWriter::new(std::fs::File::create(out_1w)?);
+    for (w, c) in &uni {
+        if *c >= 2 {
+            writeln!(w1, "{w}\t{c}")?;
+        }
+    }
+    let mut w2 = BufWriter::new(std::fs::File::create(out_2w)?);
+    for (g, c) in &bi {
+        writeln!(w2, "{g}\t{c}")?;
+    }
+    println!("counted {} unigrams, {} confusion-touching bigrams", uni.len(), bi.len());
     Ok(())
 }
 
@@ -859,6 +1029,16 @@ fn read_triple_file(path: &str) -> Result<Vec<(String, String, String)>> {
         .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
         .filter_map(split_triple)
         .collect())
+}
+
+/// Like [`read_triple_file`] but returns an empty vec if the file is absent (not every language ships
+/// every supplement).
+fn read_triple_file_opt(path: &str) -> Result<Vec<(String, String, String)>> {
+    if Path::new(path).exists() {
+        read_triple_file(path)
+    } else {
+        Ok(Vec::new())
+    }
 }
 
 /// Split one tab-separated line into a non-empty `(inflected, lemma, tag)` triple, or `None`.

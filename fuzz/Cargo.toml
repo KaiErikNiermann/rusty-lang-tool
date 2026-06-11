@@ -16,6 +16,7 @@ arbitrary = { version = "1", features = ["derive"] }
 rlt-ir = { path = "../crates/rlt-ir", features = ["arbitrary"] }
 rlt-core = { path = "../crates/rlt-core", features = ["arbitrary"] }
 rlt-native = { path = "../crates/rlt-native" }
+rlt-lang = { path = "../crates/rlt-lang" }
 
 [profile.release]
 debug = 1
@@ -70,6 +71,13 @@ bench = false
 [[bin]]
 name = "engine_analyze"
 path = "fuzz_targets/engine_analyze.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "engine_analyze_de"
+path = "fuzz_targets/engine_analyze_de.rs"
 test = false
 doc = false
 bench = false

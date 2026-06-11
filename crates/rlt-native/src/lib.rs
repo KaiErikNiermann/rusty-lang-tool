@@ -10,6 +10,7 @@
 
 #![forbid(unsafe_code)]
 
+mod compound;
 mod tagger;
 
 pub use tagger::{Tagger, TaggerError, WordData, build_artifact, build_from_triples};
@@ -18,6 +19,7 @@ use std::ops::Range;
 use std::path::Path;
 
 use rlt_core::{Analysis, Disambiguator, Engine, Span, Token};
+use rlt_lang::{Compounding, LangConfig, TagSet};
 
 /// Errors constructing the engine from its artifacts.
 #[derive(Debug, thiserror::Error)]
@@ -42,18 +44,32 @@ pub struct NativeEngine {
     segmenter: Segmenter,
     tagger: Tagger,
     disambiguator: Option<Disambiguator>,
+    /// The structural tagset this language's grammar anchors on (Penn vs STTS).
+    tagset: &'static TagSet,
+    /// Compound-word splitting rules, if the language compounds (German); `None` otherwise.
+    compounds: Option<&'static Compounding>,
 }
 
 impl NativeEngine {
-    /// Assemble from a loaded segmenter + tagger (no disambiguation; add it with
-    /// [`with_disambiguator`](Self::with_disambiguator)).
+    /// Assemble from a loaded segmenter + tagger, using the English tagset (no disambiguation). Use
+    /// [`with_tagset`](Self::with_tagset) for another language and [`with_disambiguator`](Self::with_disambiguator)
+    /// to add disambiguation.
     #[must_use]
     pub fn new(segmenter: Segmenter, tagger: Tagger) -> Self {
         Self {
             segmenter,
             tagger,
             disambiguator: None,
+            tagset: &rlt_lang::EN.tagset,
+            compounds: None,
         }
+    }
+
+    /// Use a specific language's structural tagset.
+    #[must_use]
+    pub fn with_tagset(mut self, tagset: &'static TagSet) -> Self {
+        self.tagset = tagset;
+        self
     }
 
     /// Attach a disambiguation pass (run after tagging, before the result is returned).
@@ -63,16 +79,37 @@ impl NativeEngine {
         self
     }
 
-    /// Load from in-memory bytes — the wasm path. `segment_srx` is the SRX XML; `tagger` is the
-    /// rkyv tagger artifact. Disambiguation can be attached via [`with_disambiguator`](Self::with_disambiguator).
+    /// The distinct POS tags the lexicon assigns to `word` (deduplicated) — used at build time to
+    /// derive the L3 confusion model's POS-context statistics. Empty for unknown words.
+    #[must_use]
+    pub fn pos_tags(&self, word: &str) -> Vec<String> {
+        let mut tags = Vec::new();
+        if let Some(analyses) = self.tagger.lookup(word) {
+            for wd in analyses {
+                push_tag(&mut tags, &wd.tag);
+            }
+        }
+        tags
+    }
+
+    /// Load from in-memory bytes — the wasm path. `segment_srx` is the SRX XML; `tagger` is the rkyv
+    /// tagger artifact; `cfg` selects the SRX language + the structural tagset. Disambiguation is
+    /// attached via [`with_disambiguator`](Self::with_disambiguator).
     ///
     /// # Errors
     /// Returns [`NativeError`] if either artifact is malformed.
-    pub fn from_bytes(segment_srx: &str, tagger: &[u8]) -> Result<Self, NativeError> {
-        Ok(Self::new(
-            Segmenter::from_srx(segment_srx, "en")?,
-            Tagger::from_bytes(tagger)?,
-        ))
+    pub fn from_bytes(
+        cfg: &'static LangConfig,
+        segment_srx: &str,
+        tagger: &[u8],
+    ) -> Result<Self, NativeError> {
+        Ok(Self {
+            segmenter: Segmenter::from_srx(segment_srx, cfg.code)?,
+            tagger: Tagger::from_bytes(tagger)?,
+            disambiguator: None,
+            tagset: &cfg.tagset,
+            compounds: cfg.compounds.as_ref(),
+        })
     }
 
     /// Load from files on disk — the native path. `disambig` (the `disambig.rkyv` artifact) is
@@ -81,11 +118,13 @@ impl NativeEngine {
     /// # Errors
     /// Returns [`NativeError`] if a file is missing or an artifact is malformed.
     pub fn from_paths(
+        cfg: &'static LangConfig,
         segment_srx: &Path,
         tagger: &Path,
         disambig: Option<&Path>,
     ) -> Result<Self, NativeError> {
-        let mut engine = Self::from_bytes(&std::fs::read_to_string(segment_srx)?, &std::fs::read(tagger)?)?;
+        let mut engine =
+            Self::from_bytes(cfg, &std::fs::read_to_string(segment_srx)?, &std::fs::read(tagger)?)?;
         if let Some(path) = disambig {
             engine.disambiguator = Some(
                 Disambiguator::from_rkyv_bytes(&std::fs::read(path)?)
@@ -106,17 +145,29 @@ impl Engine for NativeEngine {
             let mut sentence = vec![Token {
                 text: String::new(),
                 span: Span { start: range.start, end: range.start },
-                tags: vec!["SENT_START".to_owned()],
+                tags: vec![self.tagset.sent_start.to_owned()],
                 lemmas: Vec::new(),
             }];
             tokenize_into(&text[range.clone()], range.start, &mut sentence);
             for token in &mut sentence {
                 self.tagger.tag_token(token);
-                push_structural_tags(token);
+                // Out-of-lexicon word + a compounding language → try a compound split, taking the head
+                // constituent's analyses (so e.g. German `Haustür` is tagged, not flagged unknown).
+                if token.tags.is_empty() {
+                    if let Some(rules) = self.compounds {
+                        if let Some(analyses) = compound::analyze_compound(&token.text, &self.tagger, rules) {
+                            for wd in &analyses {
+                                push_tag(&mut token.tags, &wd.tag);
+                                push_tag(&mut token.lemmas, &wd.lemma);
+                            }
+                        }
+                    }
+                }
+                push_structural_tags(token, self.tagset);
             }
             // SENT_END marks the sentence's final token — 331 grammar rules anchor on it.
             if let Some(last) = sentence.last_mut() {
-                push_tag(&mut last.tags, "SENT_END");
+                push_tag(&mut last.tags, self.tagset.sent_end);
             }
             // Disambiguation runs per sentence (LT's rules don't cross boundaries; the sentinels
             // bound them), narrowing/fixing tags before the L2 matcher sees them.
@@ -130,6 +181,9 @@ impl Engine for NativeEngine {
 
     fn is_known(&self, word: &str) -> bool {
         self.tagger.is_known(word)
+            || self
+                .compounds
+                .is_some_and(|rules| compound::is_compound(word, &self.tagger, rules))
     }
 }
 
@@ -160,37 +214,30 @@ impl Segmenter {
     }
 }
 
-/// The punctuation marks LanguageTool tags `PCT` (its `UNKNOWN_PCT` disambiguation rule's class).
-const PCT_CHARS: &[char] = &['.', ',', ';', ':', '…', '!', '?'];
-
 /// Add the tokenizer-level **structural** tags LanguageTool's tagger assigns by token *shape* — the
-/// ones grammar rules anchor on heavily (CD 647, PCT 741, NNP 1345, UNKNOWN 402 rule references) but
-/// the morphological lexicon doesn't carry. Mirrors nlprule's tokenizer plus the simplest
-/// disambiguation.xml shape rules (`CD`, `UNKNOWN_PCT`, `COMMA_POSTAG`):
-/// - all-digit token → `CD` (a replacement, per `<token regexp>\d+</token>`);
-/// - `.,;:…!?` → `PCT`, plus the literal `,`/`.`/`:` classes LT also assigns;
-/// - an out-of-lexicon word → `NNP` if capitalized (proper-noun guess), else `UNKNOWN`.
-fn push_structural_tags(token: &mut Token) {
+/// ones grammar rules anchor on heavily but the morphological lexicon doesn't carry. The tag *strings*
+/// come from the language's [`TagSet`] (English Penn `CD`/`PCT`/`NNP` vs German STTS `ZAL`/…/`EIG`):
+/// - all-digit token → `digit_tag` (a replacement, per `<token regexp>\d+</token>`);
+/// - punctuation → `punctuation_tag`, plus the per-character literal class;
+/// - an out-of-lexicon word → `proper_noun_tag` if capitalized, else `oov_tag`.
+fn push_structural_tags(token: &mut Token, tagset: &TagSet) {
     let text = token.text.as_str();
     if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) {
         token.tags.clear();
         token.lemmas.clear();
-        token.tags.push("CD".to_owned());
+        token.tags.push(tagset.digit_tag.to_owned());
         return;
     }
-    if text.chars().all(|c| PCT_CHARS.contains(&c)) && !text.is_empty() {
-        push_tag(&mut token.tags, "PCT");
-        match text {
-            "," => push_tag(&mut token.tags, ","),
-            "." | "!" | "?" | "…" => push_tag(&mut token.tags, "."),
-            ":" | ";" => push_tag(&mut token.tags, ":"),
-            _ => {}
+    if !text.is_empty() && text.chars().all(|c| tagset.punctuation_chars.contains(&c)) {
+        push_tag(&mut token.tags, tagset.punctuation_tag);
+        if let Some((_, class)) = tagset.punctuation_classes.iter().find(|(ch, _)| *ch == text) {
+            push_tag(&mut token.tags, class);
         }
         return;
     }
     if token.tags.is_empty() {
         let capitalized = text.chars().next().is_some_and(char::is_uppercase);
-        push_tag(&mut token.tags, if capitalized { "NNP" } else { "UNKNOWN" });
+        push_tag(&mut token.tags, if capitalized { tagset.proper_noun_tag } else { tagset.oov_tag });
     }
 }
 

@@ -12,6 +12,7 @@ Cargo.lock.orig
 /resources/*.bin.gz
 # Norvig n-gram subsets (fetched via `cargo xtask fetch-ngrams`)
 /resources/ngrams/
+/resources/*/ngrams/
 
 # wasm-pack output
 /crates/rlt-wasm/pkg/
@@ -28,8 +29,8 @@ node_modules/
 # insta pending snapshots
 *.snap.new
 
-# L4 neural model artifacts (gector-derived; large + non-commercial)
-/resources/l4/
+# L4 neural model artifacts (gector-derived; large + non-commercial) — per-language under resources/<lang>/
+/resources/*/l4/
 
 # Adaptability sweep working data (the committed report is docs/adaptability.md)
 /resources/adaptability/
@@ -44,7 +45,7 @@ node_modules/
 # Claude Code local state
 /.claude/
 
-# LanguageTool morfologik POS dictionary (fetched from the english-pos-dict jar, LGPL)
-/resources/english.dict
-/resources/english.info
-/resources/english-pos-dict.jar
+# LanguageTool morfologik POS dictionaries (fetched per-language from *-pos-dict jars, LGPL).
+# *.dict is globbed above; the .info / jar are not:
+/resources/*/pos.info
+/resources/*/pos-dict.jar

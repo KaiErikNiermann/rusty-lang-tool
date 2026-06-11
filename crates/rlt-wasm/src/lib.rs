@@ -84,13 +84,14 @@ impl RltChecker {
     /// # Errors
     /// Returns a JS error if any artifact buffer is invalid.
     pub fn with_native(
+        lang: &str,
         segment_srx: &str,
         tagger: &[u8],
         disambig: &[u8],
         ir_blob: &[u8],
     ) -> Result<RltChecker, JsValue> {
         console_error_panic_hook::set_once();
-        let engine = load_native_engine(segment_srx, tagger, disambig)?;
+        let engine = load_native_engine(lang, segment_srx, tagger, disambig)?;
         let ir = load_ir(ir_blob)?;
         Ok(Self {
             inner: Box::new(Checker::new(Composite::new(engine, ir))),
@@ -103,6 +104,7 @@ impl RltChecker {
     /// Returns a JS error if any engine or L4 artifact buffer is invalid.
     #[allow(clippy::too_many_arguments, reason = "wasm-bindgen flattens the artifact tuple")]
     pub fn with_native_neural(
+        lang: &str,
         segment_srx: &str,
         tagger: &[u8],
         disambig: &[u8],
@@ -114,7 +116,7 @@ impl RltChecker {
         l4_verb: &[u8],
     ) -> Result<RltChecker, JsValue> {
         console_error_panic_hook::set_once();
-        let engine = load_native_engine(segment_srx, tagger, disambig)?;
+        let engine = load_native_engine(lang, segment_srx, tagger, disambig)?;
         let ir = load_ir(ir_blob)?;
         let l4 = Tagger::from_bytes(l4_model, l4_tokenizer, l4_labels, l4_meta, l4_verb)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -143,12 +145,15 @@ fn load_engine(tokenizer_bin: &[u8], rules_bin: &[u8]) -> Result<VendoredEngine,
 
 /// Build the native engine from in-memory artifacts (disambiguation skipped if `disambig` is empty).
 fn load_native_engine(
+    lang: &str,
     segment_srx: &str,
     tagger: &[u8],
     disambig: &[u8],
 ) -> Result<NativeEngine, JsValue> {
-    let mut engine =
-        NativeEngine::from_bytes(segment_srx, tagger).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let cfg = rlt_lang::config(lang)
+        .ok_or_else(|| JsValue::from_str(&format!("unknown language {lang:?}")))?;
+    let mut engine = NativeEngine::from_bytes(cfg, segment_srx, tagger)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
     if !disambig.is_empty() {
         let d = Disambiguator::from_rkyv_bytes(disambig)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
