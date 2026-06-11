@@ -124,6 +124,18 @@ impl Tagger {
             }
         }
     }
+
+    /// Tag `token` from the lexicon entry for `key` — the surface form after the engine's
+    /// normalization (e.g. Arabic tashkeel stripped), so a vocalized word resolves to its unvocalized
+    /// dict entry while `token.text`/`span` keep the original marked bytes.
+    pub fn tag_token_as(&self, token: &mut Token, key: &str) {
+        if let Some(entry) = self.index(key).and_then(|i| self.entries.get(i)) {
+            for &(li, ti) in entry {
+                push_unique(&mut token.tags, &self.tags[ti as usize]);
+                push_unique(&mut token.lemmas, &self.lemmas[li as usize]);
+            }
+        }
+    }
 }
 
 /// Append `value` to `out` iff non-empty and not already present (order-preserving unique).
@@ -163,6 +175,10 @@ where
 ///
 /// # Errors
 /// Returns [`TaggerError`] if the fst cannot be built or the table cannot be serialized.
+///
+/// # Panics
+/// Panics if the dictionary interns more than `u32::MAX` (~4 billion) distinct lemmas or tags — far
+/// beyond any real morphology (the largest, Russian, has ~7M triples).
 pub fn build_artifact(words: &BTreeMap<String, Vec<WordData>>) -> Result<Vec<u8>, TaggerError> {
     use std::collections::HashMap;
 

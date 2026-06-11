@@ -27,6 +27,8 @@ pub struct LangConfig {
     pub sources: Sources,
     /// L1 spell-checking parameters (the script's alphabet).
     pub spell: SpellConfig,
+    /// How surface forms are normalized to their dictionary-lookup key (en/de/ru: `None`).
+    pub normalization: Normalization,
     /// Compound-word splitting rules, if the language compounds (German does; English doesn't).
     pub compounds: Option<Compounding>,
 }
@@ -77,6 +79,18 @@ impl PosDict {
             PosDict::Repo { .. } => None,
         }
     }
+}
+
+/// How a surface form is normalized to its dictionary-lookup key. Stripping is applied by the engine
+/// before every tagger lookup; the token's own `text`/`span` are never altered (diagnostics stay on
+/// the original bytes). en/de/ru use `None` (a no-op); Arabic strips tashkeel so vocalized input
+/// matches the unvocalized dict keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Normalization {
+    /// The lookup key is the surface form unchanged (byte-identical; the default).
+    None,
+    /// Strip Unicode nonspacing marks (`Mn`) before lookup — Arabic tashkeel, Hebrew niqqud, etc.
+    StripCombiningMarks,
 }
 
 /// L1 spell-checking parameters that vary by script.
@@ -237,6 +251,7 @@ pub fn config(code: &str) -> Option<&'static LangConfig> {
         "en" => Some(&EN),
         "de" => Some(&DE),
         "ru" => Some(&RU),
+        "ar" => Some(&AR),
         _ => None,
     }
 }
@@ -282,6 +297,7 @@ pub static EN: LangConfig = LangConfig {
     spell: SpellConfig {
         alphabet: "abcdefghijklmnopqrstuvwxyz",
     },
+    normalization: Normalization::None,
     compounds: None,
 };
 
@@ -321,6 +337,7 @@ pub static DE: LangConfig = LangConfig {
     spell: SpellConfig {
         alphabet: "abcdefghijklmnopqrstuvwxyz",
     },
+    normalization: Normalization::None,
     compounds: Some(Compounding {
         linking: &["s", "es", "n", "en", "er", "e", "ens", "ns"],
         head_is_last: true,
@@ -362,6 +379,48 @@ pub static RU: LangConfig = LangConfig {
     spell: SpellConfig {
         alphabet: "абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
     },
+    normalization: Normalization::None,
+    compounds: None,
+};
+
+/// The Arabic `[.,;:…!?]` punctuation class plus the Arabic comma `،`, semicolon `؛`, and question
+/// mark `؟` (so they're tagged `PCT` like their Latin counterparts).
+const AR_PCT_CHARS: &[char] = &['.', ',', ';', ':', '…', '!', '?', '،', '؛', '؟'];
+
+/// Arabic — the first RTL / combining-mark language. Dict ships in the LT repo (`arabic.dict`, CFSA2,
+/// UTF-8); input is vocalized but the dict keys are not, so `StripCombiningMarks` removes tashkeel
+/// before lookup. L3 skipped (upstream `confusion_sets.txt` is empty). Tagset/alphabet derived via
+/// `cargo xtask lang-inspect --code ar`; `PCT` is the punctuation postag the ar rules reference; the
+/// proper-noun/digit tags are structurally near-dead (Arabic is caseless; no rule references digits).
+pub static AR: LangConfig = LangConfig {
+    code: "ar",
+    lt_module: "ar",
+    pos_dict: PosDict::Repo {
+        dict_file: "arabic.dict",
+        info_file: "arabic.info",
+    },
+    tagset: TagSet {
+        digit_tag: "CD",
+        punctuation_tag: "PCT",
+        punctuation_classes: &[],
+        punctuation_chars: AR_PCT_CHARS,
+        proper_noun_tag: "NA-;-1U-;---",
+        oov_tag: "UNKNOWN",
+        sent_start: "SENT_START",
+        sent_end: "SENT_END",
+    },
+    sources: Sources {
+        uses_agid: false,
+        closed_class: None,
+        confusion: false,
+        neural_l4: false,
+    },
+    // 37 base letters (incl. hamza/alef variants, ta marbuta, alef maqsura, tatweel) — tashkeel is
+    // handled generically by the spell layer, so marks are not in the alphabet. Derived by lang-inspect.
+    spell: SpellConfig {
+        alphabet: "ءآأؤإئابةتثجحخدذرزسشصضطظعغـفقكلمنهوىي",
+    },
+    normalization: Normalization::StripCombiningMarks,
     compounds: None,
 };
 

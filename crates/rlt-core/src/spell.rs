@@ -8,7 +8,17 @@
 
 use std::collections::BTreeSet;
 
+use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+
 use crate::{Analysis, Diagnostic, Engine, Source, Suggestion, recase};
+
+/// Whether `c` is a Unicode nonspacing mark (`Mn`) — a combining diacritic. Such marks are never an
+/// independently-spellable unit, so the spell layer treats them as transparent: they don't count
+/// toward a word's length, aren't tested against the alphabet, and are stripped before edit
+/// generation. NFC en/de/ru tokens carry no `Mn` chars, so this is a no-op for them.
+fn is_combining_mark(c: char) -> bool {
+    c.general_category() == GeneralCategory::NonspacingMark
+}
 
 /// Lower-case alphabet `edits1` draws replacement/insertion chars from when no per-language alphabet
 /// is supplied — the historical English/German default. Per-language alphabets (e.g. Cyrillic for
@@ -51,6 +61,9 @@ pub(crate) fn spelling_diagnostics<E: Engine>(
 fn is_checkable(word: &str, alphabet: &[char]) -> bool {
     let mut len = 0;
     for c in word.chars() {
+        if is_combining_mark(c) {
+            continue; // transparent: a diacritic neither disqualifies the word nor adds length
+        }
         len += 1;
         if !c.to_lowercase().all(|l| alphabet.contains(&l)) {
             return false;
@@ -71,7 +84,9 @@ pub fn fuzz_edits1(word: &str, alphabet: &str) -> usize {
 
 /// Edit-distance-1 corrections that the engine recognizes, re-cased to match `word`, ranked.
 fn suggestions<E: Engine>(engine: &E, word: &str, alphabet: &[char]) -> Vec<Suggestion> {
-    let lower = word.to_lowercase();
+    // Strip combining marks before generating edits so candidates are base-letter forms the lexicon
+    // knows (the engine's `is_known` normalizes the same way). No-op for mark-free en/de/ru words.
+    let lower: String = word.to_lowercase().chars().filter(|c| !is_combining_mark(*c)).collect();
     let known: BTreeSet<String> = edits1(&lower, alphabet)
         .into_iter()
         .filter(|cand| engine.is_known(cand))
@@ -285,6 +300,24 @@ mod tests {
             "expected capitalized 'Привет' among {:?}",
             diags[0].suggestions,
         );
+    }
+
+    /// 37-letter Arabic alphabet (base letters, no tashkeel) — the `AR` `SpellConfig` value.
+    const AR_ALPHABET: &str = "ءآأؤإئابةتثجحخدذرزسشصضطظعغـفقكلمنهوىي";
+
+    #[test]
+    fn combining_marks_are_transparent_to_spelling() {
+        // Tashkeel (combining marks) are transparent: a vocalized word is checkable iff its BASE
+        // letters are in the alphabet, and marks don't count toward MIN_LEN. So vocalized Arabic
+        // reaches the (engine-normalized) membership check instead of being silently skipped.
+        let alphabet: Vec<char> = AR_ALPHABET.chars().collect();
+        assert!(is_checkable("كِتَاب", &alphabet), "vocalized 4-letter word must be checkable");
+        assert!(is_checkable("مَكْتَبَة", &alphabet));
+        // Only base letters count toward length: "اَ" is 1 letter + 1 mark → below MIN_LEN.
+        assert!(!is_checkable("اَ", &alphabet));
+        // edits1 strips marks first, so candidates are clean base-letter strings (no Mn leaks).
+        let cands = edits1(&"كِتَاب".chars().filter(|c| !is_combining_mark(*c)).collect::<String>(), &alphabet);
+        assert!(cands.iter().all(|c| !c.chars().any(is_combining_mark)));
     }
 
     /// Regression: the previous byte-based `edits1` did `String::from_utf8(..).expect("ascii")` on

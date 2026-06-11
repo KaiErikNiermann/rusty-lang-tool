@@ -15,11 +15,13 @@ mod tagger;
 
 pub use tagger::{Tagger, TaggerError, WordData, build_artifact, build_from_triples};
 
+use std::borrow::Cow;
 use std::ops::Range;
 use std::path::Path;
 
 use rlt_core::{Analysis, Disambiguator, Engine, Span, Token};
-use rlt_lang::{Compounding, LangConfig, TagSet};
+use rlt_lang::{Compounding, LangConfig, Normalization, TagSet};
+use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
 
 /// Errors constructing the engine from its artifacts.
 #[derive(Debug, thiserror::Error)]
@@ -48,6 +50,9 @@ pub struct NativeEngine {
     tagset: &'static TagSet,
     /// Compound-word splitting rules, if the language compounds (German); `None` otherwise.
     compounds: Option<&'static Compounding>,
+    /// How surface forms are normalized to their dictionary-lookup key (Arabic strips tashkeel; the
+    /// default `None` is a no-op, so en/de/ru stay byte-identical).
+    normalization: Normalization,
 }
 
 impl NativeEngine {
@@ -62,6 +67,7 @@ impl NativeEngine {
             disambiguator: None,
             tagset: &rlt_lang::EN.tagset,
             compounds: None,
+            normalization: Normalization::None,
         }
     }
 
@@ -109,6 +115,7 @@ impl NativeEngine {
             disambiguator: None,
             tagset: &cfg.tagset,
             compounds: cfg.compounds.as_ref(),
+            normalization: cfg.normalization,
         })
     }
 
@@ -150,7 +157,13 @@ impl Engine for NativeEngine {
             }];
             tokenize_into(&text[range.clone()], range.start, &mut sentence);
             for token in &mut sentence {
-                self.tagger.tag_token(token);
+                // Tag by the normalized lookup key (Arabic: tashkeel stripped) while preserving the
+                // token's surface text/span. en/de/ru + unvocalized input take the existing zero-alloc
+                // `tag_token` path; only marked input allocates a stripped key.
+                match self.lookup_key(&token.text) {
+                    Cow::Borrowed(_) => self.tagger.tag_token(token),
+                    Cow::Owned(key) => self.tagger.tag_token_as(token, &key),
+                }
                 // Out-of-lexicon word + a compounding language → try a compound split, taking the head
                 // constituent's analyses (so e.g. German `Haustür` is tagged, not flagged unknown).
                 if token.tags.is_empty() {
@@ -180,10 +193,26 @@ impl Engine for NativeEngine {
     }
 
     fn is_known(&self, word: &str) -> bool {
-        self.tagger.is_known(word)
+        let key = self.lookup_key(word);
+        self.tagger.is_known(&key)
             || self
                 .compounds
-                .is_some_and(|rules| compound::is_compound(word, &self.tagger, rules))
+                .is_some_and(|rules| compound::is_compound(&key, &self.tagger, rules))
+    }
+}
+
+impl NativeEngine {
+    /// The dictionary-lookup key for a surface form under this engine's normalization. For
+    /// `StripCombiningMarks`, drop every nonspacing mark; otherwise borrow the surface unchanged
+    /// (zero-cost for en/de/ru, and for Arabic input that carries no tashkeel).
+    fn lookup_key<'a>(&self, surface: &'a str) -> Cow<'a, str> {
+        if self.normalization == Normalization::StripCombiningMarks
+            && surface.chars().any(is_combining_mark)
+        {
+            Cow::Owned(surface.chars().filter(|c| !is_combining_mark(*c)).collect())
+        } else {
+            Cow::Borrowed(surface)
+        }
     }
 }
 
@@ -222,7 +251,7 @@ impl Segmenter {
 /// - an out-of-lexicon word → `proper_noun_tag` if capitalized, else `oov_tag`.
 fn push_structural_tags(token: &mut Token, tagset: &TagSet) {
     let text = token.text.as_str();
-    if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) {
+    if !text.is_empty() && text.chars().all(is_decimal_digit) {
         token.tags.clear();
         token.lemmas.clear();
         token.tags.push(tagset.digit_tag.to_owned());
@@ -252,7 +281,22 @@ fn push_tag(tags: &mut Vec<String>, tag: &str) {
 /// included so contractions stay one token for now; the differential test against nlprule will guide
 /// refinements (hyphens, contraction splitting, …).
 fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '\''
+    // Nonspacing marks (Mn) are combining by definition — never a token of their own — so they fold
+    // into the adjacent word (Arabic tashkeel, Hebrew niqqud, combining diacritics on decomposed
+    // Latin). NFC en/de/ru text has no standalone Mn, so this clause never fires for them.
+    c.is_alphanumeric() || c == '\'' || is_combining_mark(c)
+}
+
+/// Whether `c` is a Unicode nonspacing mark (general category `Mn`) — a combining diacritic.
+fn is_combining_mark(c: char) -> bool {
+    c.general_category() == GeneralCategory::NonspacingMark
+}
+
+/// Whether `c` is a Unicode decimal digit (general category `Nd`) — ASCII `0–9`, Arabic-Indic `٠–٩`,
+/// Persian/Extended `۰–۹`, Devanagari, etc. Excludes `Nl`/`No` (Roman numerals, fractions like ½) so
+/// en/de/ru stay byte-identical: their digit tokens are ASCII ⊂ Nd, so the truth value is unchanged.
+fn is_decimal_digit(c: char) -> bool {
+    c.general_category() == GeneralCategory::DecimalNumber
 }
 
 /// Tokenize `sentence` into word + punctuation tokens (whitespace is a boundary, not a token),
@@ -344,6 +388,40 @@ mod tests {
             (0, 5, "café".to_owned()),
             (5, 6, ".".to_owned()),
         ]);
+    }
+
+    #[test]
+    fn combining_marks_fold_into_one_token() {
+        // مَكْتَبَة (library, fully vocalized) — tashkeel are combining marks (Mn); the whole vocalized
+        // word must stay ONE token whose span covers every marked byte (not shatter into 6).
+        let toks = surfaces("مَكْتَبَة");
+        assert_eq!(toks.len(), 1, "vocalized word must be one token: {toks:?}");
+        assert_eq!(toks[0].2, "مَكْتَبَة");
+        assert_eq!(toks[0].0, 0);
+        assert_eq!(toks[0].1, "مَكْتَبَة".len(), "span must cover the marked bytes");
+    }
+
+    #[test]
+    fn unicode_decimal_digits_get_digit_tag() {
+        let tagset = &rlt_lang::EN.tagset; // digit_tag = "CD" (language-agnostic generalization)
+        let digit_tags = |text: &str| {
+            let mut t = Token {
+                text: text.to_owned(),
+                span: Span { start: 0, end: text.len() },
+                tags: Vec::new(),
+                lemmas: Vec::new(),
+            };
+            push_structural_tags(&mut t, tagset);
+            t.tags
+        };
+        // Arabic-Indic ٠–٩ and Extended/Persian ۰–۹ are Nd → digit_tag, like ASCII.
+        assert_eq!(digit_tags("٢٠٢٤"), vec!["CD".to_owned()]);
+        assert_eq!(digit_tags("۱۲۳"), vec!["CD".to_owned()]);
+        assert_eq!(digit_tags("2024"), vec!["CD".to_owned()]);
+        // Nl/No (Roman numerals, fractions) are NOT decimal digits → must stay out of digit_tag, so
+        // en/de/ru never reclassify "½"/"Ⅻ" — proves the Nd (not is_numeric) choice.
+        assert_ne!(digit_tags("½"), vec!["CD".to_owned()]);
+        assert_ne!(digit_tags("Ⅻ"), vec!["CD".to_owned()]);
     }
 
     #[test]
