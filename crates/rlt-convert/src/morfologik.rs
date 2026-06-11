@@ -743,7 +743,7 @@ mod tests {
         assert_eq!(meta.separator, b'_');
         assert_eq!(meta.encoder, Encoder::Suffix);
         assert_eq!(
-            meta.encoding.map(|e| e.name()),
+            meta.encoding.map(encoding_rs::Encoding::name),
             Some("ISO-8859-15"),
             "italian.info declares fsa.dict.encoding=ISO-8859-15",
         );
