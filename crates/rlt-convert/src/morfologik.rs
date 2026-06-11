@@ -480,10 +480,9 @@ mod tests {
     #[test]
     fn reads_real_languagetool_french_dict() {
         // French's POS dict is Maven-shipped (org.languagetool:french-pos-dict), extracted by
-        // `cargo xtask build-tagger --lang fr` to resources/fr/pos.dict — CFSA2 + UTF-8, SUFFIX
-        // encoder, `_` separator. This pins the Romance/Latin-with-accents path: precomposed accented
-        // keys (é/à/ç) decode as clean UTF-8 and carry NO combining marks, which is what makes
-        // `Normalization::None` correct for French (unlike Arabic's StripCombiningMarks).
+        // `cargo xtask build-tagger --lang fr` to resources/fr/pos.dict — CFSA2 + UTF-8, SUFFIX, `_` sep.
+        // Pins the Romance/Latin-with-accents path: precomposed accented keys (é/à/ç) decode as clean
+        // UTF-8 with NO combining marks, which is what makes `Normalization::None` correct for French.
         let base = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../resources/fr"));
         let (Ok(dict), Ok(info)) = (
             std::fs::read(base.join("pos.dict")),
@@ -501,8 +500,6 @@ mod tests {
         eprintln!("french pos.dict: {} triples", triples.len());
         assert!(triples.len() > 600_000, "French morphology is rich; got {}", triples.len());
 
-        // Precomposed French accents are clean UTF-8 and carry no combining marks (the dict keys are
-        // NFC, not NFD) — this is what makes Normalization::None correct for French.
         let combining = |s: &str| s.chars().any(|c| ('\u{0300}'..='\u{036F}').contains(&c));
         assert!(
             triples
@@ -516,8 +513,7 @@ mod tests {
         for (inflected, lemma, tag) in &triples {
             by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
         }
-        // «chats» (cats) is a SUFFIX diff from its lemma «chat» tagged masculine-plural noun `N m p`
-        // (the trailing byte is the morfologik frequency marker, so match the tag *prefix*).
+        // «chats» (cats) is a SUFFIX diff from lemma «chat», masculine-plural noun `N m p`.
         assert!(
             by_word
                 .get("chats")
@@ -527,11 +523,57 @@ mod tests {
         );
         // An accented common noun «canapé» (couch) must read back cleanly as a masculine noun.
         assert!(
-            by_word
-                .get("canapé")
-                .is_some_and(|v| v.iter().any(|(_, t)| t.starts_with("N m"))),
+            by_word.get("canapé").is_some_and(|v| v.iter().any(|(_, t)| t.starts_with("N m"))),
             "canapé should be a known masculine noun: {:?}",
             by_word.get("canapé"),
+        );
+    }
+
+    #[test]
+    fn reads_real_languagetool_spanish_dict() {
+        // Spanish's POS dict is Maven-shipped by Softcatalà (`org.softcatala:spanish-pos-dict`),
+        // extracted to `resources/es/pos.dict` by `build-tagger`. CFSA2 + UTF-8, separator `_`, SUFFIX.
+        // Proves precomposed Spanish accents `áéíóúüñ` survive as real dict keys (no combining marks).
+        let base = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../resources/es"));
+        let (Ok(dict), Ok(info)) = (
+            std::fs::read(base.join("pos.dict")),
+            std::fs::read_to_string(base.join("pos.info")),
+        ) else {
+            eprintln!("skip: es pos.dict not present (run `cargo xtask build-tagger --lang es`)");
+            return;
+        };
+        let meta = parse_info(&info).expect("parse .info");
+        assert_eq!(meta.separator, b'_', "es-ES.info declares fsa.dict.separator=_");
+        assert_eq!(meta.encoder, Encoder::Suffix);
+        assert_eq!(meta.encoding, None, "es-ES.info declares fsa.dict.encoding=utf-8");
+
+        let triples = read_triples(&dict, &meta).expect("read dict");
+        eprintln!("es pos.dict: {} triples", triples.len());
+        assert!(triples.len() > 1_000_000, "Spanish morphology is rich; got {}", triples.len());
+
+        let combining = |s: &str| s.chars().any(|c| ('\u{0300}'..='\u{036F}').contains(&c));
+        assert!(
+            triples
+                .iter()
+                .take(50_000)
+                .all(|(i, l, _)| !i.contains('\u{fffd}') && !l.contains('\u{fffd}') && !combining(i)),
+            "decoded keys must be clean, precomposed UTF-8",
+        );
+
+        let mut by_word: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+        for (inflected, lemma, tag) in &triples {
+            by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
+        }
+        // «casa» (house) is a common noun → EAGLES `NC`; «sofá» (accented) must be a first-class key.
+        assert!(
+            by_word.get("casa").is_some_and(|v| v.iter().any(|(_, t)| t.starts_with("NC"))),
+            "casa should be a known common noun: {:?}",
+            by_word.get("casa"),
+        );
+        assert!(
+            by_word.get("sofá").is_some_and(|v| v.iter().any(|(l, t)| l == "sofá" && t.starts_with('N'))),
+            "accented sofá should be a known noun key: {:?}",
+            by_word.get("sofá"),
         );
     }
 

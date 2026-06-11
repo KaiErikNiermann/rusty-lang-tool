@@ -36,7 +36,7 @@ pub struct DisambigReport {
 pub fn lower_disambiguation(path: &std::path::Path) -> Result<DisambigReport> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("reading {}", path.display()))?;
-    let xml = expand_entities(&raw)
+    let xml = expand_entities(&raw, path.parent())
         .with_context(|| format!("expanding entities in {}", path.display()))?;
     let parsed: XRules = quick_xml::de::from_str(&xml)
         .with_context(|| format!("deserializing {}", path.display()))?;

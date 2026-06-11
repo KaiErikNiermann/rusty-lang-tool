@@ -341,7 +341,7 @@ pub fn convert(grammar_path: &Path, out: &Path) -> Result<ConversionReport> {
 fn parse_grammar(grammar_path: &Path) -> Result<rules::RulesElementType> {
     let raw = std::fs::read_to_string(grammar_path)
         .with_context(|| format!("reading {}", grammar_path.display()))?;
-    let xml = expand_entities(&raw)
+    let xml = expand_entities(&raw, grammar_path.parent())
         .with_context(|| format!("preprocessing {}", grammar_path.display()))?;
     let mut reader = SliceReader::new(&xml).with_error_info();
     DeserializeSync::deserialize(&mut reader)
@@ -908,7 +908,14 @@ fn is_yes(v: &pattern::BinaryYesNoType) -> bool {
 /// remove the DOCTYPE, then iteratively substitute `&name;` until stable (entities may reference
 /// other entities). Quote-bearing entity values appear only in element content in LT's grammar,
 /// so textual substitution is safe here.
-pub(crate) fn expand_entities(xml: &str) -> Result<String> {
+///
+/// The Romance languages (es/fr/it) hoist their shared general entities into an **external** DTD
+/// file pulled in by a parameter entity — `<!ENTITY % entities SYSTEM "…/entities.ent">` then
+/// `%entities;`. quick_xml resolves no external subsets either, so when `base_dir` is given we read
+/// each `SYSTEM "rel/path"` file (relative to the XML's own directory) and fold its `<!ENTITY …>`
+/// declarations into the same substitution set as the inline ones. en/de/ru/ar have no parameter
+/// entities, so this is a no-op for them (byte-identical output).
+pub(crate) fn expand_entities(xml: &str, base_dir: Option<&Path>) -> Result<String> {
     let Some(doctype_start) = xml.find("<!DOCTYPE") else {
         return Ok(xml.to_owned()); // No internal subset — nothing to expand.
     };
@@ -916,17 +923,34 @@ pub(crate) fn expand_entities(xml: &str) -> Result<String> {
         .find("]>")
         .map(|i| i + doctype_start)
         .ok_or_else(|| anyhow!("unterminated DOCTYPE internal subset"))?;
-    let doctype = &xml[doctype_start..subset_end];
+    let doctype = xml[doctype_start..subset_end].to_owned();
 
     // <!ENTITY name "value"> and <!ENTITY name 'value'> — the delimiter is respected so values
     // may contain the other quote (e.g. <!ENTITY quote '["…"]'>).
     let double_q = Regex::new(r#"<!ENTITY\s+(\w+)\s+"([^"]*)""#)?;
     let single_q = Regex::new(r"<!ENTITY\s+(\w+)\s+'([^']*)'")?;
-    let entities: Vec<(String, String)> = double_q
-        .captures_iter(doctype)
-        .chain(single_q.captures_iter(doctype))
-        .map(|cap| (cap[1].to_owned(), cap[2].to_owned()))
-        .collect();
+    let parse_decls = |text: &str| -> Vec<(String, String)> {
+        double_q
+            .captures_iter(text)
+            .chain(single_q.captures_iter(text))
+            .map(|cap| (cap[1].to_owned(), cap[2].to_owned()))
+            .collect()
+    };
+
+    // External parameter entities: `<!ENTITY % name SYSTEM "rel/path">`. Inline each referenced
+    // file's declarations (es/fr/it `entities.ent`); silently skip if unreadable or no base dir.
+    let mut decl_text = doctype.clone();
+    if let Some(dir) = base_dir {
+        let sys = Regex::new(r#"<!ENTITY\s+%\s+\w+\s+SYSTEM\s+"([^"]*)""#)?;
+        for cap in sys.captures_iter(&doctype) {
+            if let Ok(ext) = std::fs::read_to_string(dir.join(&cap[1])) {
+                decl_text.push('\n');
+                decl_text.push_str(&ext);
+            }
+        }
+    }
+
+    let entities: Vec<(String, String)> = parse_decls(&decl_text);
 
     let mut body = String::with_capacity(xml.len());
     body.push_str(&xml[..doctype_start]);
@@ -962,7 +986,7 @@ mod tests {
                    <!ENTITY q '[\"x\"]'>\n\
                    ]>\n\
                    <rules><a>&combo;</a><b>&q;</b></rules>";
-        let out = expand_entities(xml).expect("expand");
+        let out = expand_entities(xml, None).expect("expand");
 
         assert!(!out.contains("<!DOCTYPE"), "DOCTYPE not stripped: {out}");
         assert!(
@@ -982,6 +1006,43 @@ mod tests {
     #[test]
     fn passthrough_without_doctype() {
         let xml = "<rules><a/></rules>";
-        assert_eq!(expand_entities(xml).unwrap(), xml);
+        assert_eq!(expand_entities(xml, None).unwrap(), xml);
+    }
+
+    /// en/de/ru/ar have only an *inline* internal subset — a `base_dir` must not change their
+    /// output one byte (the byte-identical gate for the external-entity generalization).
+    #[test]
+    fn inline_subset_is_base_dir_invariant() {
+        let xml = "<!DOCTYPE rules [\n\
+                   <!ENTITY base \"foo\">\n\
+                   ]>\n\
+                   <rules><a>&base;</a></rules>";
+        let without = expand_entities(xml, None).unwrap();
+        let with = expand_entities(xml, Some(std::path::Path::new("/nonexistent"))).unwrap();
+        assert_eq!(without, with, "base_dir altered inline-subset expansion");
+        assert!(without.contains("<a>foo</a>"));
+    }
+
+    /// es/fr/it pull their general entities from an external `entities.ent` via a parameter entity
+    /// (`<!ENTITY % … SYSTEM "rel.ent">` + `%entities;`). Declarations in that file must expand too.
+    #[test]
+    fn resolves_external_parameter_entity_file() {
+        let dir = std::env::temp_dir().join(format!("rlt-ent-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ent = dir.join("entities.ent");
+        std::fs::write(&ent, "<!ENTITY shared \"hola\">\n").unwrap();
+
+        let xml = "<!DOCTYPE rules [\n\
+                   <!ENTITY % entities SYSTEM \"entities.ent\">\n\
+                   %entities;\n\
+                   <!ENTITY local \"adios\">\n\
+                   ]>\n\
+                   <rules><a>&shared;</a><b>&local;</b></rules>";
+        let out = expand_entities(xml, Some(&dir)).unwrap();
+        assert!(out.contains("<a>hola</a>"), "external entity not expanded: {out}");
+        assert!(out.contains("<b>adios</b>"), "inline entity lost: {out}");
+        assert!(!out.contains("&shared;") && !out.contains("%entities;"), "leftover: {out}");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

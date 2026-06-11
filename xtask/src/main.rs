@@ -42,6 +42,7 @@ const SPARSE_PATHS: &[&str] = &[
     "languagetool-language-modules/ru/src/main/resources/org/languagetool",
     "languagetool-language-modules/ar/src/main/resources/org/languagetool",
     "languagetool-language-modules/fr/src/main/resources/org/languagetool",
+    "languagetool-language-modules/es/src/main/resources/org/languagetool",
 ];
 
 /// LT's top-level rules schema (it `xs:include`s `pattern.xsd`); the entry point for codegen.
@@ -941,7 +942,7 @@ fn build_disambig(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
 /// Resolve an ISO language code to its static config.
 fn lang_cfg(code: &str) -> Result<&'static rlt_lang::LangConfig> {
     rlt_lang::config(code)
-        .ok_or_else(|| anyhow::anyhow!("unknown language {code:?} (known: en, de, ru, ar, fr)"))
+        .ok_or_else(|| anyhow::anyhow!("unknown language {code:?} (known: en, de, ru, ar, fr, es)"))
 }
 
 /// Read-only accelerator: dump everything a human needs to author a `LangConfig` + derive the
@@ -1094,7 +1095,7 @@ fn find_repo_dict(dir: &str) -> Result<(String, String)> {
 }
 
 /// The languages with a `LangConfig` — the default set for `lang-status`.
-const CONFIGURED_LANGS: &[&str] = &["en", "de", "ru", "ar"];
+const CONFIGURED_LANGS: &[&str] = &["en", "de", "ru", "ar", "fr", "es"];
 
 /// One hashed upstream input in a language manifest.
 #[derive(serde::Serialize, serde::Deserialize)]

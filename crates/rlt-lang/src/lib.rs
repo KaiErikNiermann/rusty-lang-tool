@@ -253,6 +253,7 @@ pub fn config(code: &str) -> Option<&'static LangConfig> {
         "ru" => Some(&RU),
         "ar" => Some(&AR),
         "fr" => Some(&FR),
+        "es" => Some(&ES),
         _ => None,
     }
 }
@@ -425,14 +426,10 @@ pub static AR: LangConfig = LangConfig {
     compounds: None,
 };
 
-/// French — the first Romance language. The morfologik dict is Maven-shipped
-/// (`org.languagetool:french-pos-dict`, CFSA2, UTF-8, SUFFIX encoder, `_` separator), not in the
-/// repo. Latin alphabet plus the accented base letters `àâçéèêëîïôûùüÿœæ` (ligatures œ/æ included —
-/// the dict treats them as single letters). No combining-mark normalization: French accents are
-/// precomposed in the dict keys, so `Normalization::None`. Tagset derived via
-/// `cargo xtask lang-inspect --code fr` + `tagset.txt`: `Y` = cardinal digits, `Z` = proper name,
-/// `M` = punctuation marker (`M fin` sentence-final, `M nonfin` comma/semicolon — grammar references
-/// the bare-`M` class). L3 confusion deferred (28 pairs exist upstream but `confusion:false`).
+/// French — Romance. Maven dict (`org.languagetool:french-pos-dict`, CFSA2/UTF-8/SUFFIX, `_` sep).
+/// Latin + accented base letters `àâçéèêëîïôûùüÿœæ` (ligatures œ/æ are single dict letters); accents
+/// are precomposed (NFC), so `Normalization::None`. Tagset via `lang-inspect --code fr` + tagset.txt:
+/// `Y` = cardinal digit, `Z` = proper name, `M` = punctuation marker class. L3 deferred (`confusion:false`).
 pub static FR: LangConfig = LangConfig {
     code: "fr",
     lt_module: "fr",
@@ -461,6 +458,45 @@ pub static FR: LangConfig = LangConfig {
     },
     spell: SpellConfig {
         alphabet: "abcdefghijklmnopqrstuvwxyzàâçéèêëîïôûùüÿœæ",
+    },
+    normalization: Normalization::None,
+    compounds: None,
+};
+
+/// Spanish — Romance. Maven dict shipped by Softcatalà (`org.softcatala:spanish-pos-dict`, jar entries
+/// `…/resource/es/es-ES.dict`+`es-ES.info`, CFSA2/UTF-8/SUFFIX). EAGLES/Freeling tagset: `Z` = cifra
+/// (digit), `NP00000` = underspecified proper noun (grammar anchors on `NP.*`); punctuation is the
+/// disambiguation-added `_PUNCT` class (referenced `_PUNCT.*` 44× in grammar.xml) — assigned by token
+/// shape. Inverted `¿¡` are SRX/disambiguation-level (`_QM_OPEN`), not structural, so not in
+/// `punctuation_chars`. Accents `áéíóúüñ` are full dict letters → `Normalization::None`. L3 deferred.
+pub static ES: LangConfig = LangConfig {
+    code: "es",
+    lt_module: "es",
+    pos_dict: PosDict::Maven {
+        group_id: "org.softcatala",
+        artifact_id: "spanish-pos-dict",
+        version: "2.5",
+        jar_dict_path: "org/languagetool/resource/es/es-ES.dict",
+        jar_info_path: "org/languagetool/resource/es/es-ES.info",
+    },
+    tagset: TagSet {
+        digit_tag: "Z",
+        punctuation_tag: "_PUNCT",
+        punctuation_classes: &[],
+        punctuation_chars: PCT_CHARS,
+        proper_noun_tag: "NP00000",
+        oov_tag: "UNKNOWN",
+        sent_start: "SENT_START",
+        sent_end: "SENT_END",
+    },
+    sources: Sources {
+        uses_agid: false,
+        closed_class: None,
+        confusion: false,
+        neural_l4: false,
+    },
+    spell: SpellConfig {
+        alphabet: "abcdefghijklmnopqrstuvwxyzáéíóúüñ",
     },
     normalization: Normalization::None,
     compounds: None,
