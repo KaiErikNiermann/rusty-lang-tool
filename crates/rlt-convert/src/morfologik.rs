@@ -478,6 +478,59 @@ mod tests {
     }
 
     #[test]
+    fn reads_real_languagetool_spanish_dict() {
+        // Spanish's POS dict is Maven-shipped by Softcatalà (`org.softcatala:spanish-pos-dict`),
+        // extracted to `resources/es/pos.dict` by `build-tagger`. It is CFSA2 + UTF-8, separator `_`,
+        // SUFFIX-encoded. This pins the format and proves precomposed Spanish accents `áéíóúüñ`
+        // survive as real dict keys (no combining marks → `Normalization::None`, unlike Arabic).
+        let base = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../resources/es"));
+        let (Ok(dict), Ok(info)) = (
+            std::fs::read(base.join("pos.dict")),
+            std::fs::read_to_string(base.join("pos.info")),
+        ) else {
+            eprintln!("skip: es pos.dict not present (run `cargo xtask build-tagger --lang es`)");
+            return;
+        };
+        let meta = parse_info(&info).expect("parse .info");
+        assert_eq!(meta.separator, b'_', "es-ES.info declares fsa.dict.separator=_");
+        assert_eq!(meta.encoder, Encoder::Suffix);
+        assert_eq!(meta.encoding, None, "es-ES.info declares fsa.dict.encoding=utf-8");
+
+        let triples = read_triples(&dict, &meta).expect("read dict");
+        eprintln!("es pos.dict: {} triples", triples.len());
+        assert!(triples.len() > 1_000_000, "Spanish morphology is rich; got {}", triples.len());
+
+        // Decoded forms are clean UTF-8 and the dict keys carry NO combining marks (Spanish accents
+        // are precomposed: á = U+00E1, not a + U+0301) — which is what makes `Normalization::None`
+        // correct (no StripCombiningMarks needed, unlike Arabic).
+        let combining = |s: &str| s.chars().any(|c| ('\u{0300}'..='\u{036F}').contains(&c));
+        assert!(
+            triples
+                .iter()
+                .take(50_000)
+                .all(|(i, l, _)| !i.contains('\u{fffd}') && !l.contains('\u{fffd}') && !combining(i)),
+            "decoded keys must be clean, precomposed UTF-8",
+        );
+
+        let mut by_word: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+        for (inflected, lemma, tag) in &triples {
+            by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
+        }
+        // «casa» (house) is a feminine noun → EAGLES `NC` (Nombre Común); «sofá» (an accented key)
+        // must be present and reconstruct its lemma — proving accented forms are first-class keys.
+        assert!(
+            by_word.get("casa").is_some_and(|v| v.iter().any(|(_, t)| t.starts_with("NC"))),
+            "casa should be a known common noun: {:?}",
+            by_word.get("casa"),
+        );
+        assert!(
+            by_word.get("sofá").is_some_and(|v| v.iter().any(|(l, t)| l == "sofá" && t.starts_with('N'))),
+            "accented sofá should be a known noun key: {:?}",
+            by_word.get("sofá"),
+        );
+    }
+
+    #[test]
     fn rejects_fsa5_with_clean_error() {
         // FSA5 (`\fsa\x05`) is a different format we don't yet read — the guard must error cleanly,
         // never panic, so a language that ships FSA5 fails with an actionable message (future branch).

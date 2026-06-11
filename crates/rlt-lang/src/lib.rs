@@ -252,6 +252,7 @@ pub fn config(code: &str) -> Option<&'static LangConfig> {
         "de" => Some(&DE),
         "ru" => Some(&RU),
         "ar" => Some(&AR),
+        "es" => Some(&ES),
         _ => None,
     }
 }
@@ -421,6 +422,50 @@ pub static AR: LangConfig = LangConfig {
         alphabet: "ءآأؤإئابةتثجحخدذرزسشصضطظعغـفقكلمنهوىي",
     },
     normalization: Normalization::StripCombiningMarks,
+    compounds: None,
+};
+
+/// Spanish — the first Romance language. The morfologik POS dict is **Maven-shipped** by Softcatalà
+/// (`org.softcatala:spanish-pos-dict`, jar entries `…/resource/es/es-ES.dict` + `es-ES.info`, CFSA2,
+/// UTF-8, `SUFFIX` encoder), so it needs a download like en/de (not a repo dict like ru/ar). Tagset is
+/// EAGLES/Freeling (`tagset.txt` + `etiquetas-eagles.md`): `Z` = cifra (digit), `NP00000` = the
+/// underspecified proper noun (grammar anchors on `NP.*`), and the grammar's punctuation class is the
+/// disambiguation-added `_PUNCT` (rulegroup PUNCT tags `[.;:!?…()…-]` `_PUNCT`, referenced `_PUNCT.*`
+/// 44× in grammar.xml) — so our engine assigns `_PUNCT` by token shape to match. Inverted `¿¡` are
+/// handled at the SRX/disambiguation level (`_QM_OPEN`), not as structural postags, so they are not in
+/// `punctuation_chars`. Diacritics `áéíóúüñ` are full dict letters (the dict is accented, not stripped),
+/// so `Normalization::None` and they join the spell alphabet. L3 confusion deferred (`confusion:false`).
+/// Derived via `cargo xtask lang-inspect --code es`.
+pub static ES: LangConfig = LangConfig {
+    code: "es",
+    lt_module: "es",
+    pos_dict: PosDict::Maven {
+        group_id: "org.softcatala",
+        artifact_id: "spanish-pos-dict",
+        version: "2.5",
+        jar_dict_path: "org/languagetool/resource/es/es-ES.dict",
+        jar_info_path: "org/languagetool/resource/es/es-ES.info",
+    },
+    tagset: TagSet {
+        digit_tag: "Z",
+        punctuation_tag: "_PUNCT",
+        punctuation_classes: &[],
+        punctuation_chars: PCT_CHARS,
+        proper_noun_tag: "NP00000",
+        oov_tag: "UNKNOWN",
+        sent_start: "SENT_START",
+        sent_end: "SENT_END",
+    },
+    sources: Sources {
+        uses_agid: false,
+        closed_class: None,
+        confusion: false,
+        neural_l4: false,
+    },
+    spell: SpellConfig {
+        alphabet: "abcdefghijklmnopqrstuvwxyzáéíóúüñ",
+    },
+    normalization: Normalization::None,
     compounds: None,
 };
 

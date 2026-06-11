@@ -170,6 +170,50 @@ fn ar_native_reproduces_examples() {
     assert!(report.false_positives <= 40, "ar false positives regressed: {}", report.false_positives);
 }
 
+/// Spanish — the first Romance language end-to-end. Proves the infra generalizes to a Maven-shipped
+/// (Softcatalà) POS dict, the EAGLES/Freeling tagset, precomposed accents `áéíóúüñ` (no combining-mark
+/// normalization — `Normalization::None`), and the shared external `entities.ent` parameter-entity DTD
+/// the Romance grammars use. Floors are just below the first measured values.
+#[test]
+#[ignore = "slow, needs the es artifacts; build via `cargo xtask build-lang --lang es`"]
+fn es_native_reproduces_examples() {
+    let cfg = rlt_lang::config("es").expect("es config");
+    let srx = root(cfg.segment_srx_path());
+    let tagger = root(&cfg.tagger_path());
+    let disambig = root(&cfg.disambig_path());
+    let blob = root(&cfg.grammar_blob_path());
+    let grammar = root(&cfg.grammar_xml_path());
+    if missing(&[
+        ("segment.srx", &srx),
+        ("es tagger", &tagger),
+        ("es grammar blob", &blob),
+        ("es grammar.xml", &grammar),
+    ]) {
+        return;
+    }
+    let report = rlt_cli::oracle_score::score_ir_native(
+        cfg,
+        &srx,
+        &tagger,
+        disambig.exists().then_some(disambig.as_path()),
+        &blob,
+        &grammar,
+    )
+    .expect("score the Spanish native oracle");
+    eprintln!(
+        "es native oracle: reproduced {}/{} ({:.1}%); false positives {}/{} ({:.1}%)",
+        report.reproduced,
+        report.positive_total,
+        report.reproduced_pct,
+        report.false_positives,
+        report.negative_total,
+        report.false_positive_pct,
+    );
+    // Floors just below the first measured values: reproduced 1205/2932 (41.1%), FP 306/3465 (8.8%).
+    assert!(report.reproduced >= 1150, "es reproduction regressed: {}", report.reproduced);
+    assert!(report.false_positives <= 340, "es false positives regressed: {}", report.false_positives);
+}
+
 #[test]
 #[ignore = "slow (~45s) and needs fetched data; run via `cargo xtask run-oracle`"]
 fn nlprule_baseline_reproduces_examples() {
