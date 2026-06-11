@@ -172,7 +172,7 @@ fn ar_native_reproduces_examples() {
 
 /// French — Romance, Maven-shipped CFSA2/UTF-8 dict with precomposed Latin accents (é/à/ç/ù) and
 /// ligatures (œ/æ) under `Normalization::None`. Floors just below the first measured values
-/// (42.9% / 8.8% FP); the higher FP reflects un-modelled French elision/clitics (`l'`, `j'`).
+/// (47.3% / 9.3% FP, after elision); the higher FP reflects un-modelled French elision/clitics (`l'`, `j'`).
 #[test]
 #[ignore = "slow, needs the fr artifacts; build via `cargo xtask build-lang --lang fr`"]
 fn fr_native_reproduces_examples() {
@@ -208,8 +208,8 @@ fn fr_native_reproduces_examples() {
         report.negative_total,
         report.false_positive_pct,
     );
-    assert!(report.reproduced >= 3000, "fr reproduction regressed: {}", report.reproduced);
-    assert!(report.false_positives <= 660, "fr false positives regressed: {}", report.false_positives);
+    assert!(report.reproduced >= 3300, "fr reproduction regressed: {}", report.reproduced);
+    assert!(report.false_positives <= 700, "fr false positives regressed: {}", report.false_positives);
 }
 
 /// Spanish — Romance, Maven-shipped (Softcatalà) POS dict, EAGLES/Freeling tagset, precomposed accents
@@ -292,8 +292,8 @@ fn it_native_reproduces_examples() {
         report.negative_total,
         report.false_positive_pct,
     );
-    assert!(report.reproduced >= 50, "it reproduction regressed: {}", report.reproduced);
-    assert!(report.false_positives <= 15, "it false positives regressed: {}", report.false_positives);
+    assert!(report.reproduced >= 55, "it reproduction regressed: {}", report.reproduced);
+    assert!(report.false_positives <= 10, "it false positives regressed: {}", report.false_positives);
 }
 
 #[test]

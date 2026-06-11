@@ -53,6 +53,8 @@ pub struct NativeEngine {
     /// How surface forms are normalized to their dictionary-lookup key (Arabic strips tashkeel; the
     /// default `None` is a no-op, so en/de/ru stay byte-identical).
     normalization: Normalization,
+    /// Elision clitics that split off a leading apostrophe-word (French/Italian); empty otherwise.
+    elision: &'static [&'static str],
 }
 
 impl NativeEngine {
@@ -68,6 +70,7 @@ impl NativeEngine {
             tagset: &rlt_lang::EN.tagset,
             compounds: None,
             normalization: Normalization::None,
+            elision: &[],
         }
     }
 
@@ -116,6 +119,7 @@ impl NativeEngine {
             tagset: &cfg.tagset,
             compounds: cfg.compounds.as_ref(),
             normalization: cfg.normalization,
+            elision: cfg.elision,
         })
     }
 
@@ -156,6 +160,10 @@ impl Engine for NativeEngine {
                 lemmas: Vec::new(),
             }];
             tokenize_into(&text[range.clone()], range.start, &mut sentence);
+            // Romance elision: split `l'homme` → `l'` + `homme` so each clitic is tagged from the dict.
+            if !self.elision.is_empty() {
+                sentence = apply_elision(sentence, self.elision);
+            }
             for token in &mut sentence {
                 // Tag by the normalized lookup key (Arabic: tashkeel stripped) while preserving the
                 // token's surface text/span. en/de/ru + unvocalized input take the existing zero-alloc
@@ -321,6 +329,50 @@ pub fn tokenize_into(sentence: &str, base: usize, out: &mut Vec<Token>) {
     }
 }
 
+/// Expand each token through [`split_elision`], so an elided clitic (`l'`, `dell'`) becomes its own
+/// token. Tokens are still untagged here, so the new fragments inherit empty tags/lemmas.
+fn apply_elision(tokens: Vec<Token>, clitics: &[&str]) -> Vec<Token> {
+    let mut out = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        split_elision(token, clitics, &mut out);
+    }
+    out
+}
+
+/// If `token` begins with an elision clitic followed (no space) by more letters — an **internal**
+/// apostrophe whose prefix is in `clitics` — emit the clitic (with its apostrophe) and recurse on the
+/// remainder; otherwise emit the token unchanged. Span arithmetic is exact (the apostrophe is one
+/// ASCII byte), so `token.text == source[span]` still holds for every fragment.
+fn split_elision(token: Token, clitics: &[&str], out: &mut Vec<Token>) {
+    if let Some(p) = token.text.find('\'') {
+        let after = p + 1; // ' is one byte
+        if p > 0 && after < token.text.len() {
+            let prefix = &token.text[..after];
+            if clitics.iter().any(|c| c.eq_ignore_ascii_case(prefix)) {
+                let start = token.span.start;
+                out.push(Token {
+                    text: prefix.to_owned(),
+                    span: Span { start, end: start + after },
+                    tags: Vec::new(),
+                    lemmas: Vec::new(),
+                });
+                split_elision(
+                    Token {
+                        text: token.text[after..].to_owned(),
+                        span: Span { start: start + after, end: token.span.end },
+                        tags: Vec::new(),
+                        lemmas: Vec::new(),
+                    },
+                    clitics,
+                    out,
+                );
+                return;
+            }
+        }
+    }
+    out.push(token);
+}
+
 fn make_token(sentence: &str, start: usize, end: usize, base: usize) -> Token {
     Token {
         text: sentence[start..end].to_owned(),
@@ -399,6 +451,33 @@ mod tests {
         assert_eq!(toks[0].2, "مَكْتَبَة");
         assert_eq!(toks[0].0, 0);
         assert_eq!(toks[0].1, "مَكْتَبَة".len(), "span must cover the marked bytes");
+    }
+
+    #[test]
+    fn elision_splits_clitics_but_not_truncations() {
+        // Build the tokens for `text`, run the elision split, return (start, end, surface) tuples.
+        let split = |text: &str, clitics: &[&str]| -> Vec<(usize, usize, String)> {
+            let mut toks = Vec::new();
+            tokenize_into(text, 0, &mut toks);
+            apply_elision(toks, clitics)
+                .into_iter()
+                .map(|t| (t.span.start, t.span.end, t.text))
+                .collect()
+        };
+        // French: l'homme → l' + homme (spans exact); qu'il → qu' + il; jusqu'à → jusqu' + à.
+        assert_eq!(
+            split("l'homme", rlt_lang::FR.elision),
+            vec![(0, 2, "l'".into()), (2, 7, "homme".into())],
+        );
+        assert_eq!(split("qu'il", rlt_lang::FR.elision).len(), 2);
+        assert_eq!(split("jusqu'à", rlt_lang::FR.elision)[0].2, "jusqu'");
+        // `aujourd'hui` is a whole word (prefix `aujourd'` is not a clitic) — must NOT split.
+        assert_eq!(split("aujourd'hui", rlt_lang::FR.elision).len(), 1);
+        // Italian: dell'arte splits; the truncation `po'` (terminal apostrophe) stays whole.
+        assert_eq!(split("dell'arte", rlt_lang::IT.elision)[0].2, "dell'");
+        assert_eq!(split("po'", rlt_lang::IT.elision), vec![(0, 3, "po'".into())]);
+        // No elision configured → tokens pass through unchanged (en/de/ru/ar/es byte-identical).
+        assert_eq!(split("don't", &[]), vec![(0, 5, "don't".into())]);
     }
 
     #[test]

@@ -29,6 +29,12 @@ pub struct LangConfig {
     pub spell: SpellConfig,
     /// How surface forms are normalized to their dictionary-lookup key (en/de/ru: `None`).
     pub normalization: Normalization,
+    /// Elision clitics that split off a leading word when followed (no space) by another, keeping the
+    /// apostrophe — French `l'homme` → `l'` + `homme`, Italian `dell'arte` → `dell'` + `arte`. Each
+    /// entry is the lower-case clitic *including* its trailing apostrophe; the split only fires on an
+    /// **internal** apostrophe, so terminal-apostrophe truncations (Italian `po'`, `va'`) are untouched.
+    /// Empty for languages without apostrophe elision (en contractions stay whole; de/ru/ar/es).
+    pub elision: &'static [&'static str],
     /// Compound-word splitting rules, if the language compounds (German does; English doesn't).
     pub compounds: Option<Compounding>,
 }
@@ -301,6 +307,7 @@ pub static EN: LangConfig = LangConfig {
         alphabet: "abcdefghijklmnopqrstuvwxyz",
     },
     normalization: Normalization::None,
+    elision: &[],
     compounds: None,
 };
 
@@ -341,6 +348,7 @@ pub static DE: LangConfig = LangConfig {
         alphabet: "abcdefghijklmnopqrstuvwxyz",
     },
     normalization: Normalization::None,
+    elision: &[],
     compounds: Some(Compounding {
         linking: &["s", "es", "n", "en", "er", "e", "ens", "ns"],
         head_is_last: true,
@@ -383,6 +391,7 @@ pub static RU: LangConfig = LangConfig {
         alphabet: "абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
     },
     normalization: Normalization::None,
+    elision: &[],
     compounds: None,
 };
 
@@ -424,6 +433,7 @@ pub static AR: LangConfig = LangConfig {
         alphabet: "ءآأؤإئابةتثجحخدذرزسشصضطظعغـفقكلمنهوىي",
     },
     normalization: Normalization::StripCombiningMarks,
+    elision: &[],
     compounds: None,
 };
 
@@ -461,6 +471,12 @@ pub static FR: LangConfig = LangConfig {
         alphabet: "abcdefghijklmnopqrstuvwxyzàâçéèêëîïôûùüÿœæ",
     },
     normalization: Normalization::None,
+    // French elision clitics (the apostrophe-final dict keys): articles/pronouns/conjunctions that
+    // elide before a vowel — `l'eau`, `qu'il`, `jusqu'à`.
+    elision: &[
+        "l'", "d'", "j'", "m'", "t'", "s'", "n'", "c'", "ç'", "qu'", "jusqu'", "lorsqu'", "puisqu'",
+        "quoiqu'", "quelqu'",
+    ],
     compounds: None,
 };
 
@@ -500,6 +516,7 @@ pub static ES: LangConfig = LangConfig {
         alphabet: "abcdefghijklmnopqrstuvwxyzáéíóúüñ",
     },
     normalization: Normalization::None,
+    elision: &[],
     compounds: None,
 };
 
@@ -535,6 +552,13 @@ pub static IT: LangConfig = LangConfig {
         alphabet: "abcdefghijklmnopqrstuvwxyzàèéìîïòóùú",
     },
     normalization: Normalization::None,
+    // Italian elision clitics: articles, articulated prepositions, and a few pronouns/adjectives that
+    // elide before a vowel — `l'arte`, `dell'uomo`, `quest'anno`. Only internal apostrophes split, so
+    // truncations (`po'`, `va'`, `fa'`) and accent-substitutes (`città'`) are left whole.
+    elision: &[
+        "l'", "un'", "dell'", "all'", "nell'", "sull'", "dall'", "coll'", "quest'", "quell'", "c'",
+        "d'", "n'", "v'", "m'", "t'", "s'", "anch'", "gliel'", "sant'", "bell'", "grand'",
+    ],
     compounds: None,
 };
 
