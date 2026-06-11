@@ -429,6 +429,55 @@ mod tests {
     }
 
     #[test]
+    fn reads_real_languagetool_arabic_dict() {
+        // Arabic's arabic.dict ships in the LT repo, CFSA2 + UTF-8 (unlike Russian's KOI8-R). This
+        // pins the format and proves Arabic-script SUFFIX decoding produces clean UTF-8 — and that the
+        // dict keys are UNvocalized (no tashkeel), which is what drives `Normalization::StripCombiningMarks`.
+        let base = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../resources/lt/_repo/languagetool-language-modules/ar/src/main/resources/org/languagetool/resource/ar"
+        ));
+        let (Ok(dict), Ok(info)) = (
+            std::fs::read(base.join("arabic.dict")),
+            std::fs::read_to_string(base.join("arabic.info")),
+        ) else {
+            eprintln!("skip: arabic.dict not present (run `cargo xtask fetch-lt`)");
+            return;
+        };
+        let meta = parse_info(&info).expect("parse .info");
+        assert_eq!(meta.separator, b'+');
+        assert_eq!(meta.encoder, Encoder::Suffix);
+        assert_eq!(meta.encoding, None, "arabic.info declares fsa.dict.encoding=utf-8");
+
+        let triples = read_triples(&dict, &meta).expect("read dict");
+        eprintln!("arabic.dict: {} triples", triples.len());
+        assert!(triples.len() > 1_000_000, "Arabic morphology is rich; got {}", triples.len());
+
+        // Decoded forms are clean UTF-8, and the dict keys carry no tashkeel (Arabic combining marks
+        // U+064B–065F / U+0670) — i.e. the dict is unvocalized, which is what makes the engine's
+        // `StripCombiningMarks` necessary for vocalized input.
+        let tashkeel = |s: &str| s.chars().any(|c| ('\u{064B}'..='\u{065F}').contains(&c) || c == '\u{0670}');
+        assert!(
+            triples
+                .iter()
+                .take(20_000)
+                .all(|(i, l, _)| !i.contains('\u{fffd}') && !l.contains('\u{fffd}') && !tashkeel(i)),
+            "decoded keys must be clean, unvocalized UTF-8",
+        );
+
+        // كتاب (kitāb, "book") is a noun — assert it's an inflected key with a noun (`N`) tag.
+        let mut by_word: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+        for (inflected, lemma, tag) in &triples {
+            by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
+        }
+        assert!(
+            by_word.get("كتاب").is_some_and(|v| v.iter().any(|(_, t)| t.starts_with('N'))),
+            "كتاب should be a known noun: {:?}",
+            by_word.get("كتاب"),
+        );
+    }
+
+    #[test]
     fn rejects_fsa5_with_clean_error() {
         // FSA5 (`\fsa\x05`) is a different format we don't yet read — the guard must error cleanly,
         // never panic, so a language that ships FSA5 fails with an actionable message (future branch).

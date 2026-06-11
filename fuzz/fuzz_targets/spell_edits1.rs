@@ -16,4 +16,6 @@ fuzz_target!(|word: String| {
     }
     let _ = rlt_core::fuzz_edits1(&word, RU_ALPHABET);
     let _ = rlt_core::fuzz_edits1(&word, "abcdefghijklmnopqrstuvwxyz");
+    // Arabic base letters — RTL + combining marks in the input exercise the mark-stripping path.
+    let _ = rlt_core::fuzz_edits1(&word, "ءآأؤإئابةتثجحخدذرزسشصضطظعغـفقكلمنهوىي");
 });
