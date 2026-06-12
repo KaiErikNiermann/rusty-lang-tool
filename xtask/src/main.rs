@@ -224,6 +224,16 @@ enum Task {
         #[arg(long)]
         json: bool,
     },
+    /// Package the per-language `with_native` artifacts (tagger/disambig/grammar + shared segment.srx)
+    /// for the web demo: gzip each into a flat output dir and emit `web-artifacts.json` recording the
+    /// SHA-256 + sizes of the *compressed* assets. That manifest is the browser's root of trust — it
+    /// verifies each download against these hashes (and the hash is the cache key). Run after
+    /// `build-lang` for the languages to publish; the dir is then uploaded to a GitHub Release.
+    WebManifest {
+        /// Output directory for the `.gz` assets + `web-artifacts.json` (created if absent).
+        #[arg(long, default_value = "dist/web-artifacts")]
+        out: std::path::PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -278,6 +288,7 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
+        Task::WebManifest { out } => web_manifest(&out),
         Task::BuildL4 => build_l4(),
         Task::RunL4Oracle => run(
             "cargo",
@@ -1250,6 +1261,147 @@ fn lang_manifest(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
         manifest.lt_version
     );
     Ok(())
+}
+
+/// One compressed artifact the web client downloads: the flat Release asset name, the SHA-256 of the
+/// *compressed* bytes (what's verified on download, and the cache key), and both sizes.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebAsset {
+    /// Flat asset filename as uploaded to the Release (`en-tagger.rkyv.gz`); the client fetches
+    /// `<VITE_ARTIFACT_BASE_URL>/<asset>`.
+    asset: String,
+    /// Hex SHA-256 of the gzipped bytes — verified after download, before decompression.
+    sha256: String,
+    /// Compressed (downloaded) size in bytes.
+    bytes: u64,
+    /// Decompressed `.rkyv` size in bytes (a sanity check after `DecompressionStream`).
+    raw_bytes: u64,
+}
+
+/// One language's `with_native` artifacts in the web manifest.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebLang {
+    /// Display name (`English`), title-cased from `LangConfig::name`.
+    label: String,
+    /// Sum of the compressed file sizes — the download budget shown in the picker.
+    total_bytes: u64,
+    /// Keyed by logical artifact name (`tagger.rkyv` / `disambig.rkyv` / `grammar.rkyv`).
+    files: std::collections::BTreeMap<String, WebAsset>,
+}
+
+/// The web demo's root of trust: SHA-256 + sizes of every compressed artifact the browser fetches,
+/// baked into the deployed site so a download can be verified (and a corrupt one re-fetched).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebManifestJson {
+    schema_version: u32,
+    lt_version: String,
+    /// Artifacts shared across languages (just `segment.srx`), keyed by logical name.
+    shared: std::collections::BTreeMap<String, WebAsset>,
+    /// Per-language artifacts, keyed by ISO code.
+    languages: std::collections::BTreeMap<String, WebLang>,
+}
+
+/// Gzip `src` into `out_dir/<asset>`, returning the manifest entry (hash of the compressed bytes +
+/// both sizes). `None` if `src` is absent (an optional artifact like a language with no disambig).
+fn gzip_asset(src: &str, out_dir: &Path, asset: &str) -> Result<Option<WebAsset>> {
+    use std::io::Write as _;
+
+    use flate2::{Compression, write::GzEncoder};
+    let Ok(raw) = std::fs::read(src) else { return Ok(None) };
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
+    encoder.write_all(&raw)?;
+    let gz = encoder.finish()?;
+    std::fs::write(out_dir.join(asset), &gz)?;
+    let (sha256, bytes) = sha256_bytes(&gz);
+    Ok(Some(WebAsset { asset: asset.to_owned(), sha256, bytes, raw_bytes: raw.len() as u64 }))
+}
+
+/// Hex SHA-256 + length of an in-memory buffer (the compressed-asset analogue of [`sha256_file`]).
+fn sha256_bytes(bytes: &[u8]) -> (String, u64) {
+    use std::fmt::Write as _;
+
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(bytes);
+    let hex = hash.iter().fold(String::with_capacity(64), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    });
+    (hex, bytes.len() as u64)
+}
+
+/// Package the web demo's per-language `with_native` artifacts: gzip each into `out` and emit
+/// `web-artifacts.json` (the browser's integrity manifest). Skips any language whose required
+/// artifacts aren't built, so it works on a partial `resources/` (e.g. CI building one matrix leg).
+fn web_manifest(out: &Path) -> Result<()> {
+    std::fs::create_dir_all(out)?;
+
+    // The one shared artifact: segment.srx (passed to `with_native` as a string).
+    let srx_path = rlt_lang::LANGUAGES[0].segment_srx_path();
+    let mut shared = std::collections::BTreeMap::new();
+    if let Some(asset) = gzip_asset(srx_path, out, "segment.srx.gz")? {
+        shared.insert("segment.srx".to_owned(), asset);
+    } else {
+        bail!("{srx_path} missing — run `fetch-lt` first");
+    }
+
+    let mut languages = std::collections::BTreeMap::new();
+    for cfg in rlt_lang::LANGUAGES {
+        let code = cfg.code;
+        // The artifacts `RltChecker.with_native` consumes: tagger + grammar (required), disambig (optional).
+        let required = [("tagger.rkyv", cfg.tagger_path()), ("grammar.rkyv", cfg.grammar_blob_path())];
+        let mut files = std::collections::BTreeMap::new();
+        let mut missing = false;
+        for (name, path) in required {
+            match gzip_asset(&path, out, &format!("{code}-{name}.gz"))? {
+                Some(asset) => {
+                    files.insert(name.to_owned(), asset);
+                }
+                None => missing = true,
+            }
+        }
+        if missing {
+            println!("skip {code}: required artifacts not built (run `build-lang --lang {code}`)");
+            continue;
+        }
+        if let Some(asset) = gzip_asset(&cfg.disambig_path(), out, &format!("{code}-disambig.rkyv.gz"))? {
+            files.insert("disambig.rkyv".to_owned(), asset);
+        }
+        let total_bytes = files.values().map(|a| a.bytes).sum();
+        languages.insert(
+            code.to_owned(),
+            WebLang { label: title_case(cfg.name), total_bytes, files },
+        );
+    }
+
+    if languages.is_empty() {
+        bail!("no language artifacts built — run `build-lang --lang <code>` first");
+    }
+
+    let manifest = WebManifestJson {
+        schema_version: 1,
+        lt_version: lt_version(),
+        shared,
+        languages,
+    };
+    let manifest_path = out.join("web-artifacts.json");
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)? + "\n")?;
+    println!(
+        "wrote {} + {} gz assets ({} languages) to {}",
+        manifest_path.display(),
+        manifest.languages.values().map(|l| l.files.len()).sum::<usize>() + manifest.shared.len(),
+        manifest.languages.len(),
+        out.display(),
+    );
+    Ok(())
+}
+
+/// Capitalise the first ASCII letter of a lower-case language name (`english` → `English`).
+fn title_case(s: &str) -> String {
+    let mut chars = s.chars();
+    chars.next().map_or_else(String::new, |c| c.to_ascii_uppercase().to_string() + chars.as_str())
 }
 
 /// Compare current upstream inputs to each committed manifest and report per-file drift. Exits

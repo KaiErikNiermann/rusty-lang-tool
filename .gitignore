@@ -54,3 +54,10 @@ node_modules/
 # Java extractor build deps (NgramDump.java source IS committed)
 /tools/lib/
 /tools/out/
+
+# Web demo build outputs (the SvelteKit app is committed; its build/deps are not). The wasm-pack
+# bundle lands in /crates/rlt-wasm/pkg/ (ignored above); the gzipped artifacts land in /dist/.
+/dist/
+/web/node_modules/
+/web/build/
+/web/.svelte-kit/
