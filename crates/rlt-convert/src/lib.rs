@@ -461,7 +461,13 @@ fn lower_document(doc: &rules::RulesElementType) -> Vec<Rule> {
                     let group_aps: Vec<Vec<Construct>> = g
                         .antipattern
                         .iter()
-                        .map(|a| lower_antipattern(a, &phrases))
+                        .map(|a| {
+                            let mut ap = lower_antipattern(a, &phrases);
+                            if a.case_sensitive.as_ref().is_some_and(is_yes) {
+                                force_case_sensitive(&mut ap);
+                            }
+                            ap
+                        })
                         .collect();
                     out.extend(
                         g.rule
@@ -550,10 +556,18 @@ fn lower_rule(
     for c in &r.content {
         match c {
             rules::RuleElementTypeContent::Pattern(p) => {
+                let start = pattern.len();
                 lower_pattern(&p.content, &mut pattern, phrases);
+                if p.case_sensitive.as_ref().is_some_and(is_yes) {
+                    force_case_sensitive(&mut pattern[start..]);
+                }
             }
             rules::RuleElementTypeContent::Antipattern(a) => {
-                antipatterns.push(lower_antipattern(a, phrases));
+                let mut ap = lower_antipattern(a, phrases);
+                if a.case_sensitive.as_ref().is_some_and(is_yes) {
+                    force_case_sensitive(&mut ap);
+                }
+                antipatterns.push(ap);
             }
             rules::RuleElementTypeContent::Filter(f) => pattern.push(Construct::Opaque {
                 class: f.class.clone(),
@@ -916,6 +930,28 @@ fn trimmed(text: Option<&xsd_parser_types::xml::Text>) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Force case-sensitive matching on every token (and its exceptions) and rule-level `<regexp>` in
+/// `constructs`. `<pattern>`/`<antipattern>` carry a `case_sensitive="yes"` that applies to *all* their
+/// tokens, but `lower_pattern` only sees the children, not that attribute — so the enclosing scope
+/// stamps it on afterward. Without this, a case-sensitive uppercase regex (e.g. Russian `AllCaps`'s
+/// `[А-ЯЁ]{4,4}…`) matches case-insensitively and fires on every capitalised word.
+fn force_case_sensitive(constructs: &mut [Construct]) {
+    fn mark(t: &mut TokenPat) {
+        t.case_sensitive = true;
+        for e in &mut t.exceptions {
+            e.case_sensitive = true;
+        }
+    }
+    for c in constructs {
+        match c {
+            Construct::Token(t) => mark(t),
+            Construct::Or(ts) | Construct::And(ts) => ts.iter_mut().for_each(mark),
+            Construct::Regexp { case_sensitive, .. } => *case_sensitive = true,
+            _ => {}
+        }
+    }
+}
+
 /// LT's `yes`/`no` enum → bool.
 fn is_yes(v: &pattern::BinaryYesNoType) -> bool {
     matches!(v, pattern::BinaryYesNoType::Yes)
@@ -1206,6 +1242,41 @@ mod tests {
             Some("hell"),
             "token literal after <exception> was dropped (wildcard regression)",
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Regression: `<pattern case_sensitive="yes">` must stamp case-sensitivity onto its tokens. Without
+    /// it, an uppercase regex (ru `AllCaps`'s `[А-ЯЁ]{4,4}…`) matches lowercase and fires on every word.
+    #[test]
+    fn pattern_case_sensitive_propagates_to_tokens() {
+        let dir = std::env::temp_dir().join(format!("rlt-cs-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("grammar.xml");
+        std::fs::write(
+            &path,
+            "<?xml version=\"1.0\"?>\n\
+             <rules lang=\"en\">\n\
+               <category id=\"C\" name=\"C\">\n\
+                 <rule id=\"CS\" name=\"cs\">\n\
+                   <pattern case_sensitive=\"yes\">\n\
+                     <token regexp=\"yes\">[A-Z]+</token>\n\
+                   </pattern>\n\
+                   <message>caps</message>\n\
+                   <example correction=\"x\"><marker>ABC</marker></example>\n\
+                 </rule>\n\
+               </category>\n\
+             </rules>\n",
+        )
+        .unwrap();
+        let token = super::lower_document(&super::parse_grammar(&path).expect("parse"))
+            .iter()
+            .flat_map(|r| r.pattern.clone())
+            .find_map(|c| match c {
+                super::Construct::Token(t) => Some(t),
+                _ => None,
+            })
+            .expect("the rule has a token");
+        assert!(token.case_sensitive, "pattern-level case_sensitive was not propagated to the token");
         std::fs::remove_dir_all(&dir).ok();
     }
 
