@@ -71,6 +71,15 @@ cargo xtask run-oracle      # score both backends against LT's example corpus
 
 L4 is automatic when `resources/l4/` is present (after `build-l4`); otherwise the CLI runs L1–L3.
 
+## Web demo
+
+A client-side [Svelte](web/) demo lets you pick a language, fetch its compiled artifacts once (verified
++ cached in the browser), and check text in a Monaco editor with inline squiggles and quick-fixes — no
+server, no telemetry. `cargo xtask web-manifest` packages the per-language `with_native` artifacts
+(gzipped) + a SHA-256 integrity manifest; the artifacts are hosted on a GitHub Release and the site is
+deployed to GitHub Pages by `.github/workflows/{release-artifacts,deploy-pages}.yml`. See
+[`web/README.md`](web/README.md) to run it locally.
+
 ## Licensing
 
 Code is `Apache-2.0 OR MIT`. LanguageTool-derived data artifacts (`en.rkyv`, `confusion.rkyv`) are
