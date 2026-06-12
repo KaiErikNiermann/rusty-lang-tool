@@ -20,6 +20,7 @@ Rust const derives from it, so those sites cannot drift:
 | xtask `lang_cfg` error | `rlt_lang::known()` |
 | xtask `configured_langs()` (the `lang-status` default set) | `rlt_lang::LANGUAGES` |
 | fuzz `codes()` (the `engine_analyze` rotation) | `rlt_lang::LANGUAGES` |
+| nightly `oracle` job matrix | `fromJSON(setup.langs)`, where `setup` runs `xtask lang-codes --json` |
 
 There is no second array of codes anywhere. If you find yourself writing `["en", "de", …]`, derive it
 from `LANGUAGES` instead.
@@ -37,15 +38,17 @@ echo "All $(echo "$codes" | wc -w) languages rebuilt"
 ```
 
 The `sync-upstream` workflow uses exactly this — its rebuild loop and its summary count both come from
-`lang-codes`, so neither can disagree with the engine. This is strictly better than grepping prose for
-"N languages": a derived count is *correct by construction*, not checked after the fact.
+`lang-codes`, so neither can disagree with the engine. The `nightly` workflow does the same for its
+`oracle` job: a `setup` job emits `lang-codes --json` and the oracle fan-out is `fromJSON`-expanded from
+it, so there's no `[en, de, …]` matrix to keep in sync. This is strictly better than grepping prose for
+"N languages": a derived set/count is *correct by construction*, not checked after the fact.
 
 ## The checker — `cargo xtask lang-coherence`
 
-Some sites can't share the Rust const: the per-language content manifest is JSON, the CI matrix is YAML,
-and the tests are matched by *name*. For those, `lang-coherence` verifies — per language — that the site
-includes it, and **exits non-zero** on any required gap. It runs in the CI `lint` job (no fetched data
-needed; it only reads committed files).
+Some sites can't share the Rust const *and* can't be derived at use-time: the per-language content
+manifest is JSON on disk, and the tests are matched by *name*. For those, `lang-coherence` verifies —
+per language — that the site includes it, and **exits non-zero** on any required gap. It runs in the CI
+`lint` job (no fetched data needed; it only reads committed files).
 
 Required checks (each gates CI):
 
@@ -53,7 +56,6 @@ Required checks (each gates CI):
 | --- | --- | --- |
 | `manifest` | `lang-manifests/<code>.json` | the upstream content-hash manifest exists |
 | `sparse-checkout path` | `SPARSE_PATHS` in `xtask/src/main.rs` | `fetch-lt` pulls the language's resources (matches `LangConfig::lt_sparse_path`) |
-| `nightly oracle matrix` | `lang:` list in `.github/workflows/nightly.yml` | the language is scored in nightly CI |
 | `morfologik dict test` | `reads_real_languagetool_<name>_dict` in `rlt-convert/src/morfologik.rs` | the real LT dict reads back |
 | `native oracle test` | `<code>_native_reproduces_examples` in `rlt-cli/tests/oracle.rs` | L2 grammar reproduces LT's `<example>`s (English is covered by the `nlprule_baseline` + `ir_matcher` pair instead) |
 | `L3 confusion build` | `confusion_corpus(code)` in `xtask/src/main.rs` | if `sources.confusion`, the L3 model is buildable (English builds via the dedicated Norvig path) |
@@ -80,7 +82,9 @@ can't drift in the first place.
 3. Build artifacts: `cargo xtask build-lang --lang <code>` (plus `build-confusion` if L3).
 4. Add the tests the checker looks for: the morfologik dict test, the native oracle test, and — if L3 —
    a `confusion_corpus` arm (and ideally the L3 floor test).
-5. Add the language to the nightly oracle `lang:` matrix.
-6. Pin the upstream content: `cargo xtask lang-manifest --lang <code>`.
-7. `cargo xtask lang-coherence` — every required check PASS, exit 0. Now you know the language is wired
+5. Pin the upstream content: `cargo xtask lang-manifest --lang <code>`.
+6. `cargo xtask lang-coherence` — every required check PASS, exit 0. Now you know the language is wired
    into *all* systems, not just the ones you remembered.
+
+(There's no "add it to the CI matrix" step — the nightly oracle fan-out derives from `LANGUAGES`, so a
+new entry there is picked up automatically.)

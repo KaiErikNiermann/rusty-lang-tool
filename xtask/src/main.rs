@@ -213,12 +213,17 @@ enum Task {
     },
     /// Verify every configured language (the canonical `rlt_lang::LANGUAGES`) is wired into all the
     /// sites that *can't* share that Rust const — the per-language manifest, the sparse-checkout paths,
-    /// the nightly oracle matrix, and the convert/oracle test names — so adding a language can't leave
-    /// one system out of sync. Exits non-zero on any required gap.
+    /// and the convert/oracle test names — so adding a language can't leave one system out of sync.
+    /// Exits non-zero on any required gap.
     LangCoherence,
-    /// Print the canonical language codes (space-separated, from `rlt_lang::LANGUAGES`) so shell/CI can
-    /// derive the language set + count dynamically instead of hardcoding a list that can drift.
-    LangCodes,
+    /// Print the canonical language codes (from `rlt_lang::LANGUAGES`) so shell/CI can derive the
+    /// language set + count dynamically instead of hardcoding a list that can drift.
+    LangCodes {
+        /// Emit a JSON array (`["en","de",…]`) for a GitHub Actions matrix via `fromJSON`, instead of
+        /// the default space-separated list.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -264,8 +269,13 @@ fn main() -> Result<()> {
         Task::LangStatus { lang } => lang_status(lang.as_deref()),
         Task::LangManifest { lang } => lang_manifest(lang_cfg(&lang)?),
         Task::LangCoherence => lang_coherence(),
-        Task::LangCodes => {
-            println!("{}", rlt_lang::LANGUAGES.iter().map(|c| c.code).collect::<Vec<_>>().join(" "));
+        Task::LangCodes { json } => {
+            let codes: Vec<&str> = rlt_lang::LANGUAGES.iter().map(|c| c.code).collect();
+            if json {
+                println!("{}", serde_json::to_string(&codes)?);
+            } else {
+                println!("{}", codes.join(" "));
+            }
             Ok(())
         }
         Task::BuildL4 => build_l4(),
@@ -1330,27 +1340,15 @@ impl Check {
     }
 }
 
-/// Parse the `lang: [en, de, …]` matrix from the nightly oracle job (the one site that lists every
-/// language as data, not via the Rust const). Returns the codes, or empty if the matrix isn't found.
-fn nightly_oracle_langs(yaml: &str) -> Vec<String> {
-    yaml.lines()
-        .find_map(|l| l.trim().strip_prefix("lang:").map(str::trim))
-        .and_then(|v| v.strip_prefix('[')?.strip_suffix(']'))
-        .map(|inner| inner.split(',').map(|s| s.trim().to_owned()).collect())
-        .unwrap_or_default()
-}
-
 /// Verify every configured language is wired into the non-Rust / cross-file sites that can't derive
-/// from [`rlt_lang::LANGUAGES`]. Required failures gate CI; recommended ones only warn. Closes with an
-/// informational sweep of every numeric "N langs" mention in the tree so stale counts surface.
+/// from [`rlt_lang::LANGUAGES`]. Required failures gate CI; recommended ones only warn. (Sites that
+/// *can* derive — the CLI/xtask error strings, the fuzz rotation, the nightly oracle matrix — aren't
+/// checked here because they're generated from the canonical list and so can't drift in the first place.)
 fn lang_coherence() -> Result<()> {
-    let nightly = std::fs::read_to_string(".github/workflows/nightly.yml")
-        .context("reading .github/workflows/nightly.yml")?;
     let oracle = std::fs::read_to_string("crates/rlt-cli/tests/oracle.rs")
         .context("reading crates/rlt-cli/tests/oracle.rs")?;
     let morfologik = std::fs::read_to_string("crates/rlt-convert/src/morfologik.rs")
         .context("reading crates/rlt-convert/src/morfologik.rs")?;
-    let oracle_matrix = nightly_oracle_langs(&nightly);
 
     let count = rlt_lang::LANGUAGES.len();
     println!("language coherence — {count} configured: {}\n", rlt_lang::known());
@@ -1368,11 +1366,6 @@ fn lang_coherence() -> Result<()> {
                 "sparse-checkout path",
                 SPARSE_PATHS.contains(&cfg.lt_sparse_path().as_str()),
                 format!("add {:?} to SPARSE_PATHS in xtask/src/main.rs", cfg.lt_sparse_path()),
-            ),
-            Check::required(
-                "nightly oracle matrix",
-                oracle_matrix.iter().any(|c| c == code),
-                format!("add `{code}` to the oracle `lang:` matrix in .github/workflows/nightly.yml"),
             ),
             Check::required(
                 "morfologik dict test",
@@ -1732,21 +1725,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn nightly_matrix_parses_the_lang_list() {
-        let yaml = "  strategy:\n    matrix:\n      lang: [en, de, ru, ar, fr, es, it]\n";
-        assert_eq!(nightly_oracle_langs(yaml), ["en", "de", "ru", "ar", "fr", "es", "it"]);
-    }
-
-    #[test]
-    fn nightly_matrix_absent_yields_empty() {
-        assert!(nightly_oracle_langs("jobs:\n  build:\n").is_empty());
-    }
-
-    #[test]
-    fn lang_codes_output_matches_the_canonical_list() {
-        // The string `lang-codes` emits (and CI iterates) must be exactly the canonical codes.
+    fn lang_codes_json_is_a_parseable_array_of_the_canonical_codes() {
+        // The `lang-codes --json` output the nightly matrix consumes via `fromJSON` must round-trip
+        // to exactly the canonical codes.
         let codes = rlt_lang::LANGUAGES.iter().map(|c| c.code).collect::<Vec<_>>();
-        assert_eq!(codes.join(" ").split_whitespace().collect::<Vec<_>>(), codes);
+        let json = serde_json::to_string(&codes).unwrap();
+        let parsed: Vec<String> = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, codes);
     }
 
     #[test]
