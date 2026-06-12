@@ -50,6 +50,28 @@ jobs:
       - name: wasm32 compile gate (the Node smoke runs in the engine job, which has artifacts)
         run: cargo build -p rlt-wasm --target wasm32-unknown-unknown
 
+  # Web demo: strict svelte-check + the spanmap unit vectors. Builds the wasm pkg first so the `$wasm`
+  # types resolve; full browser/build + deploy coverage lives in deploy-pages.yml.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with: { targets: wasm32-unknown-unknown, cache-key: web }
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
+      - run: pnpm --prefix web install --frozen-lockfile
+      - name: Build the wasm pkg (web target) so `$wasm` types resolve
+        run: pnpm --prefix web run wasm
+      - name: svelte-check (strict TS)
+        run: pnpm --prefix web run check
+      - name: Unit tests (spanmap vectors)
+        run: pnpm --prefix web test
+
   # --- Engine gate: fetch LT, build the English artifacts, run the on-thesis oracle -------------
   engine-oracle:
     runs-on: ubuntu-latest
