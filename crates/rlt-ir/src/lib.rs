@@ -291,6 +291,10 @@ pub struct DisambigRule {
     /// The ordered pattern, with `MarkerStart`/`MarkerEnd` bounding the tokens the action mutates
     /// (the whole match when there is no marker).
     pub pattern: Vec<Construct>,
+    /// `<antipattern>`s: if any matches overlapping the rule's match, the action is suppressed (LT's
+    /// exception-by-context mechanism). Without these a disambig rule over-applies — mutating tags in
+    /// contexts the antipattern was meant to carve out.
+    pub antipatterns: Vec<Vec<Construct>>,
     /// What to do to the marked tokens' tags/lemmas on a match.
     pub action: TagAction,
 }

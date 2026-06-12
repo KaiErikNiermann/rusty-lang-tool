@@ -615,10 +615,15 @@ fn match_elements(
     None
 }
 
-/// Whether any of `rule`'s antipatterns matches a token range overlapping the rule's match
-/// `[start, end)` — in which case the rule is suppressed.
-fn suppressed(rule: &CompiledRule, tokens: &[Token], start: usize, end: usize) -> bool {
-    rule.antipatterns.iter().any(|ap| {
+/// Whether any of `antipatterns` matches a token range overlapping `[start, end)` — the LT suppression
+/// rule, shared by the grammar matcher and the disambiguator.
+fn antipatterns_suppress(
+    antipatterns: &[Vec<Elem>],
+    tokens: &[Token],
+    start: usize,
+    end: usize,
+) -> bool {
+    antipatterns.iter().any(|ap| {
         let mut caps = vec![None; ap.len()];
         // Overlap requires the antipattern to start before the rule match ends.
         (0..end).any(|from| {
@@ -629,6 +634,11 @@ fn suppressed(rule: &CompiledRule, tokens: &[Token], start: usize, end: usize) -
             )
         })
     })
+}
+
+/// Whether any of `rule`'s antipatterns suppresses its match `[start, end)`.
+fn suppressed(rule: &CompiledRule, tokens: &[Token], start: usize, end: usize) -> bool {
+    antipatterns_suppress(&rule.antipatterns, tokens, start, end)
 }
 
 /// Build a diagnostic from a successful match, or `None` if the marker is empty or no suggestion
@@ -730,10 +740,11 @@ pub struct Disambiguator {
 }
 
 /// A disambiguation rule compiled for matching: pattern elements, the marked element range (the
-/// tokens the action mutates), and the action.
+/// tokens the action mutates), the antipatterns that suppress it, and the action.
 struct CompiledDisambig {
     elements: Vec<Elem>,
     marker: Option<(usize, usize)>,
+    antipatterns: Vec<Vec<Elem>>,
     action: CompiledAction,
 }
 
@@ -787,10 +798,14 @@ fn apply_disambig_rule(rule: &CompiledDisambig, tokens: &mut [Token]) {
         caps.fill(None);
         match match_elements(&rule.elements, 0, tokens, ti, &mut caps) {
             Some(end) if end > ti => {
-                if let Some(range) = marker_token_range(rule.marker, &caps, ti, end) {
-                    hits.push(range);
+                if antipatterns_suppress(&rule.antipatterns, tokens, ti, end) {
+                    ti += 1; // suppressed here — let a later, non-excluded position match
+                } else {
+                    if let Some(range) = marker_token_range(rule.marker, &caps, ti, end) {
+                        hits.push(range);
+                    }
+                    ti = end; // non-overlapping: resume past this match
                 }
-                ti = end; // non-overlapping: resume past this match
             }
             _ => ti += 1,
         }
@@ -875,9 +890,13 @@ fn compile_disambig(r: &DisambigRule) -> Option<CompiledDisambig> {
             _ => return None,
         }
     }
+    // Drop (don't skip the rule for) any antipattern with an unmatchable construct — a missing
+    // antipattern only costs precision, same policy as the grammar matcher.
+    let antipatterns = r.antipatterns.iter().filter_map(|ap| compile_elements(ap)).collect();
     (!elements.is_empty()).then_some(CompiledDisambig {
         elements,
         marker,
+        antipatterns,
         action,
     })
 }
@@ -969,6 +988,7 @@ mod tests {
         let rule = |id: &str, word: &str, action: TagAction| DisambigRule {
             id: id.to_owned(),
             pattern: vec![lit(word)],
+            antipatterns: vec![],
             action,
         };
         let dis = Disambiguator::new(&[
@@ -1006,6 +1026,36 @@ mod tests {
         assert_eq!(tokens[1].tags, vec!["PCT"], "PCT added");
         assert_eq!(tokens[2].tags, vec!["CC"], "narrowed to the present target");
         assert_eq!(tokens[3].tags, vec!["FOO", "CD"], "target absent → added, not clobbered");
+    }
+
+    #[test]
+    fn disambiguator_antipattern_suppresses_in_excluded_context() {
+        use rlt_ir::{DisambigRule, TagAction};
+
+        let tok = |text: &str, tags: &[&str]| Token {
+            text: text.to_owned(),
+            tags: tags.iter().map(|s| (*s).to_owned()).collect(),
+            ..Default::default()
+        };
+        // Remove NNP from "May" — but NOT when preceded by "in" (the antipattern context).
+        let dis = Disambiguator::new(&[DisambigRule {
+            id: "MAY".to_owned(),
+            pattern: vec![lit("May")],
+            antipatterns: vec![vec![lit("in"), lit("May")]],
+            action: TagAction::Remove {
+                postags: vec!["NNP".to_owned()],
+                lemmas: vec![],
+                postag_regexp: false,
+            },
+        }]);
+
+        let mut alone = vec![tok("May", &["NNP", "VB"])];
+        dis.disambiguate(&mut alone);
+        assert_eq!(alone[0].tags, vec!["VB"], "rule applies outside the antipattern context");
+
+        let mut ctx = vec![tok("in", &["IN"]), tok("May", &["NNP", "VB"])];
+        dis.disambiguate(&mut ctx);
+        assert_eq!(ctx[1].tags, vec!["NNP", "VB"], "antipattern context suppresses the action");
     }
 
     #[test]

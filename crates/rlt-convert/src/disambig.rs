@@ -94,7 +94,22 @@ fn lower_rule(rule: &XRule, group_id: Option<&str>) -> DisambigRule {
     } else {
         TagAction::Unsupported
     };
-    DisambigRule { id, pattern, action }
+    // Antipatterns suppress the action in excluded contexts. Drop (don't fail the rule for) any with an
+    // unmatchable token — a missing antipattern only costs precision, mirroring the grammar matcher.
+    let antipatterns = rule
+        .antipattern
+        .iter()
+        .filter_map(|a| {
+            let mut ap = Vec::new();
+            (lower_items(&a.items, &mut ap) && !ap.is_empty()).then(|| {
+                if is_yes(a.case_sensitive.as_deref()) {
+                    crate::force_case_sensitive(&mut ap);
+                }
+                ap
+            })
+        })
+        .collect();
+    DisambigRule { id, pattern, antipatterns, action }
 }
 
 /// Lower an ordered list of pattern items into constructs, returning `false` if any is unsupported
@@ -227,6 +242,8 @@ struct XRule {
     #[serde(rename = "@id")]
     id: Option<String>,
     pattern: Option<XPattern>,
+    #[serde(default)]
+    antipattern: Vec<XPattern>,
     disambig: Option<XDisambig>,
 }
 
