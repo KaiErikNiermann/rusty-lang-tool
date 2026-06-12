@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  # --- Fast lane: no fetched LT data, runs on every push/PR -------------------------------------
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with: { cache-key: lint }
+      - name: clippy (blocking — pedantic clean is the house gate)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: rustfmt (informational — the tree predates fmt enforcement)
+        continue-on-error: true
+        run: cargo fmt --all --check
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with: { cache-key: test }
+      - name: unit + integration tests (the `#[ignore]` oracle/data tests run in the engine job)
+        run: cargo test --workspace --locked
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with: { targets: wasm32-unknown-unknown, cache-key: wasm }
+      - name: wasm32 compile gate (the Node smoke runs in the engine job, which has artifacts)
+        run: cargo build -p rlt-wasm --target wasm32-unknown-unknown
+
+  # --- Engine gate: fetch LT, build the English artifacts, run the on-thesis oracle -------------
+  engine-oracle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with: { targets: wasm32-unknown-unknown, cache-key: engine }
+      - name: System deps (gawk for the AGID tagger fallback, wasm-pack + node for the smoke)
+        run: |
+          sudo apt-get update && sudo apt-get install -y gawk unzip
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      # The LT checkout + downloaded POS dicts are the slow part — cache them by pinned version.
+      - name: Cache LT resources
+        uses: actions/cache@v4
+        with:
+          path: |
+            resources/lt
+            resources/segment.srx
+            resources/en
+            resources/*.bin
+            resources/ngrams
+          key: lt-en-${{ hashFiles('xtask/src/main.rs') }}-${{ hashFiles('crates/rlt-lang/src/lib.rs') }}
+      - name: Fetch LT sources + nlprule baseline engine
+        run: |
+          cargo run -p xtask -- fetch-lt
+          cargo run -p xtask -- fetch-engine
+      - name: Build English artifacts (tagger + disambig + grammar blob)
+        run: cargo run -p xtask -- build-lang --lang en
+      - name: Oracle (English native + IR matcher + nlprule baseline; other langs skip if unbuilt)
+        run: cargo test -p rlt-cli --test oracle --release -- --ignored --nocapture --test-threads 1
+      - name: WASM Node smoke (loads the built English artifacts through wasm-bindgen)
+        run: cargo run -p xtask -- build-wasm

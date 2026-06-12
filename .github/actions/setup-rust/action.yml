@@ -1,0 +1,27 @@
+name: Setup Rust
+description: Install the pinned nightly toolchain (rust-toolchain.toml) with extra components/targets and a shared build cache.
+inputs:
+  components:
+    description: Extra rustup components (comma-separated), e.g. "miri,rust-src".
+    default: ""
+  targets:
+    description: Extra rustup targets, e.g. "wasm32-unknown-unknown".
+    default: ""
+  cache-key:
+    description: Suffix for the shared rust-cache key (so heavy jobs don't share a cache with light ones).
+    default: "default"
+runs:
+  using: composite
+  steps:
+    # The repo pins `nightly` via rust-toolchain.toml; install it explicitly so we control components.
+    - uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: clippy,rustfmt${{ inputs.components != '' && format(',{0}', inputs.components) || '' }}
+        targets: ${{ inputs.targets }}
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: ${{ inputs.cache-key }}
+        # The detached fuzz workspace has its own lockfile; cache it too when present.
+        workspaces: |
+          .
+          fuzz

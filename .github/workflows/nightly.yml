@@ -1,0 +1,134 @@
+name: Nightly (miri / fuzz / full oracle / bench)
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC daily
+  workflow_dispatch:
+    inputs:
+      fuzz-seconds:
+        description: Per-target fuzz budget (seconds)
+        default: "120"
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  # UB / memory-model checks over the safe-Rust + rkyv crates. rkyv's zero-copy fails Stacked Borrows,
+  # so we use Tree Borrows (the same flag the repo uses locally). Artifact-loading engine tests read
+  # 100 MB+ files and are pathologically slow under miri, so we scope to the fast crates.
+  miri:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with: { components: "miri,rust-src", cache-key: miri }
+      - name: miri (tree-borrows) over rlt-core / rlt-ir / rlt-convert
+        env:
+          MIRIFLAGS: "-Zmiri-tree-borrows"
+        run: cargo miri test -p rlt-core -p rlt-ir -p rlt-convert
+
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # Untrusted-input (rkyv/byte) + L1/L3 targets need no built artifacts; engine_analyze needs the
+        # English tagger (built below). The per-language engine_analyze_* targets run in the local
+        # `cargo xtask fuzz` flow, not CI (they'd each need that language's multi-MB artifacts).
+        target: [ir_rkyv, confusion_rkyv, disambig_rkyv, ir_match, tagger_load, spell_edits1, engine_analyze]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with: { cache-key: fuzz }
+      - run: cargo install cargo-fuzz --locked
+      - name: System deps + cache LT resources
+        run: sudo apt-get update && sudo apt-get install -y gawk unzip
+      - uses: actions/cache@v4
+        with:
+          path: |
+            resources/lt
+            resources/segment.srx
+            resources/en
+            resources/*.bin
+          key: lt-en-${{ hashFiles('xtask/src/main.rs') }}
+      - name: Build English artifacts (engine_analyze fuzzes the real English engine)
+        if: matrix.target == 'engine_analyze'
+        run: |
+          cargo run -p xtask -- fetch-lt
+          cargo run -p xtask -- build-lang --lang en
+      - name: Fuzz ${{ matrix.target }}
+        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=${{ github.event.inputs.fuzz-seconds || '120' }} -rss_limit_mb=5120
+      - name: Upload crash artifacts (if any)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz/artifacts/
+
+  # The full `#[ignore]` oracle suite, one job per language so they build + score in parallel. L3
+  # (huge LT n-grams for de/fr/es) is NOT rebuilt here — those L3 tests skip when confusion.rkyv is
+  # absent; English L3 (small Norvig counts) does run.
+  oracle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        lang: [en, de, ru, ar, fr, es, it]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: oracle-${{ matrix.lang }}
+      - run: sudo apt-get update && sudo apt-get install -y gawk unzip
+      - uses: actions/cache@v4
+        with:
+          path: |
+            resources/lt
+            resources/segment.srx
+            resources/${{ matrix.lang }}
+            resources/*.bin
+            resources/ngrams
+          key: lt-${{ matrix.lang }}-${{ hashFiles('xtask/src/main.rs', 'crates/rlt-lang/src/lib.rs') }}
+      - name: Fetch + build ${{ matrix.lang }} artifacts
+        run: |
+          cargo run -p xtask -- fetch-lt
+          cargo run -p xtask -- fetch-engine
+          cargo run -p xtask -- build-lang --lang ${{ matrix.lang }}
+      - name: English L3 confusion model (small Norvig counts; other langs' L3 skip)
+        if: matrix.lang == 'en'
+        run: |
+          cargo run -p xtask -- fetch-ngrams
+          cargo run -p xtask -- build-confusion --lang en
+      - name: Score the ${{ matrix.lang }} oracle floors
+        run: cargo test -p rlt-cli --test oracle --release -- --ignored --nocapture --test-threads 1
+
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with: { cache-key: bench }
+      - run: sudo apt-get update && sudo apt-get install -y gawk unzip
+      - uses: actions/cache@v4
+        with:
+          path: |
+            resources/lt
+            resources/segment.srx
+            resources/en
+          key: lt-en-${{ hashFiles('xtask/src/main.rs') }}
+      - run: cargo run -p xtask -- fetch-lt && cargo run -p xtask -- build-lang --lang en
+      - name: Engine benchmark (informational — CI numbers are noisy, not a gate)
+        run: cargo bench -p rlt-native --bench engine | tee bench.txt
+      - uses: actions/upload-artifact@v4
+        with: { name: bench-results, path: bench.txt }

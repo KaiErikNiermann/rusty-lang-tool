@@ -1,0 +1,126 @@
+name: Sync upstream LanguageTool
+
+# Weekly: detect a newer LanguageTool release, fetch its sources, report exactly which per-language
+# inputs changed *linguistically* (via the content-hash manifests), rebuild + re-score, and open a PR
+# for human review. Linguistic updates to LT's grammar/dicts can need code adjustments, so this never
+# auto-merges — it surfaces the diff and the build/oracle result, and flags incompatibilities.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      target-version:
+        description: Force a specific LT tag (e.g. v6.8); blank = latest release.
+        default: ""
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+  LT_REPO: https://github.com/languagetool-org/languagetool.git
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: sync
+      - run: sudo apt-get update && sudo apt-get install -y gawk unzip
+
+      - name: Resolve pinned vs latest LT version
+        id: ver
+        run: |
+          pinned=$(grep -oP 'const LT_VERSION: &str = "\K[^"]+' xtask/src/main.rs)
+          if [ -n "${{ github.event.inputs.target-version }}" ]; then
+            latest="${{ github.event.inputs.target-version }}"
+          else
+            latest=$(git ls-remote --tags --refs "$LT_REPO" 'v[0-9]*' \
+              | sed 's#.*/##' | grep -E '^v[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          fi
+          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          { [ "$pinned" = "$latest" ] && echo "newer=false" || echo "newer=true"; } >> "$GITHUB_OUTPUT"
+          echo "Pinned: $pinned   Latest: $latest"
+
+      # No new release: re-hash the pinned sources to catch any manifest drift (normally a no-op — a
+      # tag is immutable — but the cheap safety net, and it fails loudly if a manifest is out of sync).
+      - name: Drift check at the pinned version
+        if: steps.ver.outputs.newer == 'false'
+        run: |
+          cargo run -p xtask -- fetch-lt
+          cargo run -p xtask -- lang-status
+
+      # --- A newer release exists: bump, re-fetch, diff, rebuild, re-score -----------------------
+      - name: Bump LT_VERSION and fetch the new sources
+        if: steps.ver.outputs.newer == 'true'
+        run: |
+          sed -i "s/LT_VERSION: &str = \"${{ steps.ver.outputs.pinned }}\"/LT_VERSION: \&str = \"${{ steps.ver.outputs.latest }}\"/" xtask/src/main.rs
+          rm -rf resources/lt
+          cargo run -p xtask -- fetch-lt
+
+      - name: Build the PR body (drift report + rebuild + re-score)
+        if: steps.ver.outputs.newer == 'true'
+        id: build
+        run: |
+          set +e
+          status=ok
+          {
+            echo "Automated sync of vendored LanguageTool sources: **${{ steps.ver.outputs.pinned }} → ${{ steps.ver.outputs.latest }}**."
+            echo
+            echo "### Linguistic drift (content-hash manifest diff)"
+            echo "What actually changed in LT's grammar / dicts / disambiguation since the pinned version:"
+            echo '```'
+          } > pr-body.md
+          # lang-status exits non-zero on drift (expected); capture its per-file report.
+          cargo run -p xtask -- lang-status >> pr-body.md 2>&1
+          echo '```' >> pr-body.md
+
+          cargo run -p xtask -- fetch-engine >/dev/null 2>&1
+          for l in en de ru ar fr es it; do
+            if ! cargo run -p xtask -- build-lang --lang "$l" > "build-$l.log" 2>&1; then
+              status=build-failed
+              { echo; echo "### \`build-lang --lang $l\` FAILED — likely a schema/converter incompatibility"; echo '```'; tail -25 "build-$l.log"; echo '```'; } >> pr-body.md
+            fi
+            cargo run -p xtask -- lang-manifest --lang "$l" >/dev/null 2>&1
+          done
+
+          if ! cargo test -p rlt-cli --test oracle --release -- --ignored --nocapture --test-threads 1 > oracle.log 2>&1; then
+            status=oracle-regressed
+            { echo; echo "### Oracle floors regressed"; echo '```'; grep -iE 'oracle:|FAILED|regressed' oracle.log | head -30; echo '```'; } >> pr-body.md
+          fi
+
+          {
+            echo
+            if [ "$status" = ok ]; then
+              echo "✅ All seven languages rebuilt and the oracle floors held."
+            else
+              echo "⚠️ Status: \`$status\` — this release likely needs code adjustments. Opened as a draft."
+            fi
+            echo
+            echo "_The \`lang-manifests/*.json\` updates re-pin the content hashes; \`.rkyv\` artifacts are gitignored (rebuilt from these sources)._"
+          } >> pr-body.md
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Open / update the sync PR
+        if: steps.ver.outputs.newer == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: lt-sync/${{ steps.ver.outputs.latest }}
+          commit-message: "chore: sync LanguageTool ${{ steps.ver.outputs.pinned }} -> ${{ steps.ver.outputs.latest }}"
+          title: "chore: sync LanguageTool ${{ steps.ver.outputs.pinned }} -> ${{ steps.ver.outputs.latest }}"
+          body-path: pr-body.md
+          labels: ${{ steps.build.outputs.status == 'ok' && 'lt-sync' || 'lt-sync,needs-code-changes' }}
+          draft: ${{ steps.build.outputs.status != 'ok' }}
+          add-paths: |
+            xtask/src/main.rs
+            lang-manifests/

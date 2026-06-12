@@ -1,0 +1,45 @@
+# Dependency bumps. Cargo has two workspaces (the main one + the detached fuzz crate); the L4 training
+# pipeline is a uv/Python project; plus the Actions themselves. Grouped to keep PR noise down — the CI
+# (ci.yml) runs the full test/clippy/wasm gate on each bump, and nightly.yml adds miri/fuzz/oracle.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      rust-minor-patch:
+        update-types: [minor, patch]
+    labels: [dependencies, rust]
+
+  - package-ecosystem: cargo
+    directory: "/fuzz" # detached workspace (libfuzzer-sys / arbitrary)
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      fuzz-deps:
+        patterns: ["*"]
+    labels: [dependencies, fuzz]
+
+  - package-ecosystem: pip
+    directory: "/pipeline" # uv project (pyproject.toml) — the offline L4 train/quantize pipeline
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      pipeline-deps:
+        patterns: ["*"]
+    labels: [dependencies, python]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    labels: [dependencies, ci]
