@@ -19,6 +19,10 @@ pub struct LangConfig {
     pub code: &'static str,
     /// The `languagetool-language-modules/<lt_module>` segment in the LT repo (usually == `code`).
     pub lt_module: &'static str,
+    /// The language's English name, lower-cased (`english`, `german`, …). The human-readable label and
+    /// the stem of the per-language fixtures keyed by name rather than code — e.g. the morfologik test
+    /// `reads_real_languagetool_<name>_dict`. Drives the coherence checker's name-derived site lookups.
+    pub name: &'static str,
     /// Where the morfologik POS dictionary is published (coordinates differ per language).
     pub pos_dict: PosDict,
     /// The structural tags the engine assigns by token shape (tagset differs per language).
@@ -250,19 +254,23 @@ impl LangConfig {
     }
 }
 
+/// The canonical, ordered list of configured languages — the single source of truth every other site
+/// must agree with. Adding a language is appending its `LangConfig` here (plus its `static` above);
+/// [`config`], [`known`], the CLI/xtask error strings, the fuzz `CODES`, and the `lang-coherence`
+/// checker all derive from this, so there is no second place to update and nothing to drift out of sync.
+pub static LANGUAGES: &[&LangConfig] = &[&EN, &DE, &RU, &AR, &FR, &ES, &IT];
+
 /// Look up a language by ISO code.
 #[must_use]
 pub fn config(code: &str) -> Option<&'static LangConfig> {
-    match code {
-        "en" => Some(&EN),
-        "de" => Some(&DE),
-        "ru" => Some(&RU),
-        "ar" => Some(&AR),
-        "fr" => Some(&FR),
-        "es" => Some(&ES),
-        "it" => Some(&IT),
-        _ => None,
-    }
+    LANGUAGES.iter().copied().find(|c| c.code == code)
+}
+
+/// The configured ISO codes as a comma-separated list (`"en, de, ru, …"`) for "unknown language" error
+/// messages — derived from [`LANGUAGES`] so the help text can never list a stale set.
+#[must_use]
+pub fn known() -> String {
+    LANGUAGES.iter().map(|c| c.code).collect::<Vec<_>>().join(", ")
 }
 
 /// The `SENT_END`/`SENT_START` punctuation characters LanguageTool tags `PCT`. Shared default.
@@ -272,6 +280,7 @@ const PCT_CHARS: &[char] = &['.', ',', ';', ':', '…', '!', '?'];
 pub static EN: LangConfig = LangConfig {
     code: "en",
     lt_module: "en",
+    name: "english",
     pos_dict: PosDict::Maven {
         group_id: "org.languagetool",
         artifact_id: "english-pos-dict",
@@ -317,6 +326,7 @@ pub static EN: LangConfig = LangConfig {
 pub static DE: LangConfig = LangConfig {
     code: "de",
     lt_module: "de",
+    name: "german",
     pos_dict: PosDict::Maven {
         group_id: "de.danielnaber",
         artifact_id: "german-pos-dict",
@@ -364,6 +374,7 @@ pub static DE: LangConfig = LangConfig {
 pub static RU: LangConfig = LangConfig {
     code: "ru",
     lt_module: "ru",
+    name: "russian",
     pos_dict: PosDict::Repo {
         dict_file: "russian.dict",
         info_file: "russian.info",
@@ -407,6 +418,7 @@ const AR_PCT_CHARS: &[char] = &['.', ',', ';', ':', '…', '!', '?', '،', '؛',
 pub static AR: LangConfig = LangConfig {
     code: "ar",
     lt_module: "ar",
+    name: "arabic",
     pos_dict: PosDict::Repo {
         dict_file: "arabic.dict",
         info_file: "arabic.info",
@@ -444,6 +456,7 @@ pub static AR: LangConfig = LangConfig {
 pub static FR: LangConfig = LangConfig {
     code: "fr",
     lt_module: "fr",
+    name: "french",
     pos_dict: PosDict::Maven {
         group_id: "org.languagetool",
         artifact_id: "french-pos-dict",
@@ -489,6 +502,7 @@ pub static FR: LangConfig = LangConfig {
 pub static ES: LangConfig = LangConfig {
     code: "es",
     lt_module: "es",
+    name: "spanish",
     pos_dict: PosDict::Maven {
         group_id: "org.softcatala",
         artifact_id: "spanish-pos-dict",
@@ -528,6 +542,7 @@ pub static ES: LangConfig = LangConfig {
 pub static IT: LangConfig = LangConfig {
     code: "it",
     lt_module: "it",
+    name: "italian",
     pos_dict: PosDict::Repo {
         dict_file: "italian.dict",
         info_file: "italian.info",

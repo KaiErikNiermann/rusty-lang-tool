@@ -211,6 +211,12 @@ enum Task {
         #[arg(long)]
         lang: String,
     },
+    /// Verify every configured language (the canonical `rlt_lang::LANGUAGES`) is wired into all the
+    /// sites that *can't* share that Rust const — the per-language manifest, the sparse-checkout paths,
+    /// the nightly oracle matrix, and the convert/oracle test names — so adding a language can't leave
+    /// one system out of sync. Exits non-zero on any required gap; also lists every numeric "N langs"
+    /// mention in the tree (informational) so stale counts in prose/CI surface for review.
+    LangCoherence,
 }
 
 fn main() -> Result<()> {
@@ -255,6 +261,7 @@ fn main() -> Result<()> {
         } => lang_inspect(&code, lt_module.as_deref(), dict.as_deref(), info.as_deref()),
         Task::LangStatus { lang } => lang_status(lang.as_deref()),
         Task::LangManifest { lang } => lang_manifest(lang_cfg(&lang)?),
+        Task::LangCoherence => lang_coherence(),
         Task::BuildL4 => build_l4(),
         Task::RunL4Oracle => run(
             "cargo",
@@ -962,7 +969,7 @@ fn build_disambig(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
 /// Resolve an ISO language code to its static config.
 fn lang_cfg(code: &str) -> Result<&'static rlt_lang::LangConfig> {
     rlt_lang::config(code)
-        .ok_or_else(|| anyhow::anyhow!("unknown language {code:?} (known: en, de, ru, ar, fr, es, it)"))
+        .ok_or_else(|| anyhow::anyhow!("unknown language {code:?} (known: {})", rlt_lang::known()))
 }
 
 /// Read-only accelerator: dump everything a human needs to author a `LangConfig` + derive the
@@ -1131,8 +1138,11 @@ fn find_repo_dict(dir: &str) -> Result<(String, String)> {
     Ok((dict.clone(), dict.replace(".dict", ".info")))
 }
 
-/// The languages with a `LangConfig` — the default set for `lang-status`.
-const CONFIGURED_LANGS: &[&str] = &["en", "de", "ru", "ar", "fr", "es", "it"];
+/// The configured ISO codes — the default set for `lang-status`, derived from the canonical
+/// [`rlt_lang::LANGUAGES`] so it can never list a different set than the engine actually knows.
+fn configured_langs() -> Vec<&'static str> {
+    rlt_lang::LANGUAGES.iter().map(|c| c.code).collect()
+}
 
 /// One hashed upstream input in a language manifest.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1229,7 +1239,10 @@ fn lang_manifest(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
 /// Compare current upstream inputs to each committed manifest and report per-file drift. Exits
 /// non-zero if anything changed since the manifest was written (so CI can gate on it).
 fn lang_status(opt_lang: Option<&str>) -> Result<()> {
-    let codes: Vec<&str> = opt_lang.map_or_else(|| CONFIGURED_LANGS.to_vec(), |l| vec![l]);
+    let codes: Vec<&str> = match opt_lang {
+        Some(l) => vec![l],
+        None => configured_langs(),
+    };
     let mut drifted = false;
     for code in codes {
         let cfg = lang_cfg(code)?;
@@ -1279,6 +1292,244 @@ fn lang_status(opt_lang: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// Whether a coherence requirement gates CI or is only surfaced for review.
+enum Severity {
+    /// A genuine wiring gap — the language is not fully incorporated; fails the build.
+    Required,
+    /// A soft expectation a language may legitimately not meet (e.g. ru has L3 enabled but no
+    /// precision/recall floor — its corpus is too small); surfaced as a warning, never fatal.
+    Recommended,
+}
+
+/// One coherence requirement evaluated for one language: `result` is `Ok` if the site includes the
+/// language, or `Err(fix-hint)` describing exactly what to add.
+struct Check {
+    /// Short label of the validated site.
+    label: &'static str,
+    /// Whether a failure gates CI.
+    severity: Severity,
+    /// `Ok(())` if the language is wired into this site, else `Err(hint)`.
+    result: Result<(), String>,
+}
+
+impl Check {
+    fn new(label: &'static str, severity: Severity, ok: bool, hint: String) -> Self {
+        Self { label, severity, result: if ok { Ok(()) } else { Err(hint) } }
+    }
+    fn required(label: &'static str, ok: bool, hint: String) -> Self {
+        Self::new(label, Severity::Required, ok, hint)
+    }
+    fn recommended(label: &'static str, ok: bool, hint: String) -> Self {
+        Self::new(label, Severity::Recommended, ok, hint)
+    }
+}
+
+/// Parse the `lang: [en, de, …]` matrix from the nightly oracle job (the one site that lists every
+/// language as data, not via the Rust const). Returns the codes, or empty if the matrix isn't found.
+fn nightly_oracle_langs(yaml: &str) -> Vec<String> {
+    yaml.lines()
+        .find_map(|l| l.trim().strip_prefix("lang:").map(str::trim))
+        .and_then(|v| v.strip_prefix('[')?.strip_suffix(']'))
+        .map(|inner| inner.split(',').map(|s| s.trim().to_owned()).collect())
+        .unwrap_or_default()
+}
+
+/// Verify every configured language is wired into the non-Rust / cross-file sites that can't derive
+/// from [`rlt_lang::LANGUAGES`]. Required failures gate CI; recommended ones only warn. Closes with an
+/// informational sweep of every numeric "N langs" mention in the tree so stale counts surface.
+fn lang_coherence() -> Result<()> {
+    let nightly = std::fs::read_to_string(".github/workflows/nightly.yml")
+        .context("reading .github/workflows/nightly.yml")?;
+    let oracle = std::fs::read_to_string("crates/rlt-cli/tests/oracle.rs")
+        .context("reading crates/rlt-cli/tests/oracle.rs")?;
+    let morfologik = std::fs::read_to_string("crates/rlt-convert/src/morfologik.rs")
+        .context("reading crates/rlt-convert/src/morfologik.rs")?;
+    let oracle_matrix = nightly_oracle_langs(&nightly);
+
+    let count = rlt_lang::LANGUAGES.len();
+    println!("language coherence — {count} configured: {}\n", rlt_lang::known());
+
+    let mut failures = 0usize;
+    for cfg in rlt_lang::LANGUAGES {
+        let code = cfg.code;
+        let mut checks = vec![
+            Check::required(
+                "manifest",
+                Path::new(&format!("lang-manifests/{code}.json")).exists(),
+                format!("run `cargo xtask lang-manifest --lang {code}` to write lang-manifests/{code}.json"),
+            ),
+            Check::required(
+                "sparse-checkout path",
+                SPARSE_PATHS.contains(&cfg.lt_sparse_path().as_str()),
+                format!("add {:?} to SPARSE_PATHS in xtask/src/main.rs", cfg.lt_sparse_path()),
+            ),
+            Check::required(
+                "nightly oracle matrix",
+                oracle_matrix.iter().any(|c| c == code),
+                format!("add `{code}` to the oracle `lang:` matrix in .github/workflows/nightly.yml"),
+            ),
+            Check::required(
+                "morfologik dict test",
+                morfologik.contains(&format!("fn reads_real_languagetool_{}_dict", cfg.name)),
+                format!(
+                    "add `reads_real_languagetool_{}_dict` to crates/rlt-convert/src/morfologik.rs",
+                    cfg.name
+                ),
+            ),
+        ];
+
+        // Native L2 oracle. English's grammar path is exercised by the nlprule + IR-matcher pair rather
+        // than a `<code>_native_reproduces_examples` test, so it has its own expectation.
+        if code == "en" {
+            checks.push(Check::required(
+                "native oracle test",
+                oracle.contains("fn nlprule_baseline_reproduces_examples")
+                    && oracle.contains("fn ir_matcher_reproduces_examples"),
+                "restore en's nlprule_baseline_reproduces_examples + ir_matcher_reproduces_examples in crates/rlt-cli/tests/oracle.rs".to_owned(),
+            ));
+        } else {
+            checks.push(Check::required(
+                "native oracle test",
+                oracle.contains(&format!("fn {code}_native_reproduces_examples")),
+                format!("add `{code}_native_reproduces_examples` to crates/rlt-cli/tests/oracle.rs"),
+            ));
+        }
+
+        // L3 confusion — only languages that enable it must be buildable; the scored floor is a soft
+        // expectation (ru enables L3 but its corpus is too small for a meaningful precision/recall floor).
+        if cfg.sources.confusion {
+            checks.push(Check::required(
+                "L3 confusion build",
+                code == "en" || confusion_corpus(code).is_some(),
+                format!("add a `{code}` arm to confusion_corpus() in xtask/src/main.rs"),
+            ));
+            let l3_test = if code == "en" {
+                "l3_confusion_precision_recall".to_owned()
+            } else {
+                format!("{code}_l3_confusion_precision_recall")
+            };
+            checks.push(Check::recommended(
+                "L3 oracle floor",
+                oracle.contains(&format!("fn {l3_test}")),
+                format!("add `{l3_test}` to crates/rlt-cli/tests/oracle.rs, or accept no floor (tiny corpus)"),
+            ));
+        }
+
+        let lang_failed = checks
+            .iter()
+            .any(|c| matches!(c.severity, Severity::Required) && c.result.is_err());
+        println!("{} {code} ({})", if lang_failed { '✗' } else { '✓' }, cfg.name);
+        for c in &checks {
+            match (&c.result, &c.severity) {
+                (Ok(()), _) => println!("    PASS  {}", c.label),
+                (Err(hint), Severity::Required) => {
+                    println!("    FAIL  {} — {hint}", c.label);
+                    failures += 1;
+                }
+                (Err(hint), Severity::Recommended) => println!("    WARN  {} — {hint}", c.label),
+            }
+        }
+        println!();
+    }
+
+    report_count_mentions(count);
+
+    if failures > 0 {
+        bail!("{failures} required coherence check(s) failed — a language is not fully wired in");
+    }
+    println!("all required coherence checks passed");
+    Ok(())
+}
+
+/// Source roots scanned for numeric language-count mentions (skipping build output / vendored data).
+const COHERENCE_SCAN_ROOTS: &[&str] = &["crates", "xtask", "fuzz", ".github", "docs", ".claude/skills"];
+
+/// Print every `N lang…` mention in the tree whose `N` differs from the canonical `count`, so a stale
+/// prose/CI count (a comment claiming the wrong number of languages) surfaces for review. Purely
+/// informational — these never gate CI, since legitimate subset phrases ("the 3 romance langs") match too.
+fn report_count_mentions(count: usize) {
+    let mut roots: Vec<std::path::PathBuf> =
+        COHERENCE_SCAN_ROOTS.iter().map(std::path::PathBuf::from).collect();
+    if Path::new("README.md").exists() {
+        roots.push(std::path::PathBuf::from("README.md"));
+    }
+    let mut hits: Vec<(String, usize, usize, String)> = Vec::new();
+    for root in &roots {
+        scan_count_mentions(root, count, &mut hits);
+    }
+    if hits.is_empty() {
+        println!("count mentions: none diverging from {count}\n");
+        return;
+    }
+    hits.sort();
+    println!("count mentions diverging from {count} (informational — verify each is an intended subset):");
+    for (path, line, n, snippet) in &hits {
+        println!("  {path}:{line}  says {n} — {snippet}");
+    }
+    println!();
+}
+
+/// Recursively scan `path` for `<digits> lang[s|uage…]` mentions whose number differs from `count`,
+/// appending `(path, line, number, trimmed-line)` to `hits`. Skips `target/` and non-text files.
+fn scan_count_mentions(path: &Path, count: usize, hits: &mut Vec<(String, usize, usize, String)>) {
+    let Ok(meta) = std::fs::metadata(path) else { return };
+    if meta.is_dir() {
+        if path.file_name().is_some_and(|n| n == "target") {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(path) else { return };
+        let mut paths: Vec<std::path::PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        paths.sort();
+        for p in paths {
+            scan_count_mentions(&p, count, hits);
+        }
+        return;
+    }
+    let ext_ok = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e, "rs" | "yml" | "yaml" | "md" | "toml"));
+    if !ext_ok {
+        return;
+    }
+    let Ok(text) = std::fs::read_to_string(path) else { return };
+    for (i, line) in text.lines().enumerate() {
+        for (n, kw) in count_mentions(line) {
+            if n != count {
+                hits.push((path.display().to_string(), i + 1, n, format!("…{}…", line.trim())));
+                break; // one hit per line is enough to flag it
+            }
+            let _ = kw;
+        }
+    }
+}
+
+/// Yield `(number, keyword)` for each `<digits>[ ]lang…` occurrence in `line` — a digit run followed by
+/// at most one space and the case-insensitive prefix `lang` (covers "lang", "langs", "language(s)").
+fn count_mentions(line: &str) -> Vec<(usize, &str)> {
+    let bytes = line.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        let num = &line[start..i];
+        let rest = line[i..].trim_start_matches(' ');
+        if let Some(kw) = rest.get(..4).filter(|k| k.eq_ignore_ascii_case("lang")) {
+            if let Ok(n) = num.parse::<usize>() {
+                out.push((n, kw));
+            }
+        }
+    }
+    out
+}
+
 /// Leipzig Corpora Collection — a clean, fetchable German news corpus (tagged sentences) used as the
 /// L3 n-gram source. LanguageTool's own German n-grams are a Java Lucene index (no Rust reader), and
 /// our English L3 already uses a non-LT corpus (Norvig), so a non-LT German corpus is consistent.
@@ -1304,17 +1555,26 @@ const LT_NGRAM_DE_URL: &str = "https://languagetool.org/download/ngram-data/ngra
 const LT_NGRAM_FR_URL: &str = "https://languagetool.org/download/ngram-data/ngrams-fr-20150913.zip";
 const LT_NGRAM_ES_URL: &str = "https://languagetool.org/download/ngram-data/ngrams-es-20150915.zip";
 
+/// The n-gram corpora for a non-English L3 confusion build: `(LanguageTool tuned n-grams or `None`,
+/// Leipzig fallback)`. de/fr/es have LT's own tuned Lucene n-grams (best recall); ru has Leipzig only.
+/// `None` for a language with no L3 build configured (English builds via the dedicated Norvig path).
+/// The single source of truth for "which non-en languages can build L3" — the coherence checker reads it.
+fn confusion_corpus(code: &str) -> Option<(Option<&'static str>, &'static str)> {
+    match code {
+        "de" => Some((Some(LT_NGRAM_DE_URL), LEIPZIG_DE_URL)),
+        "fr" => Some((Some(LT_NGRAM_FR_URL), LEIPZIG_FR_URL)),
+        "es" => Some((Some(LT_NGRAM_ES_URL), LEIPZIG_ES_URL)),
+        "ru" => Some((None, LEIPZIG_RU_URL)),
+        _ => None,
+    }
+}
+
 /// Build a language's L3 confusion model, dispatching by language. de/fr/es have LanguageTool's own
 /// tuned Lucene n-grams (best recall, via the JVM extractor) with a Leipzig fallback; ru uses Leipzig
 /// only (no LT n-grams exist for it). `source == "leipzig"` forces the corpus path (no JVM).
 fn build_confusion(cfg: &'static rlt_lang::LangConfig, source: &str) -> Result<()> {
-    let (lt_ngram_url, leipzig_url) = match cfg.code {
-        "de" => (Some(LT_NGRAM_DE_URL), LEIPZIG_DE_URL),
-        "fr" => (Some(LT_NGRAM_FR_URL), LEIPZIG_FR_URL),
-        "es" => (Some(LT_NGRAM_ES_URL), LEIPZIG_ES_URL),
-        "ru" => (None, LEIPZIG_RU_URL),
-        other => bail!("no L3 confusion build configured for {other:?}"),
-    };
+    let (lt_ngram_url, leipzig_url) = confusion_corpus(cfg.code)
+        .with_context(|| format!("no L3 confusion build configured for {:?}", cfg.code))?;
     if source != "leipzig" {
         if let Some(url) = lt_ngram_url {
             match build_confusion_lt_ngrams(cfg, url) {
@@ -1550,4 +1810,53 @@ fn run(program: &str, args: &[&str]) -> Result<()> {
         bail!("`{program}` exited with {status}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nightly_matrix_parses_the_lang_list() {
+        let yaml = "  strategy:\n    matrix:\n      lang: [en, de, ru, ar, fr, es, it]\n";
+        assert_eq!(nightly_oracle_langs(yaml), ["en", "de", "ru", "ar", "fr", "es", "it"]);
+    }
+
+    #[test]
+    fn nightly_matrix_absent_yields_empty() {
+        assert!(nightly_oracle_langs("jobs:\n  build:\n").is_empty());
+    }
+
+    #[test]
+    fn count_mentions_catches_digit_then_lang() {
+        assert_eq!(count_mentions("scores 7 languages"), [(7, "lang")]);
+        assert_eq!(count_mentions("rotates through 6 langs here"), [(6, "lang")]);
+        // Digit not followed by `lang` (an em dash, a word) is not a count mention.
+        assert!(count_mentions("covers 8 — done").is_empty());
+        assert!(count_mentions("the 3 romance langs").is_empty());
+    }
+
+    #[test]
+    fn count_mentions_handles_multibyte_after_digit() {
+        // A digit immediately followed by a multibyte char must not panic on the 4-byte slice probe.
+        assert!(count_mentions("7—languages").is_empty());
+    }
+
+    #[test]
+    fn sparse_paths_cover_every_configured_language() {
+        // The one in-binary const the checker can't make underivable: prove it stays in lockstep.
+        for cfg in rlt_lang::LANGUAGES {
+            assert!(
+                SPARSE_PATHS.contains(&cfg.lt_sparse_path().as_str()),
+                "SPARSE_PATHS missing the {} sparse-checkout path",
+                cfg.code,
+            );
+        }
+    }
+
+    #[test]
+    fn known_lists_exactly_the_canonical_codes() {
+        let expected = rlt_lang::LANGUAGES.iter().map(|c| c.code).collect::<Vec<_>>().join(", ");
+        assert_eq!(rlt_lang::known(), expected);
+    }
 }

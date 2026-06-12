@@ -236,7 +236,7 @@ fn main() -> Result<()> {
 /// Resolve an ISO language code to its static config, erroring on unknown codes.
 fn resolve_lang(code: &str) -> Result<&'static rlt_lang::LangConfig> {
     rlt_lang::config(code)
-        .ok_or_else(|| anyhow!("unknown language {code:?} (known: en, de, ru, ar, es)"))
+        .ok_or_else(|| anyhow!("unknown language {code:?} (known: {})", rlt_lang::known()))
 }
 
 /// Load the nlprule analysis engine (no grammar rules attached).

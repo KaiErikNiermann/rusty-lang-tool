@@ -1,8 +1,9 @@
 //! Shared helpers for the fuzz targets.
 //!
-//! The per-language `engine_analyze` invariant check lives here so a new language is one entry in
-//! [`CODES`] rather than another near-identical `engine_analyze_<lang>.rs` (they only ever differed by
-//! the `LangConfig` and the `resources/<code>/` subdir).
+//! The per-language `engine_analyze` invariant check lives here so a new language is one entry in the
+//! canonical `rlt_lang::LANGUAGES` (surfaced via [`codes`]) rather than another near-identical
+//! `engine_analyze_<lang>.rs` (they only ever differed by the `LangConfig` and the `resources/<code>/`
+//! subdir).
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -10,9 +11,13 @@ use std::sync::OnceLock;
 use rlt_core::Engine;
 use rlt_native::NativeEngine;
 
-/// The languages the `engine_analyze` target rotates through (each fuzz input selects one). Add a new
-/// language here — no new fuzz file. A language whose artifacts aren't built is skipped at runtime.
-pub const CODES: &[&str] = &["en", "de", "ru", "ar", "fr", "es", "it"];
+/// The languages the `engine_analyze` target rotates through (each fuzz input selects one) — the
+/// canonical [`rlt_lang::LANGUAGES`] codes, so adding a language is one entry there and no fuzz edit at
+/// all. A language whose artifacts aren't built is skipped at runtime.
+pub fn codes() -> &'static [&'static str] {
+    static CODES: OnceLock<Vec<&'static str>> = OnceLock::new();
+    CODES.get_or_init(|| rlt_lang::LANGUAGES.iter().map(|c| c.code).collect())
+}
 
 /// Load a language's native engine from its built `resources/<code>/` artifacts, or `None` if absent.
 fn load(code: &str) -> Option<NativeEngine> {
@@ -29,11 +34,13 @@ fn load(code: &str) -> Option<NativeEngine> {
     .ok()
 }
 
-/// The engine for `CODES[idx]`, loaded once and cached (`None` when its artifacts aren't built).
+/// The engine for `codes()[idx]`, loaded once and cached (`None` when its artifacts aren't built). One
+/// `OnceLock` per language, allocated lazily so each engine still loads on first use (not eagerly) — a
+/// runtime `Vec` because the language count comes from the canonical list, not a compile-time constant.
 fn engine(idx: usize) -> Option<&'static NativeEngine> {
-    static ENGINES: [OnceLock<Option<NativeEngine>>; CODES.len()] =
-        [const { OnceLock::new() }; CODES.len()];
-    ENGINES[idx].get_or_init(|| load(CODES[idx])).as_ref()
+    static ENGINES: OnceLock<Vec<OnceLock<Option<NativeEngine>>>> = OnceLock::new();
+    let engines = ENGINES.get_or_init(|| codes().iter().map(|_| OnceLock::new()).collect());
+    engines[idx].get_or_init(|| load(codes()[idx])).as_ref()
 }
 
 /// Run `analyze` over `text` for the language picked by `selector` — or the one pinned by the
@@ -44,9 +51,9 @@ fn engine(idx: usize) -> Option<&'static NativeEngine> {
 pub fn fuzz_analyze(selector: u8, text: &str) {
     static PINNED: OnceLock<Option<usize>> = OnceLock::new();
     let pinned = PINNED.get_or_init(|| {
-        std::env::var("RLT_FUZZ_LANG").ok().and_then(|c| CODES.iter().position(|x| *x == c))
+        std::env::var("RLT_FUZZ_LANG").ok().and_then(|c| codes().iter().position(|x| *x == c))
     });
-    let idx = pinned.unwrap_or((selector as usize) % CODES.len());
+    let idx = pinned.unwrap_or((selector as usize) % codes().len());
     let Some(engine) = engine(idx) else { return };
     for token in engine.analyze(text).tokens {
         let (start, end) = (token.span.start, token.span.end);

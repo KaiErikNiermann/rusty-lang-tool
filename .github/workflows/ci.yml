@@ -29,6 +29,8 @@ jobs:
       - name: rustfmt (informational — the tree predates fmt enforcement)
         continue-on-error: true
         run: cargo fmt --all --check
+      - name: language coherence (every configured language wired into all sites; no fetch needed)
+        run: cargo run -p xtask -- lang-coherence
 
   test:
     runs-on: ubuntu-latest
