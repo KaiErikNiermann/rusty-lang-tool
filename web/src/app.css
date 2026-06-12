@@ -7,6 +7,15 @@
   color-scheme: dark;
 }
 
+/* Body-level container for Monaco's overflow widgets (hover / suggest / quick-fix). A positioned
+   stacking context with a high z-index so the fixed widgets paint above the editor frame. */
+.rlt-overflow-widgets {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 40;
+}
+
 /* Diagnostic squiggle underlines keyed by source (Monaco draws markers; these tint the inline class
    decorations the editor layer adds for precise per-source color). */
 .rlt-squiggle-spelling {

@@ -34,6 +34,7 @@
   let editor: Monaco.editor.IStandaloneCodeEditor | undefined;
   let model: Monaco.editor.ITextModel | undefined;
   let client: WorkerChecker | undefined;
+  let overflowWidgets: HTMLDivElement | undefined;
   const index = new DiagnosticIndex();
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let checkSeq = 0;
@@ -80,6 +81,13 @@
     let disposed = false;
     let codeActions: Monaco.IDisposable | undefined;
 
+    // Render hover / suggest / quick-fix widgets into a body-level node so the rounded editor frame's
+    // `overflow-hidden` can't clip them (e.g. hovering an error on the first line). `fixedOverflowWidgets`
+    // makes them position:fixed; the explicit dom node guarantees they live outside the clipped frame.
+    overflowWidgets = document.createElement("div");
+    overflowWidgets.className = "monaco-editor rlt-overflow-widgets";
+    document.body.appendChild(overflowWidgets);
+
     (async () => {
       monaco = await loadMonaco();
       if (disposed) return;
@@ -97,6 +105,8 @@
         scrollBeyondLastLine: false,
         renderLineHighlight: "none",
         overviewRulerLanes: 2,
+        fixedOverflowWidgets: true,
+        overflowWidgetsDomNode: overflowWidgets,
       });
       model = editor.getModel() ?? undefined;
       codeActions = registerRltCodeActions(monaco, index);
@@ -119,6 +129,7 @@
       codeActions?.dispose();
       client?.dispose();
       editor?.dispose();
+      overflowWidgets?.remove();
     };
   });
 </script>
