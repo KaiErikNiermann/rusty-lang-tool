@@ -921,6 +921,142 @@ fn is_yes(v: &pattern::BinaryYesNoType) -> bool {
     matches!(v, pattern::BinaryYesNoType::Yes)
 }
 
+/// Whether opening `name` begins a region whose `<token>`s the converter does *not* lower 1:1, so the
+/// raw scan must skip them too: `<phrases>` definitions (expanded only at `<phraseref>`), `<unify>`
+/// (unsupported), and `default="off"`/`"temp_off"` `<rule>`/`<rulegroup>`s (disabled — see
+/// [`rule_enabled`]/[`group_enabled`]). Mirroring this is what keeps the fidelity audit free of
+/// spurious "missing" literals.
+fn opens_skip_region(name: &[u8], e: &quick_xml::events::BytesStart) -> Result<bool> {
+    if matches!(name, b"phrases" | b"unify") {
+        return Ok(true);
+    }
+    if matches!(name, b"rule" | b"rulegroup") {
+        if let Some(attr) =
+            e.try_get_attribute("default").map_err(|err| anyhow!("reading default attr: {err}"))?
+        {
+            return Ok(matches!(attr.value.as_ref(), b"off" | b"temp_off"));
+        }
+    }
+    Ok(false)
+}
+
+/// Independently extract every *enabled* `<token>`'s literal surface text from the (entity-expanded)
+/// grammar via a raw event scan — only text that is a *direct* child of `<token>` (not inside an
+/// `<exception>`/`<match>` child, which carry their own text). The genuinely-independent cross-check for
+/// [`token_literal`]: it doesn't touch the xsd-parser path. Skips regions the converter doesn't lower
+/// (see [`opens_skip_region`]).
+fn raw_token_literals(xml: &str) -> Result<std::collections::HashSet<String>> {
+    use quick_xml::events::Event;
+    use quick_xml::reader::Reader;
+
+    let mut reader = Reader::from_str(xml);
+    let mut stack: Vec<(Box<[u8]>, bool)> = Vec::new(); // (element name, opened a skip region)
+    let mut skip_depth = 0u32;
+    let mut literal: Option<String> = None; // text being accumulated for the open <token>
+    let mut out = std::collections::HashSet::new();
+    loop {
+        match reader.read_event().map_err(|e| anyhow!("scanning token literals: {e}"))? {
+            Event::Start(e) => {
+                let name: Box<[u8]> = e.name().as_ref().into();
+                let skip = opens_skip_region(&name, &e)?;
+                if skip {
+                    skip_depth += 1;
+                }
+                if &*name == b"token" && skip_depth == 0 {
+                    literal = Some(String::new());
+                }
+                stack.push((name, skip));
+            }
+            Event::End(_) => {
+                if let Some((name, skip)) = stack.pop() {
+                    if &*name == b"token" {
+                        if let Some(s) = literal.take() {
+                            let s = s.trim();
+                            if !s.is_empty() {
+                                out.insert(s.to_owned());
+                            }
+                        }
+                    }
+                    if skip {
+                        skip_depth = skip_depth.saturating_sub(1);
+                    }
+                }
+            }
+            Event::Text(t) => {
+                // Only text whose immediate parent is the <token> itself is the token's literal.
+                if let Some(acc) = literal.as_mut() {
+                    if stack.last().is_some_and(|(n, _)| n.as_ref() == b"token") {
+                        let s = std::str::from_utf8(&t).map_err(|e| anyhow!("token text utf8: {e}"))?;
+                        acc.push_str(&quick_xml::escape::unescape(s).map_err(|e| anyhow!("unescape: {e}"))?);
+                    }
+                }
+            }
+            // quick-xml emits `&amp;` etc. as a separate ref event mid-text; resolve it into the literal
+            // (else `,|and|or|&amp;` would read as `,|and|or|`, a spurious mismatch with the IR).
+            Event::GeneralRef(r) => {
+                if let Some(acc) = literal.as_mut() {
+                    if stack.last().is_some_and(|(n, _)| n.as_ref() == b"token") {
+                        if let Some(c) = r.resolve_char_ref().map_err(|e| anyhow!("char ref: {e}"))? {
+                            acc.push(c);
+                        } else {
+                            let name = r.decode().map_err(|e| anyhow!("ref decode: {e}"))?;
+                            acc.push_str(match name.as_ref() {
+                                "amp" => "&",
+                                "lt" => "<",
+                                "gt" => ">",
+                                "quot" => "\"",
+                                "apos" => "'",
+                                other => return Err(anyhow!("unresolved entity &{other};")),
+                            });
+                        }
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+/// Gather the literal text of every `<token>` matcher in a construct list (incl. `<or>`/`<and>` groups).
+fn collect_token_texts(constructs: &[Construct], out: &mut std::collections::HashSet<String>) {
+    for c in constructs {
+        match c {
+            Construct::Token(t) => out.extend(t.text.clone()),
+            Construct::Or(ts) | Construct::And(ts) => {
+                out.extend(ts.iter().filter_map(|t| t.text.clone()));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Cross-check the converter's token-literal extraction against an independent raw scan: the source
+/// token literals the lowered IR is **missing**. Each is a `<token>` whose surface text was dropped —
+/// turning it into a wildcard that matches any word (the HELL bug). Empty ⇒ full fidelity.
+///
+/// # Errors
+/// Propagates read / parse / scan errors.
+pub fn token_literal_fidelity(grammar_path: &Path) -> Result<Vec<String>> {
+    let raw = std::fs::read_to_string(grammar_path)
+        .with_context(|| format!("reading {}", grammar_path.display()))?;
+    let xml = expand_entities(&raw, grammar_path.parent())?;
+    let source = raw_token_literals(&xml)?;
+
+    let mut ir = std::collections::HashSet::new();
+    for rule in lower_document(&parse_grammar(grammar_path)?) {
+        collect_token_texts(&rule.pattern, &mut ir);
+        for ap in &rule.antipatterns {
+            collect_token_texts(ap, &mut ir);
+        }
+    }
+
+    let mut missing: Vec<String> = source.into_iter().filter(|s| !ir.contains(s)).collect();
+    missing.sort();
+    Ok(missing)
+}
+
 /// Expand LT's internal-DTD general entities and strip the DOCTYPE, yielding standalone XML.
 ///
 /// LT's `grammar.xml` declares ~40 `<!ENTITY name "value">` in an internal subset and references
@@ -1071,6 +1207,22 @@ mod tests {
             "token literal after <exception> was dropped (wildcard regression)",
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Full-grammar fidelity gate (needs `fetch-lt`): every enabled `<token>` literal in the real LT
+    /// English grammar must survive lowering — no token silently becomes a wildcard. `#[ignore]` since
+    /// it needs the fetched resources (run in the engine CI job).
+    #[test]
+    #[ignore = "needs fetch-lt resources"]
+    fn real_grammar_has_full_token_fidelity() {
+        let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../"))
+            .join(super::DEFAULT_GRAMMAR);
+        if !path.exists() {
+            eprintln!("SKIP: {} missing — run `cargo xtask fetch-lt`", path.display());
+            return;
+        }
+        let missing = super::token_literal_fidelity(&path).expect("fidelity scan");
+        assert!(missing.is_empty(), "dropped token literals (wildcard bugs): {missing:?}");
     }
 
     /// en/de/ru/ar have only an *inline* internal subset — a `base_dir` must not change their

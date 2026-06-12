@@ -105,5 +105,7 @@ jobs:
         run: cargo run -p xtask -- build-lang --lang en
       - name: Oracle (English native + IR matcher + nlprule baseline; other langs skip if unbuilt)
         run: cargo test -p rlt-cli --test oracle --release -- --ignored --nocapture --test-threads 1
+      - name: Grammar-rule audit (token-literal fidelity gate + firing-rate anomalies)
+        run: cargo run -p xtask -- audit-rules --lang en
       - name: WASM Node smoke (loads the built English artifacts through wasm-bindgen)
         run: cargo run -p xtask -- build-wasm

@@ -234,6 +234,17 @@ enum Task {
         #[arg(long, default_value = "dist/web-artifacts")]
         out: std::path::PathBuf,
     },
+    /// Grammar-rule health audit for `--lang`, surfacing the bug classes that hide as weird
+    /// recommendations: (1) **token-literal fidelity** — `<token>` literals dropped by the converter
+    /// (the wildcard bug, e.g. HELL matching "there"); exits non-zero on any. (2) **firing-rate
+    /// anomalies** — the L2 IR matcher run over LT's example corpus, ranking rules by how large a
+    /// fraction of sentences they fire on; an over-broad/wildcard rule fires pathologically often.
+    /// Needs `fetch-lt` + built `--lang` artifacts (tagger/disambig/grammar).
+    AuditRules {
+        /// Language ISO code.
+        #[arg(long, default_value = "en")]
+        lang: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -289,6 +300,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Task::WebManifest { out } => web_manifest(&out),
+        Task::AuditRules { lang } => audit_rules(lang_cfg(&lang)?),
         Task::BuildL4 => build_l4(),
         Task::RunL4Oracle => run(
             "cargo",
@@ -1406,6 +1418,106 @@ fn web_manifest(out: &Path) -> Result<()> {
 fn title_case(s: &str) -> String {
     let mut chars = s.chars();
     chars.next().map_or_else(String::new, |c| c.to_ascii_uppercase().to_string() + chars.as_str())
+}
+
+/// Rules firing on more than this fraction of the example corpus are flagged. A wildcarded/over-broad
+/// rule fires on a huge slice (the fr `MOTS_MAUX` bug hit 100%, ru `AllCaps` 43%); legit common rules
+/// (its/it's, comma rules) sit in the low single digits, so 15% flags only the pathological ones while
+/// the ranking still surfaces everything below it for eyeballing.
+const FIRING_ANOMALY_FRACTION: f64 = 0.15;
+
+/// Grammar-rule health audit: token-literal fidelity (hard bugs — exits non-zero) + L2 firing-rate
+/// anomalies (over-broad rules, informational). See [`Task::AuditRules`].
+fn audit_rules(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+    use rlt_core::{Engine, GrammarChecker};
+
+    let grammar_xml = cfg.grammar_xml_path();
+
+    // (1) Token-literal fidelity — the converter dropping a `<token>`'s literal (the HELL bug class).
+    println!("== token-literal fidelity ==");
+    let missing = rlt_convert::token_literal_fidelity(Path::new(&grammar_xml))
+        .with_context(|| format!("fidelity audit needs {grammar_xml} (run `fetch-lt`)"))?;
+    if missing.is_empty() {
+        println!("  OK — every source <token> literal is present in the lowered IR\n");
+    } else {
+        println!("  {} dropped token literal(s) (each became a wildcard):", missing.len());
+        for lit in &missing {
+            println!("    {lit:?}");
+        }
+        println!();
+    }
+
+    // (2) Firing-rate anomalies — run the L2 IR matcher over the example corpus, count per rule.
+    println!("== rule firing rates (L2 IR matcher over the example corpus) ==");
+    let engine = rlt_native::NativeEngine::from_paths(
+        cfg,
+        Path::new(cfg.segment_srx_path()),
+        &std::path::PathBuf::from(cfg.tagger_path()),
+        Path::new(&cfg.disambig_path()).exists().then(|| std::path::PathBuf::from(cfg.disambig_path())).as_deref(),
+    )
+    .map_err(|e| anyhow::anyhow!("loading {} native engine (build-lang first): {e}", cfg.code))?;
+    let ir = rlt_core::IrMatcher::from_rkyv_bytes(&std::fs::read(cfg.grammar_blob_path())?)
+        .map_err(|e| anyhow::anyhow!("loading {}: {e}", cfg.grammar_blob_path()))?;
+
+    // Deduped example sentences as the corpus — grammatical-ish text where a sound rule rarely fires.
+    let mut sentences: Vec<String> =
+        rlt_convert::extract_examples(Path::new(&grammar_xml))?.into_iter().map(|e| e.text).collect();
+    sentences.sort();
+    sentences.dedup();
+    let total = sentences.len();
+
+    // Per rule: how many sentences it fired on (≤ once per sentence) + one sample (sentence, matched text).
+    let mut fired: std::collections::HashMap<String, (usize, String)> = std::collections::HashMap::new();
+    for text in &sentences {
+        let analysis = engine.analyze(text);
+        let mut seen_here = std::collections::HashSet::new();
+        for d in ir.grammar_diagnostics(text, &analysis) {
+            if !seen_here.insert(d.code.clone()) {
+                continue; // count a rule at most once per sentence
+            }
+            let entry = fired.entry(d.code.clone()).or_insert_with(|| {
+                let matched = text.get(d.span.start..d.span.end).unwrap_or("");
+                (0, format!("{matched:?} in {:?}", truncate(text, 60)))
+            });
+            entry.0 += 1;
+        }
+    }
+
+    let mut ranked: Vec<(&String, usize, &str)> =
+        fired.iter().map(|(code, (n, sample))| (code, *n, sample.as_str())).collect();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+
+    println!("  {total} sentences; {} rules fired. Top firing rules:", ranked.len());
+    let mut anomalies = 0usize;
+    for (code, n, sample) in ranked.iter().take(30) {
+        #[allow(clippy::cast_precision_loss)]
+        let frac = *n as f64 / total.max(1) as f64;
+        let flag = if frac >= FIRING_ANOMALY_FRACTION {
+            anomalies += 1;
+            "  ← ANOMALY"
+        } else {
+            ""
+        };
+        println!("    {:<28} {n:>5}  {:>5.1}%  e.g. {sample}{flag}", code, frac * 100.0);
+    }
+    println!(
+        "\n  {anomalies} rule(s) fired on ≥{:.0}% of sentences — eyeball these for over-broad matches.",
+        FIRING_ANOMALY_FRACTION * 100.0,
+    );
+
+    if !missing.is_empty() {
+        bail!("{} token literal(s) dropped — see the fidelity report above", missing.len());
+    }
+    Ok(())
+}
+
+/// `s` truncated to `max` chars with an ellipsis (for sample output).
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_owned()
+    } else {
+        format!("{}…", s.chars().take(max).collect::<String>())
+    }
 }
 
 /// Compare current upstream inputs to each committed manifest and report per-file drift. Exits

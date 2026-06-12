@@ -20,6 +20,8 @@ serde_json.workspace = true
 rlt-native.workspace = true
 # build-disambig: lower disambiguation.xml → the disambig.rkyv artifact.
 rlt-convert.workspace = true
+# audit-rules: run the L2 IR matcher over the example corpus to histogram per-rule firing rates.
+rlt-core.workspace = true
 # Per-language config: artifact paths + POS-dict Maven coordinates + LT module paths.
 rlt-lang.workspace = true
 unicode-properties = "0.1.4"
