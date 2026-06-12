@@ -1290,33 +1290,40 @@ const LEIPZIG_DE_URL: &str =
 const LEIPZIG_RU_URL: &str =
     "https://downloads.wortschatz-leipzig.de/corpora/rus_news_2022_1M.tar.gz";
 
-/// LanguageTool's own German n-gram dataset (a Java Lucene index). The tuned source — extracted to TSV
-/// via `tools/NgramDump.java`; gives far better recall than Leipzig (more coverage + the confusion
-/// `factor` thresholds were calibrated against it). 1.6 GB; build-time only.
+/// Leipzig fallback corpora for French / Spanish (used only if the JVM/lt-ngrams path is unavailable).
+const LEIPZIG_FR_URL: &str =
+    "https://downloads.wortschatz-leipzig.de/corpora/fra_news_2022_1M.tar.gz";
+const LEIPZIG_ES_URL: &str =
+    "https://downloads.wortschatz-leipzig.de/corpora/spa_news_2022_1M.tar.gz";
+
+/// LanguageTool's own tuned n-gram datasets (Java Lucene indexes). The preferred L3 source — extracted
+/// to TSV via `tools/NgramDump.java`; far better recall than Leipzig (more coverage + the confusion
+/// `factor` thresholds were calibrated against them). LT publishes these for en/de/fr/es only. ~1.6–1.8
+/// GB each; build-time only.
 const LT_NGRAM_DE_URL: &str = "https://languagetool.org/download/ngram-data/ngrams-de-20150819.zip";
+const LT_NGRAM_FR_URL: &str = "https://languagetool.org/download/ngram-data/ngrams-fr-20150913.zip";
+const LT_NGRAM_ES_URL: &str = "https://languagetool.org/download/ngram-data/ngrams-es-20150915.zip";
 
-/// Build a language's L3 confusion model from a frequency corpus, dispatching by language. German has
-/// LanguageTool's own tuned Lucene n-grams (`lt-ngrams`, best recall) with a Leipzig fallback; Russian
-/// (and any future non-en/de language) uses a Leipzig corpus count.
+/// Build a language's L3 confusion model, dispatching by language. de/fr/es have LanguageTool's own
+/// tuned Lucene n-grams (best recall, via the JVM extractor) with a Leipzig fallback; ru uses Leipzig
+/// only (no LT n-grams exist for it). `source == "leipzig"` forces the corpus path (no JVM).
 fn build_confusion(cfg: &'static rlt_lang::LangConfig, source: &str) -> Result<()> {
-    match cfg.code {
-        "de" => build_confusion_de(cfg, source),
-        "ru" => build_confusion_leipzig(cfg, LEIPZIG_RU_URL),
+    let (lt_ngram_url, leipzig_url) = match cfg.code {
+        "de" => (Some(LT_NGRAM_DE_URL), LEIPZIG_DE_URL),
+        "fr" => (Some(LT_NGRAM_FR_URL), LEIPZIG_FR_URL),
+        "es" => (Some(LT_NGRAM_ES_URL), LEIPZIG_ES_URL),
+        "ru" => (None, LEIPZIG_RU_URL),
         other => bail!("no L3 confusion build configured for {other:?}"),
-    }
-}
-
-/// Build the German L3 confusion model. `source` selects the n-gram frequency data: `lt-ngrams`
-/// (LanguageTool's own tuned Lucene data, via the JVM extractor — best recall) or `leipzig` (a
-/// pure-Rust corpus count — no JVM, lower recall). Falls back to Leipzig if `lt-ngrams` is unavailable.
-fn build_confusion_de(cfg: &'static rlt_lang::LangConfig, source: &str) -> Result<()> {
-    if source == "lt-ngrams" {
-        match build_confusion_de_lt_ngrams(cfg) {
-            Ok(()) => return Ok(()),
-            Err(e) => println!("lt-ngrams source unavailable ({e}) — falling back to Leipzig"),
+    };
+    if source != "leipzig" {
+        if let Some(url) = lt_ngram_url {
+            match build_confusion_lt_ngrams(cfg, url) {
+                Ok(()) => return Ok(()),
+                Err(e) => println!("lt-ngrams source unavailable ({e}) — falling back to Leipzig"),
+            }
         }
     }
-    build_confusion_leipzig(cfg, LEIPZIG_DE_URL)
+    build_confusion_leipzig(cfg, leipzig_url)
 }
 
 /// Build the model from already-counted Norvig-format TSVs, using the native engine's POS tags.
@@ -1345,19 +1352,20 @@ fn build_confusion_from_counts(
     Ok(())
 }
 
-/// L3 source: LanguageTool's own (Lucene) German n-grams, dumped to TSV by the JVM extractor.
-fn build_confusion_de_lt_ngrams(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+/// L3 source: LanguageTool's own (Lucene) n-grams for `cfg`, downloaded from `url` and dumped to TSV
+/// by the JVM extractor. Generic over the language (the Lucene index is laid out under `cfg.lt_module`).
+fn build_confusion_lt_ngrams(cfg: &'static rlt_lang::LangConfig, url: &str) -> Result<()> {
     if Command::new("java").arg("-version").output().is_err() {
         bail!("no JDK on PATH (needed to read LT's Lucene n-grams)");
     }
     let dir = format!("{}/ngrams", cfg.resource_dir());
     std::fs::create_dir_all(&dir)?;
 
-    // 1. Fetch + extract LT's 1-gram and 2-gram Lucene indexes (resumable; ~1.6 GB).
+    // 1. Fetch + extract LT's 1-gram and 2-gram Lucene indexes (resumable; ~1.6–1.8 GB).
     let index_dir = format!("{dir}/lt-index");
     if !Path::new(&format!("{index_dir}/{lt}/2grams", lt = cfg.lt_module)).exists() {
         let zip = format!("{dir}/lt-ngrams.zip");
-        fetch_if_absent(&zip, LT_NGRAM_DE_URL)?;
+        fetch_if_absent(&zip, url)?;
         let one = format!("{}/1grams/*", cfg.lt_module);
         let two = format!("{}/2grams/*", cfg.lt_module);
         run("unzip", &["-o", "-q", &zip, &one, &two, "-d", &index_dir])?;

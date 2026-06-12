@@ -464,7 +464,7 @@ pub static FR: LangConfig = LangConfig {
     sources: Sources {
         uses_agid: false,
         closed_class: None,
-        confusion: false,
+        confusion: true,
         neural_l4: false,
     },
     spell: SpellConfig {
@@ -509,7 +509,7 @@ pub static ES: LangConfig = LangConfig {
     sources: Sources {
         uses_agid: false,
         closed_class: None,
-        confusion: false,
+        confusion: true,
         neural_l4: false,
     },
     spell: SpellConfig {

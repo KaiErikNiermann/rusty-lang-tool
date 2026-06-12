@@ -559,6 +559,140 @@ fn de_l3_confusion_precision_recall() {
     assert!(fp <= 120, "de L3 false positives regressed: {fp}; expected <= 120");
 }
 
+#[test]
+#[ignore = "needs the fr confusion model; build via `cargo xtask build-confusion --lang fr`"]
+fn fr_l3_confusion_precision_recall() {
+    let cfg = rlt_lang::config("fr").expect("fr config");
+    let srx = root(cfg.segment_srx_path());
+    let tagger = root(&cfg.tagger_path());
+    let model_path = root(&cfg.confusion_path());
+    let grammar = root(&cfg.grammar_xml_path());
+    if missing(&[
+        ("segment.srx", &srx),
+        ("fr tagger", &tagger),
+        ("fr confusion.rkyv", &model_path),
+        ("fr grammar.xml", &grammar),
+    ]) {
+        return;
+    }
+    let engine =
+        rlt_native::NativeEngine::from_paths(cfg, &srx, &tagger, None).expect("load native fr engine");
+    let model = rlt_ir::deserialize_confusion(&std::fs::read(&model_path).expect("read fr confusion"))
+        .expect("deserialize fr confusion model");
+    let checker = ConfusionChecker::new(&model);
+
+    let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
+    for p in &model.pairs {
+        reverse.entry(p.b.clone()).or_default().push(p.a.clone());
+        if p.symmetric {
+            reverse.entry(p.a.clone()).or_default().push(p.b.clone());
+        }
+    }
+
+    let sentences = correct_sentences(&grammar);
+    let (mut tp, mut fneg, mut fp, mut perturbations) = (0usize, 0usize, 0usize, 0usize);
+    for s in &sentences {
+        let analysis = engine.analyze(s);
+        fp += checker.grammar_diagnostics(s, &analysis).len();
+        for i in 0..analysis.tokens.len() {
+            let word = analysis.tokens[i].text.to_lowercase();
+            let Some(errors) = reverse.get(&word) else {
+                continue;
+            };
+            let span = analysis.tokens[i].span;
+            for err in errors {
+                perturbations += 1;
+                let mut perturbed = analysis.clone();
+                perturbed.tokens[i].text.clone_from(err);
+                let recovered = checker.grammar_diagnostics(s, &perturbed).iter().any(|d| {
+                    d.span == span
+                        && d.suggestions.iter().any(|sg| sg.replacement.eq_ignore_ascii_case(&word))
+                });
+                if recovered {
+                    tp += 1;
+                } else {
+                    fneg += 1;
+                }
+            }
+        }
+    }
+    let total = tp + fneg;
+    eprintln!(
+        "ORACLE [fr l3]: recall {tp}/{total} over {} sentences / {perturbations} perturbations; {fp} false positives",
+        sentences.len(),
+    );
+    // Floors set just below the first measured values (filled after the build).
+    assert!(tp >= 400, "fr L3 recall regressed: recovered {tp}; expected >= 400");
+    assert!(fp <= 50, "fr L3 false positives regressed: {fp}; expected <= 50");
+}
+
+#[test]
+#[ignore = "needs the es confusion model; build via `cargo xtask build-confusion --lang es`"]
+fn es_l3_confusion_precision_recall() {
+    let cfg = rlt_lang::config("es").expect("es config");
+    let srx = root(cfg.segment_srx_path());
+    let tagger = root(&cfg.tagger_path());
+    let model_path = root(&cfg.confusion_path());
+    let grammar = root(&cfg.grammar_xml_path());
+    if missing(&[
+        ("segment.srx", &srx),
+        ("es tagger", &tagger),
+        ("es confusion.rkyv", &model_path),
+        ("es grammar.xml", &grammar),
+    ]) {
+        return;
+    }
+    let engine =
+        rlt_native::NativeEngine::from_paths(cfg, &srx, &tagger, None).expect("load native es engine");
+    let model = rlt_ir::deserialize_confusion(&std::fs::read(&model_path).expect("read es confusion"))
+        .expect("deserialize es confusion model");
+    let checker = ConfusionChecker::new(&model);
+
+    let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
+    for p in &model.pairs {
+        reverse.entry(p.b.clone()).or_default().push(p.a.clone());
+        if p.symmetric {
+            reverse.entry(p.a.clone()).or_default().push(p.b.clone());
+        }
+    }
+
+    let sentences = correct_sentences(&grammar);
+    let (mut tp, mut fneg, mut fp, mut perturbations) = (0usize, 0usize, 0usize, 0usize);
+    for s in &sentences {
+        let analysis = engine.analyze(s);
+        fp += checker.grammar_diagnostics(s, &analysis).len();
+        for i in 0..analysis.tokens.len() {
+            let word = analysis.tokens[i].text.to_lowercase();
+            let Some(errors) = reverse.get(&word) else {
+                continue;
+            };
+            let span = analysis.tokens[i].span;
+            for err in errors {
+                perturbations += 1;
+                let mut perturbed = analysis.clone();
+                perturbed.tokens[i].text.clone_from(err);
+                let recovered = checker.grammar_diagnostics(s, &perturbed).iter().any(|d| {
+                    d.span == span
+                        && d.suggestions.iter().any(|sg| sg.replacement.eq_ignore_ascii_case(&word))
+                });
+                if recovered {
+                    tp += 1;
+                } else {
+                    fneg += 1;
+                }
+            }
+        }
+    }
+    let total = tp + fneg;
+    eprintln!(
+        "ORACLE [es l3]: recall {tp}/{total} over {} sentences / {perturbations} perturbations; {fp} false positives",
+        sentences.len(),
+    );
+    // Floors set just below the first measured values (filled after the build).
+    assert!(tp >= 60, "es L3 recall regressed: recovered {tp}; expected >= 60");
+    assert!(fp <= 20, "es L3 false positives regressed: {fp}; expected <= 20");
+}
+
 /// L4 quality smoke/regression: a curated set of grammatical errors the neural tagger should fix,
 /// and correct sentences it must leave untouched. A floor that guards against decode/quantization
 /// regressions — *not* a full GEC benchmark (that is the pipeline's offline ERRANT F0.5 gate). The
