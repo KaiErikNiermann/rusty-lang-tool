@@ -76,50 +76,8 @@ doc = false
 bench = false
 
 [[bin]]
-name = "engine_analyze_de"
-path = "fuzz_targets/engine_analyze_de.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "engine_analyze_ru"
-path = "fuzz_targets/engine_analyze_ru.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "spell_edits1"
 path = "fuzz_targets/spell_edits1.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "engine_analyze_ar"
-path = "fuzz_targets/engine_analyze_ar.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "engine_analyze_fr"
-path = "fuzz_targets/engine_analyze_fr.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "engine_analyze_es"
-path = "fuzz_targets/engine_analyze_es.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "engine_analyze_it"
-path = "fuzz_targets/engine_analyze_it.rs"
 test = false
 doc = false
 bench = false

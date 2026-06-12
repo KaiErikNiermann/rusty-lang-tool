@@ -41,9 +41,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Untrusted-input (rkyv/byte) + L1/L3 targets need no built artifacts; engine_analyze needs the
-        # English tagger (built below). The per-language engine_analyze_* targets run in the local
-        # `cargo xtask fuzz` flow, not CI (they'd each need that language's multi-MB artifacts).
+        # Untrusted-input (rkyv/byte) + L1/L3 targets need no built artifacts; `engine_analyze` rotates
+        # through every built language (here only English — the multi-MB per-language taggers aren't all
+        # built in CI; locally, with all artifacts present, it fuzzes all of them, or pin one via
+        # RLT_FUZZ_LANG=<code>).
         target: [ir_rkyv, confusion_rkyv, disambig_rkyv, ir_match, tagger_load, spell_edits1, engine_analyze]
     steps:
       - uses: actions/checkout@v4
