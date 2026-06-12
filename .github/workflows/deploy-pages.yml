@@ -1,0 +1,85 @@
+name: Deploy web demo to Pages
+
+# Build the SvelteKit demo (wasm-pack the checker, bake in the integrity manifest from the latest
+# artifact Release) and deploy to GitHub Pages. The manifest's hashes are produced alongside the
+# released bytes (see release-artifacts.yml), so the deployed root of trust matches what it fetches.
+
+on:
+  push:
+    branches: [master]
+    paths: ["web/**", "crates/rlt-wasm/**", ".github/workflows/deploy-pages.yml"]
+  workflow_dispatch:
+    inputs:
+      artifact-tag:
+        description: Artifact Release tag to pin (blank = latest artifacts-*)
+        default: ""
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with: { targets: wasm32-unknown-unknown, cache-key: deploy-pages }
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
+
+      - name: Resolve the artifact Release tag
+        id: art
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.event.inputs.artifact-tag }}"
+          if [ -z "$tag" ]; then
+            tag=$(gh api "repos/${{ github.repository }}/releases" \
+              --jq '[.[] | select(.tag_name | startswith("artifacts-"))][0].tag_name')
+          fi
+          [ -z "$tag" ] && { echo "no artifacts-* release found — run release-artifacts.yml first"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Using artifact release: $tag"
+
+      - name: Bake the integrity manifest into the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p web/static
+          gh release download "${{ steps.art.outputs.tag }}" \
+            --repo "${{ github.repository }}" --pattern web-artifacts.json --dir web/static --clobber
+
+      - run: pnpm --prefix web install --frozen-lockfile
+
+      - name: Build the static site
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}
+          VITE_ARTIFACT_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ steps.art.outputs.tag }}
+        run: pnpm --prefix web run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: web/build }
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

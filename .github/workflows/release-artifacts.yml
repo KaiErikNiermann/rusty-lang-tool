@@ -1,0 +1,72 @@
+name: Release web artifacts
+
+# Build the per-language `with_native` artifacts (tagger/disambig/grammar + shared segment.srx), gzip +
+# hash them into web-artifacts.json, and publish everything to a GitHub Release. The deploy-pages
+# workflow bakes that manifest into the site as its root of trust, so the served hashes always match
+# the released bytes (the same job emits both). Re-run on an LT bump to refresh the artifacts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (blank = artifacts-<LT version>)
+        default: ""
+  push:
+    tags: ["artifacts-*"]
+
+permissions:
+  contents: write # create/update the Release
+
+concurrency:
+  group: release-artifacts
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with: { cache-key: release-artifacts }
+      - run: sudo apt-get update && sudo apt-get install -y gawk unzip
+
+      - name: Resolve the release tag
+        id: tag
+        run: |
+          lt=$(grep -oP 'const LT_VERSION: &str = "\K[^"]+' xtask/src/main.rs)
+          tag="${{ github.event.inputs.tag }}"
+          [ -n "${{ github.ref_type == 'tag' && github.ref_name || '' }}" ] && tag="${{ github.ref_name }}"
+          [ -z "$tag" ] && tag="artifacts-$lt"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $tag (LT $lt)"
+
+      - name: Fetch LanguageTool sources
+        run: cargo run -p xtask -- fetch-lt
+
+      - name: Build every language's native artifacts
+        run: |
+          for code in $(cargo run -q -p xtask -- lang-codes); do
+            echo "::group::build-lang $code"
+            cargo run -p xtask -- build-lang --lang "$code"
+            echo "::endgroup::"
+          done
+
+      - name: Gzip + hash into web-artifacts.json
+        run: cargo run -p xtask -- web-manifest --out dist/web-artifacts
+
+      - name: Publish to the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/web-artifacts/* --clobber
+          else
+            gh release create "$tag" dist/web-artifacts/* \
+              --title "Web artifacts ($tag)" \
+              --notes "Per-language WASM checker artifacts (gzipped) + web-artifacts.json integrity manifest. Consumed by the GitHub Pages demo."
+          fi
