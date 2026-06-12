@@ -932,10 +932,11 @@ fn trimmed(text: Option<&xsd_parser_types::xml::Text>) -> Option<String> {
 
 /// Force case-sensitive matching on every token (and its exceptions) and rule-level `<regexp>` in
 /// `constructs`. `<pattern>`/`<antipattern>` carry a `case_sensitive="yes"` that applies to *all* their
-/// tokens, but `lower_pattern` only sees the children, not that attribute — so the enclosing scope
-/// stamps it on afterward. Without this, a case-sensitive uppercase regex (e.g. Russian `AllCaps`'s
-/// `[А-ЯЁ]{4,4}…`) matches case-insensitively and fires on every capitalised word.
-fn force_case_sensitive(constructs: &mut [Construct]) {
+/// tokens, but the lowering only sees the children, not that attribute — so the enclosing scope stamps
+/// it on afterward. Without this, a case-sensitive uppercase regex (e.g. Russian `AllCaps`'s
+/// `[А-ЯЁ]{4,4}…`) matches case-insensitively and fires on every capitalised word. Shared with the
+/// disambiguation lowering, which has the same `<pattern case_sensitive>` (98 in en, 284 in de).
+pub(crate) fn force_case_sensitive(constructs: &mut [Construct]) {
     fn mark(t: &mut TokenPat) {
         t.case_sensitive = true;
         for e in &mut t.exceptions {

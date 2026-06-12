@@ -77,10 +77,18 @@ fn lower_rule(rule: &XRule, group_id: Option<&str>) -> DisambigRule {
         .unwrap_or("DISAMBIG")
         .to_owned();
     let mut pattern = Vec::new();
-    let supported_pattern = rule
-        .pattern
-        .as_ref()
-        .is_some_and(|p| lower_items(&p.items, &mut pattern));
+    let supported_pattern = match &rule.pattern {
+        Some(p) => {
+            let ok = lower_items(&p.items, &mut pattern);
+            // `<pattern case_sensitive="yes">` applies to all the pattern's tokens; the serde model
+            // doesn't thread it down, so stamp it on after lowering (98 such patterns in en, 284 de).
+            if ok && is_yes(p.case_sensitive.as_deref()) {
+                crate::force_case_sensitive(&mut pattern);
+            }
+            ok
+        }
+        None => false,
+    };
     let action = if supported_pattern && !pattern.is_empty() {
         rule.disambig.as_ref().map_or(TagAction::Unsupported, lower_action)
     } else {
@@ -224,6 +232,8 @@ struct XRule {
 
 #[derive(Debug, Deserialize)]
 struct XPattern {
+    #[serde(rename = "@case_sensitive")]
+    case_sensitive: Option<String>,
     #[serde(rename = "$value", default)]
     items: Vec<XPatItem>,
 }
@@ -335,6 +345,21 @@ struct XWd {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: `<pattern case_sensitive="yes">` in disambiguation.xml must make its tokens
+    /// case-sensitive (98 such patterns in en, 284 in de) — else uppercase regexes mis-tag.
+    #[test]
+    fn pattern_case_sensitive_propagates_in_disambig() {
+        let xml = "<rules><rule id=\"X\"><pattern case_sensitive=\"yes\">\
+                   <token regexp=\"yes\">[A-Z]+</token></pattern>\
+                   <disambig postag=\"NNP\"/></rule></rules>";
+        let parsed: XRules = quick_xml::de::from_str(xml).expect("parse");
+        let rule = lower_rule(&parsed.rule[0], None);
+        assert!(
+            rule.pattern.iter().any(|c| matches!(c, Construct::Token(t) if t.case_sensitive)),
+            "disambig pattern-level case_sensitive was not propagated to the token",
+        );
+    }
 
     #[test]
     fn lowers_real_disambiguation_xml() {
