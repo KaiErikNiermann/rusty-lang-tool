@@ -214,9 +214,11 @@ enum Task {
     /// Verify every configured language (the canonical `rlt_lang::LANGUAGES`) is wired into all the
     /// sites that *can't* share that Rust const — the per-language manifest, the sparse-checkout paths,
     /// the nightly oracle matrix, and the convert/oracle test names — so adding a language can't leave
-    /// one system out of sync. Exits non-zero on any required gap; also lists every numeric "N langs"
-    /// mention in the tree (informational) so stale counts in prose/CI surface for review.
+    /// one system out of sync. Exits non-zero on any required gap.
     LangCoherence,
+    /// Print the canonical language codes (space-separated, from `rlt_lang::LANGUAGES`) so shell/CI can
+    /// derive the language set + count dynamically instead of hardcoding a list that can drift.
+    LangCodes,
 }
 
 fn main() -> Result<()> {
@@ -262,6 +264,10 @@ fn main() -> Result<()> {
         Task::LangStatus { lang } => lang_status(lang.as_deref()),
         Task::LangManifest { lang } => lang_manifest(lang_cfg(&lang)?),
         Task::LangCoherence => lang_coherence(),
+        Task::LangCodes => {
+            println!("{}", rlt_lang::LANGUAGES.iter().map(|c| c.code).collect::<Vec<_>>().join(" "));
+            Ok(())
+        }
         Task::BuildL4 => build_l4(),
         Task::RunL4Oracle => run(
             "cargo",
@@ -1432,102 +1438,11 @@ fn lang_coherence() -> Result<()> {
         println!();
     }
 
-    report_count_mentions(count);
-
     if failures > 0 {
         bail!("{failures} required coherence check(s) failed — a language is not fully wired in");
     }
     println!("all required coherence checks passed");
     Ok(())
-}
-
-/// Source roots scanned for numeric language-count mentions (skipping build output / vendored data).
-const COHERENCE_SCAN_ROOTS: &[&str] = &["crates", "xtask", "fuzz", ".github", "docs", ".claude/skills"];
-
-/// Print every `N lang…` mention in the tree whose `N` differs from the canonical `count`, so a stale
-/// prose/CI count (a comment claiming the wrong number of languages) surfaces for review. Purely
-/// informational — these never gate CI, since legitimate subset phrases ("the 3 romance langs") match too.
-fn report_count_mentions(count: usize) {
-    let mut roots: Vec<std::path::PathBuf> =
-        COHERENCE_SCAN_ROOTS.iter().map(std::path::PathBuf::from).collect();
-    if Path::new("README.md").exists() {
-        roots.push(std::path::PathBuf::from("README.md"));
-    }
-    let mut hits: Vec<(String, usize, usize, String)> = Vec::new();
-    for root in &roots {
-        scan_count_mentions(root, count, &mut hits);
-    }
-    if hits.is_empty() {
-        println!("count mentions: none diverging from {count}\n");
-        return;
-    }
-    hits.sort();
-    println!("count mentions diverging from {count} (informational — verify each is an intended subset):");
-    for (path, line, n, snippet) in &hits {
-        println!("  {path}:{line}  says {n} — {snippet}");
-    }
-    println!();
-}
-
-/// Recursively scan `path` for `<digits> lang[s|uage…]` mentions whose number differs from `count`,
-/// appending `(path, line, number, trimmed-line)` to `hits`. Skips `target/` and non-text files.
-fn scan_count_mentions(path: &Path, count: usize, hits: &mut Vec<(String, usize, usize, String)>) {
-    let Ok(meta) = std::fs::metadata(path) else { return };
-    if meta.is_dir() {
-        if path.file_name().is_some_and(|n| n == "target") {
-            return;
-        }
-        let Ok(entries) = std::fs::read_dir(path) else { return };
-        let mut paths: Vec<std::path::PathBuf> = entries.flatten().map(|e| e.path()).collect();
-        paths.sort();
-        for p in paths {
-            scan_count_mentions(&p, count, hits);
-        }
-        return;
-    }
-    let ext_ok = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| matches!(e, "rs" | "yml" | "yaml" | "md" | "toml"));
-    if !ext_ok {
-        return;
-    }
-    let Ok(text) = std::fs::read_to_string(path) else { return };
-    for (i, line) in text.lines().enumerate() {
-        for (n, kw) in count_mentions(line) {
-            if n != count {
-                hits.push((path.display().to_string(), i + 1, n, format!("…{}…", line.trim())));
-                break; // one hit per line is enough to flag it
-            }
-            let _ = kw;
-        }
-    }
-}
-
-/// Yield `(number, keyword)` for each `<digits>[ ]lang…` occurrence in `line` — a digit run followed by
-/// at most one space and the case-insensitive prefix `lang` (covers "lang", "langs", "language(s)").
-fn count_mentions(line: &str) -> Vec<(usize, &str)> {
-    let bytes = line.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        if !bytes[i].is_ascii_digit() {
-            i += 1;
-            continue;
-        }
-        let start = i;
-        while i < bytes.len() && bytes[i].is_ascii_digit() {
-            i += 1;
-        }
-        let num = &line[start..i];
-        let rest = line[i..].trim_start_matches(' ');
-        if let Some(kw) = rest.get(..4).filter(|k| k.eq_ignore_ascii_case("lang")) {
-            if let Ok(n) = num.parse::<usize>() {
-                out.push((n, kw));
-            }
-        }
-    }
-    out
 }
 
 /// Leipzig Corpora Collection — a clean, fetchable German news corpus (tagged sentences) used as the
@@ -1828,18 +1743,10 @@ mod tests {
     }
 
     #[test]
-    fn count_mentions_catches_digit_then_lang() {
-        assert_eq!(count_mentions("scores 7 languages"), [(7, "lang")]);
-        assert_eq!(count_mentions("rotates through 6 langs here"), [(6, "lang")]);
-        // Digit not followed by `lang` (an em dash, a word) is not a count mention.
-        assert!(count_mentions("covers 8 — done").is_empty());
-        assert!(count_mentions("the 3 romance langs").is_empty());
-    }
-
-    #[test]
-    fn count_mentions_handles_multibyte_after_digit() {
-        // A digit immediately followed by a multibyte char must not panic on the 4-byte slice probe.
-        assert!(count_mentions("7—languages").is_empty());
+    fn lang_codes_output_matches_the_canonical_list() {
+        // The string `lang-codes` emits (and CI iterates) must be exactly the canonical codes.
+        let codes = rlt_lang::LANGUAGES.iter().map(|c| c.code).collect::<Vec<_>>();
+        assert_eq!(codes.join(" ").split_whitespace().collect::<Vec<_>>(), codes);
     }
 
     #[test]

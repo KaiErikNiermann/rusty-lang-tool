@@ -24,6 +24,22 @@ Rust const derives from it, so those sites cannot drift:
 There is no second array of codes anywhere. If you find yourself writing `["en", "de", …]`, derive it
 from `LANGUAGES` instead.
 
+### Shell / CI: derive, don't hardcode
+
+CI scripts that need the language set or count must derive them too, rather than spelling out a list (a
+`for l in en de …` loop) or a number (`All seven languages rebuilt`) that silently goes stale. `cargo
+xtask lang-codes` prints the canonical codes, space-separated, straight from `LANGUAGES`:
+
+```bash
+codes=$(cargo run -q -p xtask -- lang-codes)   # "en de ru ar fr es it"
+for l in $codes; do cargo run -p xtask -- build-lang --lang "$l"; done
+echo "All $(echo "$codes" | wc -w) languages rebuilt"
+```
+
+The `sync-upstream` workflow uses exactly this — its rebuild loop and its summary count both come from
+`lang-codes`, so neither can disagree with the engine. This is strictly better than grepping prose for
+"N languages": a derived count is *correct by construction*, not checked after the fact.
+
 ## The checker — `cargo xtask lang-coherence`
 
 Some sites can't share the Rust const: the per-language content manifest is JSON, the CI matrix is YAML,
@@ -48,9 +64,10 @@ Recommended check (warns, never fatal):
 | --- | --- | --- |
 | `L3 oracle floor` | `<code>_l3_confusion_precision_recall` in `rlt-cli/tests/oracle.rs` | a language may legitimately enable L3 without a scored floor — Russian's corpus is too small for a meaningful precision/recall number |
 
-Finally, the checker sweeps the tree for numeric `N lang…` mentions whose `N` differs from the configured
-count and lists them (informational only — phrases like "the 3 romance langs" are legitimate subsets, so
-this never gates CI; it just surfaces stale prose like a comment claiming the wrong total).
+The checker doesn't try to police prose for stale counts — natural-language numbers are ambiguous (a "9"
+need not be about languages) and a count spelled "seven" or written "7" is easy to miss. Instead, the
+count is never hardcoded: it's derived (see [Shell / CI](#shell--ci-derive-dont-hardcode) above), so it
+can't drift in the first place.
 
 ## Adding a language — the coherence checklist
 

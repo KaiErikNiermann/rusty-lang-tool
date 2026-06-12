@@ -86,7 +86,9 @@ jobs:
           echo '```' >> pr-body.md
 
           cargo run -p xtask -- fetch-engine >/dev/null 2>&1
-          for l in en de ru ar fr es it; do
+          # Derive the language set from the canonical `rlt_lang::LANGUAGES` (never hardcode it here).
+          codes=$(cargo run -q -p xtask -- lang-codes)
+          for l in $codes; do
             if ! cargo run -p xtask -- build-lang --lang "$l" > "build-$l.log" 2>&1; then
               status=build-failed
               { echo; echo "### \`build-lang --lang $l\` FAILED — likely a schema/converter incompatibility"; echo '```'; tail -25 "build-$l.log"; echo '```'; } >> pr-body.md
@@ -102,7 +104,7 @@ jobs:
           {
             echo
             if [ "$status" = ok ]; then
-              echo "✅ All seven languages rebuilt and the oracle floors held."
+              echo "✅ All $(echo "$codes" | wc -w) languages rebuilt and the oracle floors held."
             else
               echo "⚠️ Status: \`$status\` — this release likely needs code adjustments. Opened as a draft."
             fi
