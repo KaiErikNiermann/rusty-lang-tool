@@ -22,25 +22,18 @@ export class CheckerManager {
   async select(code: string, signal?: AbortSignal): Promise<void> {
     if (this.current?.code === code) return;
     const [mod, bytes] = await Promise.all([initWasm(), this.store.ensureLanguage(code, signal)]);
+    const build = (b: typeof bytes): RltChecker =>
+      // L3 confusion when the language has a model (en/de/ru/fr/es); plain L1+L2 otherwise (ar/it).
+      b.confusion.length > 0
+        ? mod.RltChecker.with_native_confusion(code, b.segmentSrx, b.tagger, b.disambig, b.grammar, b.confusion)
+        : mod.RltChecker.with_native(code, b.segmentSrx, b.tagger, b.disambig, b.grammar);
     let checker: RltChecker;
     try {
-      checker = mod.RltChecker.with_native(
-        code,
-        bytes.segmentSrx,
-        bytes.tagger,
-        bytes.disambig,
-        bytes.grammar,
-      );
+      checker = build(bytes);
     } catch {
+      // rkyv validation threw despite a hash match — evict + one forced re-fetch.
       await this.store.evictLanguage(code);
-      const fresh = await this.store.ensureLanguage(code, signal, true);
-      checker = mod.RltChecker.with_native(
-        code,
-        fresh.segmentSrx,
-        fresh.tagger,
-        fresh.disambig,
-        fresh.grammar,
-      );
+      checker = build(await this.store.ensureLanguage(code, signal, true));
     }
     this.current?.checker.free();
     this.current = { code, checker };

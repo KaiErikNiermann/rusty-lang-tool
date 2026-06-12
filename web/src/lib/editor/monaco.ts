@@ -37,6 +37,12 @@ export async function loadMonaco(): Promise<typeof Monaco> {
         "editor.background": "#0f1115",
         "editorGutter.background": "#0f1115",
         "editor.lineHighlightBackground": "#161a21",
+        // Squiggle palette: word-level errors (Spelling + L3 confusion → Warning) read red; structural
+        // (Grammar + L4 → Info) read blue. Two crisp categories rather than Monaco's default amber/teal.
+        "editorWarning.foreground": SOURCE_COLOR.Spelling,
+        "editorWarning.border": "#00000000",
+        "editorInfo.foreground": SOURCE_COLOR.Grammar,
+        "editorInfo.border": "#00000000",
       },
     });
     return monaco;

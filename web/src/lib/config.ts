@@ -15,7 +15,7 @@ export const DEFAULT_LANG = "en";
 
 /** A short error-laden sample per language, so the demo shows findings immediately. */
 export const SAMPLE_TEXT: Record<string, string> = {
-  en: "I should of went their yesterday. I recieve teh msg.",
+  en: "Your going to recieve to many msgs. I should of checked there email yesterday.",
   de: "Ich habe ein Apfel gegessen. Das ist nicht richtig geshrieben.",
   fr: "Je suis aller au marché. Il a manger une pomme.",
   es: "Ayer fui a la tienda y compre pan. No se como hacerlo.",

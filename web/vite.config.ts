@@ -7,6 +7,9 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [sveltekit()],
   optimizeDeps: { exclude: ["$wasm"] },
+  // The checker worker dynamically imports `$wasm` (code-splitting), so it must be bundled as an ES
+  // module — Vite's default IIFE worker format can't code-split.
+  worker: { format: "es" },
   // Vitest: jsdom for the spanmap/DOM-touching unit tests.
   test: {
     environment: "jsdom",

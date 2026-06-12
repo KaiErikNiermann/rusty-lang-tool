@@ -6,12 +6,19 @@ inline squiggles and quick-fixes. No login, no server, no telemetry.
 
 ## Architecture
 
-- **WASM checker** — `RltChecker.with_native(lang, srx, tagger, disambig, grammar)` from `crates/rlt-wasm`,
-  built `--target web --no-default-features` (pure-native L1 spelling + L2 grammar, no nlprule).
+- **WASM checker** — `RltChecker.with_native(lang, srx, tagger, disambig, grammar)` (L1 spelling + L2
+  grammar) or `with_native_confusion(…, confusion)` (adds **L3 real-word errors** — their/there, to/too)
+  from `crates/rlt-wasm`, built `--target web --no-default-features` (pure-native, no nlprule). en/de/ru/
+  fr/es ship a confusion model; ar/it run L1+L2.
+- **Web Worker** (`src/lib/checker/checker.worker.ts`) — wasm init, the artifact fetch/verify/decompress,
+  the heavy rkyv deserialize, and every `check()` run **off the main thread**, so the UI never freezes on a
+  100 MB-language load or a large-input check. The main thread (`worker-client.ts`) just sends text and
+  renders the diagnostics that come back.
 - **ArtifactStore** (`src/lib/artifacts/store.ts`) — streams each gzipped artifact, verifies its SHA-256
   against the manifest, decompresses via the native `DecompressionStream`, caches it in the Cache Storage
   API keyed by content hash, and re-fetches with backoff on any corruption. The cache key is the hash, so
-  bumping an artifact transparently invalidates it.
+  bumping an artifact transparently invalidates it; a full storage quota degrades to no-cache (re-download
+  next time) rather than failing.
 - **Root of trust** — `web-artifacts.json` (emitted by `cargo xtask web-manifest`) records the SHA-256 +
   sizes of every compressed artifact. It's baked into the deployed site; the artifacts live on a GitHub
   Release. The same CI job emits both, so the hashes always match the bytes.

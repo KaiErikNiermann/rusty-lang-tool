@@ -20,6 +20,8 @@ export interface LangArtifacts {
     "tagger.rkyv": ArtifactRef;
     "grammar.rkyv": ArtifactRef;
     "disambig.rkyv"?: ArtifactRef;
+    /** L3 real-word-error model (en/de/ru/fr/es); absent for ar/it. */
+    "confusion.rkyv"?: ArtifactRef;
   };
 }
 
@@ -39,6 +41,8 @@ export interface LangBytes {
   /** Empty when the language ships no disambiguation. */
   disambig: Uint8Array;
   grammar: Uint8Array;
+  /** Empty when the language has no L3 confusion model (ar/it). */
+  confusion: Uint8Array;
 }
 
 /** Progress/health of fetching a language's artifacts, surfaced to the UI. */

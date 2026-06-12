@@ -9,8 +9,10 @@ export const MARKER_OWNER = "rlt";
 function severityFor(monaco: typeof Monaco, source: DiagnosticSource): Monaco.MarkerSeverity {
   switch (source) {
     case "Spelling":
+    case "Statistical": // L3 real-word errors are as actionable as spelling
       return monaco.MarkerSeverity.Warning;
     case "Grammar":
+    case "Neural":
       return monaco.MarkerSeverity.Info;
     default:
       return monaco.MarkerSeverity.Hint;

@@ -114,8 +114,14 @@ export class ArtifactStore {
         if (raw.length !== ref.rawBytes) {
           throw new Error(`size mismatch on ${ref.asset}: ${raw.length} != ${ref.rawBytes}`);
         }
-        const cache = await caches.open(CACHE_NAME);
-        await cache.put(this.cacheKey(ref.sha256), new Response(raw as BodyInit));
+        // Persistence is best-effort: a full quota disables caching (re-download next time) but never
+        // breaks the checker — the verified bytes are returned regardless.
+        try {
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put(this.cacheKey(ref.sha256), new Response(raw as BodyInit));
+        } catch (e) {
+          console.warn(`could not cache ${ref.asset} (likely storage quota); will re-fetch later`, e);
+        }
         return raw;
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") throw err;
@@ -155,6 +161,7 @@ export class ArtifactStore {
     const srx = this.manifest.shared["segment.srx"];
     const all = [srx, lang.files["tagger.rkyv"], lang.files["grammar.rkyv"]];
     if (lang.files["disambig.rkyv"]) all.push(lang.files["disambig.rkyv"]);
+    if (lang.files["confusion.rkyv"]) all.push(lang.files["confusion.rkyv"]);
     return { srx, lang, all };
   }
 
@@ -180,14 +187,16 @@ export class ArtifactStore {
     try {
       this.state.set({ kind: "downloading", file: lang.label, loaded: 0, total, pct: 0 });
       const get = (ref: ArtifactRef) => this.fetchOne(ref, onChunk, signal, forceRefetch);
-      const [srxBytes, tagger, grammar, disambig] = await Promise.all([
+      const empty = () => Promise.resolve(new Uint8Array());
+      const [srxBytes, tagger, grammar, disambig, confusion] = await Promise.all([
         get(srx),
         get(lang.files["tagger.rkyv"]),
         get(lang.files["grammar.rkyv"]),
-        lang.files["disambig.rkyv"] ? get(lang.files["disambig.rkyv"]) : Promise.resolve(new Uint8Array()),
+        lang.files["disambig.rkyv"] ? get(lang.files["disambig.rkyv"]) : empty(),
+        lang.files["confusion.rkyv"] ? get(lang.files["confusion.rkyv"]) : empty(),
       ]);
       this.state.set({ kind: "ready" });
-      return { segmentSrx: new TextDecoder().decode(srxBytes), tagger, grammar, disambig };
+      return { segmentSrx: new TextDecoder().decode(srxBytes), tagger, grammar, disambig, confusion };
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") throw err;
       const message = err instanceof Error ? err.message : String(err);

@@ -2,9 +2,8 @@
   import { onMount } from "svelte";
   import type * as Monaco from "monaco-editor";
 
-  import { ArtifactStore, createArtifactStore } from "$lib/artifacts/store";
   import type { FetchState, WebManifest } from "$lib/artifacts/types";
-  import { CheckerManager } from "$lib/checker/manager";
+  import { WorkerChecker } from "$lib/checker/worker-client";
   import { ARTIFACT_BASE_URL, DEFAULT_LANG, MANIFEST_URL, SAMPLE_TEXT } from "$lib/config";
   import { registerRltCodeActions } from "$lib/editor/codeactions";
   import { DiagnosticIndex } from "$lib/editor/diagnostics";
@@ -23,48 +22,54 @@
   let errorMessage = $state<string | null>(null);
   let findingCount = $state(0);
 
+  // The cascade layers active for the current language — L3 is shown when it ships a confusion model.
+  const activeLayers = $derived(
+    manifest?.languages[currentLang]?.files["confusion.rkyv"]
+      ? "L1 spelling · L2 grammar · L3 confusion"
+      : "L1 spelling · L2 grammar",
+  );
+
   // Non-reactive engine handles (set once in onMount).
   let monaco: typeof Monaco | undefined;
   let editor: Monaco.editor.IStandaloneCodeEditor | undefined;
   let model: Monaco.editor.ITextModel | undefined;
-  let store: ArtifactStore | undefined;
-  let manager: CheckerManager | undefined;
+  let client: WorkerChecker | undefined;
   const index = new DiagnosticIndex();
-  let abort: AbortController | undefined;
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let checkSeq = 0;
 
-  function runCheck() {
-    if (!ready || !model || !manager || !monaco) return;
+  async function runCheck() {
+    if (!ready || !model || !client || !monaco) return;
     const text = model.getValue();
+    const seq = ++checkSeq;
     try {
-      const diagnostics = manager.check(text);
+      const diagnostics = await client.check(text);
+      // Drop a superseded result, and never map a snapshot's spans onto an edited model.
+      if (seq !== checkSeq || !model || model.getValue() !== text) return;
       index.apply(monaco, model, text, diagnostics);
       findingCount = diagnostics.length;
     } catch (err) {
-      console.error("check failed", err);
+      if (seq === checkSeq) console.error("check failed", err);
     }
   }
 
   function scheduleCheck() {
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(runCheck, 300);
+    debounceTimer = setTimeout(() => void runCheck(), 300);
   }
 
   async function selectLanguage(code: string) {
-    if (!manager || !monaco || !model) return;
-    abort?.abort();
-    abort = new AbortController();
+    if (!client || !monaco || !model) return;
     busy = true;
     errorMessage = null;
     try {
-      await manager.select(code, abort.signal);
+      await client.select(code);
       currentLang = code;
       ready = true;
       const sample = SAMPLE_TEXT[code];
       if (sample !== undefined) model.setValue(sample);
-      runCheck();
+      await runCheck();
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
       errorMessage = err instanceof Error ? err.message : String(err);
     } finally {
       busy = false;
@@ -98,10 +103,9 @@
       editor.onDidChangeModelContent(scheduleCheck);
 
       try {
-        store = await createArtifactStore(MANIFEST_URL, ARTIFACT_BASE_URL);
-        manifest = store.manifest;
-        store.state.subscribe((s) => (fetchState = s));
-        manager = new CheckerManager(store);
+        client = new WorkerChecker();
+        client.state.subscribe((s) => (fetchState = s));
+        manifest = await client.init(MANIFEST_URL, ARTIFACT_BASE_URL);
         await selectLanguage(DEFAULT_LANG);
       } catch (err) {
         errorMessage = err instanceof Error ? err.message : String(err);
@@ -112,9 +116,8 @@
     return () => {
       disposed = true;
       clearTimeout(debounceTimer);
-      abort?.abort();
       codeActions?.dispose();
-      manager?.dispose();
+      client?.dispose();
       editor?.dispose();
     };
   });
@@ -161,6 +164,6 @@
         Loading the engine…
       {/if}
     </span>
-    <span class="font-mono">L1 spelling · L2 grammar</span>
+    <span class="font-mono">{activeLayers}</span>
   </footer>
 </main>
