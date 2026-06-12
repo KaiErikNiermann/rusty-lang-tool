@@ -8,7 +8,8 @@
 #![forbid(unsafe_code)]
 
 use rlt_core::{
-    Checker, Composite, Diagnostic, Disambiguator, Engine, GrammarChecker, IrMatcher, WithGrammar,
+    Checker, Composite, ConfusionChecker, Diagnostic, Disambiguator, Engine, GrammarChecker,
+    IrMatcher, WithConfusion, WithGrammar,
 };
 #[cfg(feature = "nlprule")]
 use rlt_engine::VendoredEngine;
@@ -96,6 +97,35 @@ impl RltChecker {
         let ir = load_ir(ir_blob)?;
         Ok(Self {
             inner: Box::new(Checker::with_spell(Composite::new(engine, ir), alphabet)),
+        })
+    }
+
+    /// Like [`with_native`](Self::with_native) but also runs the **L3 confusion layer** — real-word
+    /// error detection (their/there, affect/effect) from the `confusion.rkyv` artifact. Stacks on top
+    /// of L1+L2 via `WithConfusion`; needs no input beyond the confusion blob (it reads the POS tags the
+    /// engine already produced).
+    ///
+    /// # Errors
+    /// Returns a JS error if any artifact buffer is invalid.
+    pub fn with_native_confusion(
+        lang: &str,
+        segment_srx: &str,
+        tagger: &[u8],
+        disambig: &[u8],
+        ir_blob: &[u8],
+        confusion_blob: &[u8],
+    ) -> Result<RltChecker, JsValue> {
+        console_error_panic_hook::set_once();
+        let alphabet = lang_alphabet(lang)?;
+        let engine = load_native_engine(lang, segment_srx, tagger, disambig)?;
+        let ir = load_ir(ir_blob)?;
+        let confusion = ConfusionChecker::from_rkyv_bytes(confusion_blob)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(Self {
+            inner: Box::new(Checker::with_spell(
+                WithConfusion::new(Composite::new(engine, ir), confusion),
+                alphabet,
+            )),
         })
     }
 

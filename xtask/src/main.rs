@@ -1369,6 +1369,10 @@ fn web_manifest(out: &Path) -> Result<()> {
         if let Some(asset) = gzip_asset(&cfg.disambig_path(), out, &format!("{code}-disambig.rkyv.gz"))? {
             files.insert("disambig.rkyv".to_owned(), asset);
         }
+        // L3 confusion model (en/de/ru/fr/es); absent for ar/it.
+        if let Some(asset) = gzip_asset(&cfg.confusion_path(), out, &format!("{code}-confusion.rkyv.gz"))? {
+            files.insert("confusion.rkyv".to_owned(), asset);
+        }
         let total_bytes = files.values().map(|a| a.bytes).sum();
         languages.insert(
             code.to_owned(),
