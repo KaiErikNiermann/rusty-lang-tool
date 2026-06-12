@@ -863,7 +863,7 @@ fn lower_token(t: &pattern::TokenElementType) -> TokenPat {
         })
         .collect();
     TokenPat {
-        text: trimmed(t.text_before.as_ref()),
+        text: token_literal(t),
         postag: t.postag.clone(),
         regexp: is_yes(&t.regexp),
         postag_regexp: is_yes(&t.postag_regexp),
@@ -875,6 +875,26 @@ fn lower_token(t: &pattern::TokenElementType) -> TokenPat {
         case_sensitive: t.case_sensitive.as_ref().is_some_and(is_yes),
         exceptions,
     }
+}
+
+/// A `<token>`'s literal (or regex, when `regexp="yes"`) surface text. LT writes it either as the
+/// token's leading text (`<token>hell</token>`) **or** as the *tail* text after a child
+/// `<exception>`/`<match>` (`<token><exception …>…</exception>hell</token>`) — the latter lands in the
+/// child's `Mixed::text_after`, not `text_before`. Missing it silently turns the token into a wildcard
+/// (it then matches any word), so gather every text fragment of the element, ignoring child contents.
+fn token_literal(t: &pattern::TokenElementType) -> Option<String> {
+    let mut text = t.text_before.as_ref().map(|x| x.0.clone()).unwrap_or_default();
+    for c in &t.content {
+        let tail = match c {
+            pattern::TokenElementTypeContent::Exception(e) => e.text_after.as_ref(),
+            pattern::TokenElementTypeContent::Match(m) => m.text_after.as_ref(),
+        };
+        if let Some(tail) = tail {
+            text.push_str(&tail.0);
+        }
+    }
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_owned())
 }
 
 /// Lower a `<token>`'s `<exception>` into an [`ExceptionPat`].
@@ -1007,6 +1027,50 @@ mod tests {
     fn passthrough_without_doctype() {
         let xml = "<rules><a/></rules>";
         assert_eq!(expand_entities(xml, None).unwrap(), xml);
+    }
+
+    /// Regression: a `<token>`'s literal text often follows its child `<exception>` (as XML tail text),
+    /// e.g. the LT `HELL` rule's `<token><exception …>…</exception>hell</token>`. Dropping that tail
+    /// turned the token into a wildcard that matched any word (HELL flagged "there" → "he'll"). The
+    /// converted token must carry the literal "hell".
+    #[test]
+    fn token_literal_after_exception_is_not_a_wildcard() {
+        let dir = std::env::temp_dir().join(format!("rlt-tok-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("grammar.xml");
+        std::fs::write(
+            &path,
+            "<?xml version=\"1.0\"?>\n\
+             <rules lang=\"en\">\n\
+               <category id=\"C\" name=\"C\">\n\
+                 <rule id=\"HELLISH\" name=\"hellish\">\n\
+                   <pattern>\n\
+                     <token><exception scope=\"previous\" regexp=\"yes\">the|their</exception>hell</token>\n\
+                     <token postag=\"VB\"/>\n\
+                   </pattern>\n\
+                   <message>Did you mean <suggestion>he'll</suggestion>?</message>\n\
+                   <example correction=\"he'll\"><marker>hell</marker> be there.</example>\n\
+                 </rule>\n\
+               </category>\n\
+             </rules>\n",
+        )
+        .unwrap();
+
+        let doc = super::parse_grammar(&path).expect("parse minimal grammar");
+        let token = super::lower_document(&doc)
+            .iter()
+            .flat_map(|r| r.pattern.clone())
+            .find_map(|c| match c {
+                super::Construct::Token(t) => Some(t),
+                _ => None,
+            })
+            .expect("the rule has a token");
+        assert_eq!(
+            token.text.as_deref(),
+            Some("hell"),
+            "token literal after <exception> was dropped (wildcard regression)",
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// en/de/ru/ar have only an *inline* internal subset — a `base_dir` must not change their
