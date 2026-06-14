@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use fst::{Map, MapBuilder};
 use rkyv::{Archive, Deserialize, Serialize};
 
-use rlt_core::Token;
+use rlt_core::{Token, push_unique};
 
 /// One morphological analysis of a word: its base form and POS tag (LT tagset).
 #[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]
@@ -135,13 +135,6 @@ impl Tagger {
                 push_unique(&mut token.lemmas, &self.lemmas[li as usize]);
             }
         }
-    }
-}
-
-/// Append `value` to `out` iff non-empty and not already present (order-preserving unique).
-fn push_unique(out: &mut Vec<String>, value: &str) {
-    if !value.is_empty() && !out.iter().any(|v| v == value) {
-        out.push(value.to_owned());
     }
 }
 

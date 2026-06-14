@@ -8,6 +8,7 @@
 //! is dictionary-driven (the loaded [`Tagger`] is the known-word oracle), so it generalizes to any
 //! compounding language that supplies [`rlt_lang::Compounding`].
 
+use rlt_core::capitalize_first;
 use rlt_lang::Compounding;
 
 use crate::tagger::{Tagger, WordData};
@@ -44,20 +45,12 @@ pub(crate) fn is_compound(word: &str, tagger: &Tagger, rules: &Compounding) -> b
 /// A constituent is known if the dictionary has it as-is or capitalized (German nouns are capitalized
 /// but appear lower-cased inside a compound).
 fn known_part(tagger: &Tagger, part: &str) -> bool {
-    tagger.is_known(part) || tagger.is_known(&capitalize(part))
+    tagger.is_known(part) || tagger.is_known(&capitalize_first(part))
 }
 
 /// The head constituent's analyses (as-is or capitalized lookup).
 fn head_analyses(tagger: &Tagger, part: &str) -> Option<Vec<WordData>> {
-    tagger.analyses(part).or_else(|| tagger.analyses(&capitalize(part)))
-}
-
-/// Upper-case the first character (Unicode-aware).
-fn capitalize(s: &str) -> String {
-    let mut chars = s.chars();
-    chars.next().map_or_else(String::new, |first| {
-        first.to_uppercase().collect::<String>() + chars.as_str()
-    })
+    tagger.analyses(part).or_else(|| tagger.analyses(&capitalize_first(part)))
 }
 
 /// Longest-match left-to-right split of `word` into ≥2 known parts (+ optional linking morphemes).

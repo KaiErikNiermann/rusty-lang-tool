@@ -27,11 +27,19 @@ pub use matcher::{Disambiguator, IrMatcher};
 use serde::{Deserialize, Serialize};
 
 /// Upper-case the first character of `s`, leaving the rest unchanged (`receive` → `Receive`).
-pub(crate) fn capitalize_first(s: &str) -> String {
+pub fn capitalize_first(s: &str) -> String {
     let mut chars = s.chars();
     chars.next().map_or_else(String::new, |c| {
         c.to_uppercase().collect::<String>() + chars.as_str()
     })
+}
+
+/// Append `value` to `out` iff it is non-empty and not already present (order-preserving unique) —
+/// taggers yield the same POS/lemma across a word's analyses, and downstream wants each once.
+pub fn push_unique(out: &mut Vec<String>, value: &str) {
+    if !value.is_empty() && !out.iter().any(|v| v == value) {
+        out.push(value.to_owned());
+    }
 }
 
 /// Re-case `candidate` to match `source`'s leading capitalization (so `Recieve` → `Receive`, not

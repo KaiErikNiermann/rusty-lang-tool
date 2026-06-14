@@ -15,7 +15,9 @@ use std::io::Read;
 use std::path::Path;
 
 use nlprule::{Rules, Tokenizer};
-use rlt_core::{Analysis, Diagnostic, Engine, GrammarChecker, Source, Span, Suggestion, Token};
+use rlt_core::{
+    Analysis, Diagnostic, Engine, GrammarChecker, Source, Span, Suggestion, Token, push_unique,
+};
 
 // The nlprule baseline runs its own pipeline from `text`, so it ignores the precomputed analysis.
 
@@ -107,14 +109,6 @@ impl VendoredEngine {
             .get_tags(word)
             .map(|d| (d.lemma().as_str().to_owned(), d.pos().as_str().to_owned()))
             .collect()
-    }
-}
-
-/// Append `value` to `out` iff it is non-empty and not already present (order-preserving unique) —
-/// the tagger yields the same POS/lemma across a word's analyses, and downstream wants each once.
-fn push_unique(out: &mut Vec<String>, value: &str) {
-    if !value.is_empty() && !out.iter().any(|v| v == value) {
-        out.push(value.to_owned());
     }
 }
 
