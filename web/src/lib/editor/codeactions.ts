@@ -51,9 +51,9 @@ export function registerRltCodeActions(monaco: typeof Monaco, index: DiagnosticI
         if (!diag) continue;
         diag.suggestions.forEach((s, i) => {
           actions.push({
-            // Lead with the replacement word: Monaco truncates the action title from the end with no
-            // hover tooltip, so "Replace with 'longword'" hides the word — the part that matters most.
-            title: `“${s.replacement}”  ·  replace`,
+            // Just the word — "replace" is implied by the quick-fix menu, and Monaco truncates long
+            // titles from the end with no tooltip, so the word is all that should occupy the space.
+            title: `“${s.replacement}”`,
             kind: "quickfix",
             diagnostics: [marker],
             isPreferred: i === 0,
