@@ -55,20 +55,24 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Using artifact release: $tag"
 
-      - name: Bake the integrity manifest into the site
+      # Bake BOTH the manifest and the gzipped artifacts into the site so they're served same-origin.
+      # GitHub Release asset downloads send no `Access-Control-Allow-Origin`, so fetching them cross-origin
+      # from the Pages site is CORS-blocked; serving them from Pages itself (default ARTIFACT_BASE_URL =
+      # `${base}/artifacts`) avoids that. The integrity manifest still gates every download.
+      - name: Bake the artifacts + integrity manifest into the site
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p web/static
+          mkdir -p web/static/artifacts
           gh release download "${{ steps.art.outputs.tag }}" \
-            --repo "${{ github.repository }}" --pattern web-artifacts.json --dir web/static --clobber
+            --repo "${{ github.repository }}" --dir web/static/artifacts --clobber
+          mv web/static/artifacts/web-artifacts.json web/static/web-artifacts.json
 
       - run: pnpm --prefix web install --frozen-lockfile
 
       - name: Build the static site
         env:
           BASE_PATH: /${{ github.event.repository.name }}
-          VITE_ARTIFACT_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ steps.art.outputs.tag }}
         run: pnpm --prefix web run build
 
       - uses: actions/upload-pages-artifact@v3
