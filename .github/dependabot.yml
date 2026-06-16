@@ -34,6 +34,17 @@ updates:
         patterns: ["*"]
     labels: [dependencies, python]
 
+  - package-ecosystem: npm
+    directory: "/web" # the SvelteKit demo (pnpm) — Monaco, Svelte, Vite, et al.
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      web-minor-patch:
+        update-types: [minor, patch]
+    labels: [dependencies, web]
+
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
