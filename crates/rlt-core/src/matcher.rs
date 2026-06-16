@@ -327,7 +327,9 @@ impl CompiledRegexpRule {
                     end: m.end(),
                 },
                 code: self.id.clone(),
-                message: self.message.clone(),
+                message: render_message_refs(&self.message, |n| {
+                    caps.get(n).map(|g| g.as_str().to_owned())
+                }),
                 suggestions,
                 source: Source::Grammar,
             });
@@ -687,10 +689,44 @@ fn render(
     Some(Diagnostic {
         span,
         code: rule.id.clone(),
-        message: rule.message.clone(),
+        message: render_message_refs(&rule.message, |n| captured_surface(n, text, tokens, captures)),
         suggestions,
         source: Source::Grammar,
     })
+}
+
+/// The source surface of the token(s) captured by the `no`-th (1-based) pattern element, or `None` if
+/// that element matched nothing. Shared by suggestion and message rendering.
+fn captured_surface(
+    no: usize,
+    text: &str,
+    tokens: &[Token],
+    captures: &[Option<(usize, usize)>],
+) -> Option<String> {
+    let (ts, te) = captures.get(no.checked_sub(1)?).copied().flatten()?;
+    text.get(tokens[ts].span.start..tokens[te - 1].span.end).map(str::to_owned)
+}
+
+/// Substitute `\N` backreferences in a message with `resolve(N)` (the Nth matched token/group surface);
+/// an unresolved ref is left literal. LT messages embed `<match>`/`<suggestion>` (lowered to `\N`), so
+/// without this they render with the words missing or the raw `\1` showing.
+fn render_message_refs(message: &str, resolve: impl Fn(usize) -> Option<String>) -> String {
+    let mut out = String::with_capacity(message.len());
+    let mut rest = message;
+    while let Some(bs) = rest.find('\\') {
+        out.push_str(&rest[..bs]);
+        let after = &rest[bs + 1..];
+        let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+        if let Some(v) = digits.parse::<usize>().ok().and_then(&resolve) {
+            out.push_str(&v);
+        } else {
+            out.push('\\');
+            out.push_str(&digits);
+        }
+        rest = &after[digits.len()..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Token-index range `[start, end)` the diagnostic span covers: the marked elements' captures, or
@@ -726,11 +762,10 @@ fn render_suggestion(
         match part {
             CompiledPart::Text(t) => out.push_str(t),
             CompiledPart::Token { no, case, regex } => {
-                let (ts, te) = captures.get(no.checked_sub(1)?).copied().flatten()?;
-                let surface = text.get(tokens[ts].span.start..tokens[te - 1].span.end)?;
+                let surface = captured_surface(*no, text, tokens, captures)?;
                 let transformed = match regex {
-                    Some((re, rep)) => re.replace_all(surface, rep.as_str()).into_owned(),
-                    None => surface.to_owned(),
+                    Some((re, rep)) => re.replace_all(&surface, rep.as_str()).into_owned(),
+                    None => surface,
                 };
                 out.push_str(&apply_case(&transformed, *case));
             }
@@ -993,6 +1028,14 @@ mod tests {
             text: Some(word.to_owned()),
             ..Default::default()
         })
+    }
+
+    #[test]
+    fn render_message_refs_substitutes_known_and_keeps_unknown() {
+        let resolve = |n: usize| (n == 1).then(|| "should".to_owned());
+        assert_eq!(render_message_refs("Use \\1 have.", resolve), "Use should have.");
+        assert_eq!(render_message_refs("a \\2 b", resolve), "a \\2 b"); // unresolved → literal
+        assert_eq!(render_message_refs("plain text", resolve), "plain text");
     }
 
     #[test]

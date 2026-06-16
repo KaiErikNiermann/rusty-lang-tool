@@ -34,7 +34,8 @@ pub struct Rule {
     /// suppress the rule (LT's exception-by-context mechanism). Each is its own construct list.
     /// Includes the enclosing `<rulegroup>`'s antipatterns, which apply to every member rule.
     pub antipatterns: Vec<Vec<Construct>>,
-    /// Human-readable message shown when the rule fires (plain text; embedded markup dropped).
+    /// Human-readable message shown when the rule fires. Inline `<suggestion>`/`<match>` are lowered
+    /// to `\N` token backreferences (the runtime substitutes the matched surface when rendering).
     pub message: String,
     /// Correction templates rendered against the matched tokens to produce replacements.
     pub suggestions: Vec<Suggestion>,

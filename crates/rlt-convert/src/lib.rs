@@ -627,7 +627,10 @@ fn lower_antipattern(a: &rules::AntipatternElementType, phrases: &Phrases) -> Ve
     out
 }
 
-/// Lower a `<message>` into its display text plus the corrections (`<suggestion>`s) it embeds.
+/// Lower a `<message>` into its display text plus the corrections (`<suggestion>`s) it embeds. Inline
+/// `<suggestion>`/`<match>` are rendered into the text as `\N` token backreferences (the runtime
+/// substitutes them with the matched surface) — otherwise the words are dropped and the message reads
+/// "Use  or, in informal register, ." (the mangled-message bug).
 fn lower_message(m: &rules::MessageElementType) -> (String, Vec<Suggestion>) {
     let mut text = m
         .text_before
@@ -637,12 +640,15 @@ fn lower_message(m: &rules::MessageElementType) -> (String, Vec<Suggestion>) {
     for item in &m.content {
         match item {
             rules::MessageElementTypeContent::Suggestion(s) => {
+                text.push_str(&inline_suggestion(&s.value));
                 suggestions.extend(lower_suggestion(&s.value));
                 if let Some(after) = &s.text_after {
                     text.push_str(&after.0);
                 }
             }
             rules::MessageElementTypeContent::Match(mt) => {
+                use std::fmt::Write as _;
+                let _ = write!(text, "\\{}", mt.value.no);
                 if let Some(after) = &mt.text_after {
                     text.push_str(&after.0);
                 }
@@ -650,6 +656,21 @@ fn lower_message(m: &rules::MessageElementType) -> (String, Vec<Suggestion>) {
         }
     }
     (text.trim().to_owned(), suggestions)
+}
+
+/// Render a message-embedded `<suggestion>` as literal text + `\N` token backreferences (its display
+/// form). The precise correction — with case/regex transforms — is carried separately by
+/// [`lower_suggestion`]; this is only what the human-readable message shows inline.
+fn inline_suggestion(s: &rules::SuggestionElementType) -> String {
+    use std::fmt::Write as _;
+    let mut out = s.text_before.as_ref().map_or_else(String::new, |t| t.0.clone());
+    for item in &s.content {
+        let _ = write!(out, "\\{}", item.match_.value.no);
+        if let Some(after) = &item.match_.text_after {
+            out.push_str(&after.0);
+        }
+    }
+    out
 }
 
 /// Lower a `<suggestion>` into a correction template (literal text + `<match no>` token refs, with
