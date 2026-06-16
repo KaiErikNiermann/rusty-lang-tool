@@ -68,7 +68,7 @@ rten-tensor = "0.24"
 tokenizers = { version = "0.23", default-features = false, features = ["unstable_wasm"] }
 serde_json = "1"
 # Word-level diff for the L4 iterative decoder (original vs corrected -> span-accurate edits).
-similar = "2"
+similar = "3"
 # Native engine (rlt-native): LanguageTool sentence segmentation (the POS tagger FSA reuses `fst`
 # above). `from_xml` enables loading segment.srx. Pure-Rust, compiles to wasm32.
 srx = { version = "0.1", features = ["from_xml"] }
