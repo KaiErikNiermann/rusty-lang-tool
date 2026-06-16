@@ -1500,15 +1500,23 @@ fn audit_rules(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
 
     // Per rule: how many sentences it fired on (≤ once per sentence) + one sample (sentence, matched text).
     let mut fired: std::collections::HashMap<String, (usize, String)> = std::collections::HashMap::new();
+    // Rules that produced a no-op suggestion (replacement == the matched text) — the cyclic-correction
+    // signature the runtime guard strips. Reported below so the buggy rules can be root-caused.
+    let mut noop: std::collections::HashMap<String, (usize, String)> = std::collections::HashMap::new();
     for text in &sentences {
         let analysis = engine.analyze(text);
         let mut seen_here = std::collections::HashSet::new();
         for d in ir.grammar_diagnostics(text, &analysis) {
+            let matched = text.get(d.span.start..d.span.end).unwrap_or_default();
+            if d.suggestions.iter().any(|s| s.replacement == matched) {
+                noop.entry(d.code.clone())
+                    .or_insert_with(|| (0, format!("{matched:?} in {:?}", truncate(text, 60))))
+                    .0 += 1;
+            }
             if !seen_here.insert(d.code.clone()) {
                 continue; // count a rule at most once per sentence
             }
             let entry = fired.entry(d.code.clone()).or_insert_with(|| {
-                let matched = text.get(d.span.start..d.span.end).unwrap_or("");
                 (0, format!("{matched:?} in {:?}", truncate(text, 60)))
             });
             entry.0 += 1;
@@ -1536,6 +1544,29 @@ fn audit_rules(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
         "\n  {anomalies} rule(s) fired on ≥{:.0}% of sentences — eyeball these for over-broad matches.",
         FIRING_ANOMALY_FRACTION * 100.0,
     );
+
+    // (3) Convergence — rules whose suggestion equals the text it replaces. Applying such a "fix"
+    // changes nothing, so the diagnostic re-fires: the cyclic-correction class. The runtime guard
+    // (`strip_noop_suggestions`) drops these so they can't cycle in the UI, but a rule that emits them
+    // is buggy (typically an ignored spacebefore/whitespace constraint firing on already-correct text).
+    // This pass formally surfaces *which* rules rather than relying on manual edge-case discovery.
+    println!("\n== convergence (no-op suggestions → would-be cyclic corrections) ==");
+    if noop.is_empty() {
+        println!("  OK — no rule suggested a replacement identical to the text it replaces\n");
+    } else {
+        let mut ranked_noop: Vec<(&String, usize, &str)> =
+            noop.iter().map(|(c, (n, s))| (c, *n, s.as_str())).collect();
+        ranked_noop.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        println!(
+            "  {} rule(s) produced no-op suggestions on the corpus (the runtime guard drops them, so",
+            noop.len(),
+        );
+        println!("  they cannot cycle in the UI — listed for root-causing):");
+        for (code, n, sample) in ranked_noop.iter().take(30) {
+            println!("    {code:<28} {n:>5}  e.g. {sample}");
+        }
+        println!();
+    }
 
     if !missing.is_empty() {
         bail!("{} token literal(s) dropped — see the fidelity report above", missing.len());
