@@ -1,5 +1,10 @@
 # rusty-lang-tool (`rlt`)
 
+> [!WARNING]
+> **Work in progress.** rlt is under active development — expect rough edges and bugs, especially in
+> rule conversion (some LanguageTool rules don't yet lower faithfully) and the web demo.
+> [Issues](https://github.com/KaiErikNiermann/rusty-lang-tool/issues) and feedback are very welcome.
+
 A **fully local, web-native grammar and spell checker** that reuses
 [LanguageTool](https://github.com/languagetool-org/languagetool)'s open rule corpus but runs
 entirely client-side (native or WebAssembly) — no server, no subscription, no telemetry.
@@ -73,12 +78,13 @@ L4 is automatic when `resources/l4/` is present (after `build-l4`); otherwise th
 
 ## Web demo
 
-A client-side [Svelte](web/) demo lets you pick a language, fetch its compiled artifacts once (verified
-+ cached in the browser), and check text in a Monaco editor with inline squiggles and quick-fixes — no
-server, no telemetry. `cargo xtask web-manifest` packages the per-language `with_native` artifacts
-(gzipped) + a SHA-256 integrity manifest; the artifacts are hosted on a GitHub Release and the site is
-deployed to GitHub Pages by `.github/workflows/{release-artifacts,deploy-pages}.yml`. See
-[`web/README.md`](web/README.md) to run it locally.
+A client-side [Svelte](web/) demo (**[live here](https://kaierikniermann.github.io/rusty-lang-tool/)**)
+lets you pick a language, fetch its compiled artifacts once (verified and cached in the browser), and
+check text in a Monaco editor with inline squiggles and quick-fixes — no server, no telemetry.
+`cargo xtask web-manifest` packages the per-language `with_native` artifacts (gzipped) plus a SHA-256
+integrity manifest; the artifacts are hosted on a GitHub Release and the site is deployed to GitHub
+Pages by `.github/workflows/{release-artifacts,deploy-pages}.yml`. See [`web/README.md`](web/README.md)
+to run it locally.
 
 ## Licensing
 
@@ -87,3 +93,20 @@ Code is `Apache-2.0 OR MIT`. LanguageTool-derived data artifacts (`en.rkyv`, `co
 checkpoint, so **any distribution that bundles L4 is non-commercial** (PolyForm Noncommercial); the
 Rust code stays permissive and L4 is opt-in/separable (without `resources/l4/`, the checker is
 L1–L3 only). See [`LICENSES.md`](LICENSES.md) and [`NOTICE`](NOTICE).
+
+## Acknowledgements
+
+This project stands entirely on the shoulders of others:
+
+- **[LanguageTool](https://github.com/languagetool-org/languagetool)** and its contributors — for ~20
+  years of hand-authored, open multilingual grammar rules, dictionaries, and the `<example>` corpus
+  that this tool reuses and is differentially tested against. rlt is a reuse of their data, not a
+  replacement for their work; please support the upstream project.
+- **[nlprule](https://github.com/bminixhofer/nlprule)** by Benjamin Minixhofer — the original Rust
+  reuse of LanguageTool's rule engine, which inspired this project's approach (and whose analysis
+  engine is vendored behind the baseline backend).
+- The POS-dictionary maintainers whose morfologik data the taggers build on — including
+  [Softcatalà](https://github.com/Softcatala) (Spanish/French dictionaries) and the LanguageTool
+  language-module authors.
+- **[rten](https://github.com/robertknight/rten)** — the pure-Rust ONNX runtime powering the L4 neural
+  tagger, and the [GECToR](https://github.com/grammarly/gector) line of work it derives from.
