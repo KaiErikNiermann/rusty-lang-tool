@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "wasm": "wasm-pack build ../crates/rlt-wasm --target web --out-dir pkg -- --no-default-features",
-    "prebuild": "pnpm run wasm",
-    "predev": "pnpm run wasm",
+    "stage": "node scripts/stage-artifacts.mjs",
+    "stage:all": "node scripts/stage-artifacts.mjs all",
+    "prebuild": "pnpm run wasm && pnpm run stage:all",
+    "predev": "pnpm run wasm && pnpm run stage",
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",

@@ -233,6 +233,11 @@ enum Task {
         /// Output directory for the `.gz` assets + `web-artifacts.json` (created if absent).
         #[arg(long, default_value = "dist/web-artifacts")]
         out: std::path::PathBuf,
+        /// Restrict to a comma-separated subset of language codes (e.g. `en,de`); default = all
+        /// built languages. The dev pipeline uses `--langs en` so a `pnpm run dev` stages only the
+        /// default language (gzipping all 7 at best compression takes minutes).
+        #[arg(long, value_delimiter = ',')]
+        langs: Vec<String>,
     },
     /// Grammar-rule health audit for `--lang`, surfacing the bug classes that hide as weird
     /// recommendations: (1) **token-literal fidelity** — `<token>` literals dropped by the converter
@@ -299,7 +304,7 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Task::WebManifest { out } => web_manifest(&out),
+        Task::WebManifest { out, langs } => web_manifest(&out, &langs),
         Task::AuditRules { lang } => audit_rules(lang_cfg(&lang)?),
         Task::BuildL4 => build_l4(),
         Task::RunL4Oracle => run(
@@ -1318,17 +1323,38 @@ struct WebManifestJson {
 
 /// Gzip `src` into `out_dir/<asset>`, returning the manifest entry (hash of the compressed bytes +
 /// both sizes). `None` if `src` is absent (an optional artifact like a language with no disambig).
+///
+/// **Incremental:** if a previously-emitted `<asset>` is newer than `src`, its compressed bytes are
+/// reused (just re-hashed) instead of recompressed — best-compression gzip over the full artifact set
+/// takes minutes, so this keeps a re-run after `pnpm run dev` to seconds when nothing changed.
 fn gzip_asset(src: &str, out_dir: &Path, asset: &str) -> Result<Option<WebAsset>> {
     use std::io::Write as _;
 
     use flate2::{Compression, write::GzEncoder};
-    let Ok(raw) = std::fs::read(src) else { return Ok(None) };
+    let Ok(src_meta) = std::fs::metadata(src) else { return Ok(None) };
+    let dst = out_dir.join(asset);
+
+    if is_up_to_date(&dst, &src_meta) {
+        let gz = std::fs::read(&dst)?;
+        let (sha256, bytes) = sha256_bytes(&gz);
+        return Ok(Some(WebAsset { asset: asset.to_owned(), sha256, bytes, raw_bytes: src_meta.len() }));
+    }
+
+    let raw = std::fs::read(src)?;
     let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
     encoder.write_all(&raw)?;
     let gz = encoder.finish()?;
-    std::fs::write(out_dir.join(asset), &gz)?;
+    std::fs::write(&dst, &gz)?;
     let (sha256, bytes) = sha256_bytes(&gz);
     Ok(Some(WebAsset { asset: asset.to_owned(), sha256, bytes, raw_bytes: raw.len() as u64 }))
+}
+
+/// True iff `dst` exists and was modified no earlier than `src` (so its cached gzip is still current).
+fn is_up_to_date(dst: &Path, src_meta: &std::fs::Metadata) -> bool {
+    let (Ok(dst_meta), Ok(src_mtime)) = (std::fs::metadata(dst), src_meta.modified()) else {
+        return false;
+    };
+    dst_meta.modified().is_ok_and(|dst_mtime| dst_mtime >= src_mtime)
 }
 
 /// Hex SHA-256 + length of an in-memory buffer (the compressed-asset analogue of [`sha256_file`]).
@@ -1347,8 +1373,14 @@ fn sha256_bytes(bytes: &[u8]) -> (String, u64) {
 /// Package the web demo's per-language `with_native` artifacts: gzip each into `out` and emit
 /// `web-artifacts.json` (the browser's integrity manifest). Skips any language whose required
 /// artifacts aren't built, so it works on a partial `resources/` (e.g. CI building one matrix leg).
-fn web_manifest(out: &Path) -> Result<()> {
+fn web_manifest(out: &Path, langs: &[String]) -> Result<()> {
     std::fs::create_dir_all(out)?;
+
+    // An empty `--langs` means "every built language"; otherwise validate the requested subset.
+    if let Some(unknown) = langs.iter().find(|c| rlt_lang::config(c).is_none()) {
+        bail!("unknown language code `{unknown}` (known: {})", rlt_lang::known());
+    }
+    let wanted = |code: &str| langs.is_empty() || langs.iter().any(|c| c == code);
 
     // The one shared artifact: segment.srx (passed to `with_native` as a string).
     let srx_path = rlt_lang::LANGUAGES[0].segment_srx_path();
@@ -1360,7 +1392,7 @@ fn web_manifest(out: &Path) -> Result<()> {
     }
 
     let mut languages = std::collections::BTreeMap::new();
-    for cfg in rlt_lang::LANGUAGES {
+    for cfg in rlt_lang::LANGUAGES.iter().filter(|c| wanted(c.code)) {
         let code = cfg.code;
         // The artifacts `RltChecker.with_native` consumes: tagger + grammar (required), disambig (optional).
         let required = [("tagger.rkyv", cfg.tagger_path()), ("grammar.rkyv", cfg.grammar_blob_path())];

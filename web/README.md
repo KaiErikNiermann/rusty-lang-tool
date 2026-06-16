@@ -27,29 +27,48 @@ inline squiggles and quick-fixes. No login, no server, no telemetry.
 
 ## Run it locally
 
-```bash
-# 1. Build the language artifacts + the integrity manifest (needs the .rkyv built first:
-#    `cargo xtask fetch-lt && for c in $(cargo run -q -p xtask -- lang-codes); do
-#       cargo run -p xtask -- build-lang --lang $c; done`)
-cargo run -p xtask -- web-manifest --out dist/web-artifacts
+The language `.rkyv` artifacts must be built once (they're large + gitignored):
 
-# 2. Point the app at those artifacts and run the dev server.
-cd web
-pnpm install
-cp ../dist/web-artifacts/web-artifacts.json static/web-artifacts.json
-mkdir -p static/artifacts && cp ../dist/web-artifacts/*.gz static/artifacts/
-pnpm run dev          # http://localhost:5173  (ARTIFACT_BASE_URL defaults to /artifacts)
+```bash
+cargo xtask fetch-lt
+for c in $(cargo run -q -p xtask -- lang-codes); do cargo run -p xtask -- build-lang --lang $c; done
 ```
 
+Then just run the dev server — `predev` wasm-packs the checker **and** stages the artifacts + integrity
+manifest into `static/` automatically (no manual copying):
+
+```bash
+cd web
+pnpm install
+pnpm run dev          # http://localhost:5173
+```
+
+By default dev stages only **English** (gzipping all 7 languages at best compression takes minutes). To
+test other languages, stage them explicitly, then reload:
+
+```bash
+pnpm run stage:all                       # all built languages
+RLT_WEB_LANGS=en,de,fr pnpm run stage    # or an explicit subset
+```
+
+Staging is incremental (an unchanged artifact is not re-gzipped) and idempotent, so re-running is cheap.
 For production the artifacts are served from a GitHub Release; set `VITE_ARTIFACT_BASE_URL` to the
-release download URL and `BASE_PATH` to the Pages sub-path (the CI workflows do this).
+release download URL and `BASE_PATH` to the Pages sub-path (the CI workflows do this). When no local
+`.rkyv` artifacts are present (e.g. the Pages build, which downloads `web-artifacts.json` from the
+Release), staging is skipped and the existing manifest is kept.
+
+> The gzipped artifacts are gzip *content* the app decompresses in JS, so they must reach the browser
+> verbatim. A dev/preview Vite middleware (`rawArtifacts` in `vite.config.ts`) serves `/artifacts/*.gz`
+> as raw `application/octet-stream` — otherwise the dev server would set `Content-Encoding: gzip`, the
+> browser would transparently inflate them, and the SHA-256 would no longer match the manifest.
 
 ## Scripts
 
 | command | what |
 | --- | --- |
-| `pnpm run dev` | dev server (rebuilds the wasm pkg first) |
-| `pnpm run build` | wasm-pack + static build into `build/` |
+| `pnpm run dev` | dev server (wasm-packs the checker + stages English first) |
+| `pnpm run build` | wasm-pack + stage all languages + static build into `build/` |
+| `pnpm run stage` / `stage:all` | (re)stage artifacts + manifest into `static/` (English / all) |
 | `pnpm run check` | `svelte-check` (strict TS) |
 | `pnpm test` | vitest (spanmap vectors) |
 

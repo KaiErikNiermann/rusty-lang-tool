@@ -61,3 +61,6 @@ node_modules/
 /web/node_modules/
 /web/build/
 /web/.svelte-kit/
+# Staged by `pnpm run stage` (predev/prebuild): the gzipped language artifacts + integrity manifest.
+/web/static/artifacts/
+/web/static/web-artifacts.json
