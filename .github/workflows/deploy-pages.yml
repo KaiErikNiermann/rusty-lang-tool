@@ -7,7 +7,9 @@ name: Deploy web demo to Pages
 on:
   push:
     branches: [master]
-    paths: ["web/**", "crates/rlt-wasm/**", ".github/workflows/deploy-pages.yml"]
+    # `crates/**` because the wasm bundle compiles the whole engine (rlt-core/native/convert/…), so an
+    # engine change must redeploy even though only rlt-wasm is the direct entry point.
+    paths: ["web/**", "crates/**", ".github/workflows/deploy-pages.yml"]
   workflow_dispatch:
     inputs:
       artifact-tag:

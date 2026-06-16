@@ -13,13 +13,15 @@ export const ARTIFACT_BASE_URL = import.meta.env.VITE_ARTIFACT_BASE_URL ?? `${ba
 /** The language selected on first load (lightest meaningful default). */
 export const DEFAULT_LANG = "en";
 
-/** A short error-laden sample per language, so the demo shows findings immediately. */
+// A short sample per language, chosen so the deployed L1+L2 path (no L3 confusion / L4 neural, which
+// aren't in the released artifacts) flags at least one issue immediately — mostly clear misspellings,
+// the most reliable cross-language signal.
 export const SAMPLE_TEXT: Record<string, string> = {
   en: "Your going to recieve to many msgs. I should of checked there email yesterday.",
   de: "Ich habe ein Apfel gegessen. Das ist nicht richtig geshrieben.",
-  fr: "Je suis aller au marché. Il a manger une pomme.",
-  es: "Ayer fui a la tienda y compre pan. No se como hacerlo.",
-  it: "Ieri o andato al mercato. Non so come si fà.",
-  ru: "Я пошёл в магазин и купил хлеб. Это не правильно написано.",
+  fr: "Je voudrais un caffé et du suchre pour le petit déjeuner.",
+  es: "Ayer comí una mazana muy delisiosa en el desayuno.",
+  it: "Oggi ho mangato una pizza buonissma con gli amici.",
+  ru: "Сегодня я купил хлеп и малако в магазине.",
   ar: "ذهبت إلى المدرسه أمس. هذا ليس صحيحا.",
 };

@@ -28,10 +28,17 @@ function byteSpanToRange(
   };
 }
 
+/** True if `a` is strictly before `b` (a's end column/line does not reach b's start). */
+function before(a: Monaco.IRange, bStartLine: number, bStartCol: number): boolean {
+  return a.endLineNumber < bStartLine || (a.endLineNumber === bStartLine && a.endColumn <= bStartCol);
+}
+
 /**
  * Register quick-fixes: per marker, one "Replace with 'X'" action per suggestion (first preferred);
- * plus a single "Fix all" applying every current diagnostic's first suggestion in one workspace edit
- * (ranges are non-overlapping, so order is irrelevant). Returns a disposable.
+ * plus a single "Fix all" applying every current diagnostic's first suggestion in one workspace edit.
+ * Two rules can flag the same or adjacent span (e.g. a spacing rule pair), which would make the
+ * Fix-all edit list overlap — Monaco rejects that with "Overlapping ranges are not allowed". So the
+ * edits are sorted and greedily filtered to a non-overlapping set. Returns a disposable.
  */
 export function registerRltCodeActions(monaco: typeof Monaco, index: DiagnosticIndex): Monaco.IDisposable {
   return monaco.languages.registerCodeActionProvider("plaintext", {
@@ -69,17 +76,34 @@ export function registerRltCodeActions(monaco: typeof Monaco, index: DiagnosticI
       });
       if (fixable.length > 1) {
         const b2u = makeByteToUtf16(model.getValue());
-        actions.push({
-          title: `Fix all (${fixable.length})`,
-          kind: "quickfix",
-          edit: {
-            edits: fixable.map(({ span, text }) => ({
-              resource: model.uri,
-              versionId: model.getVersionId(),
-              textEdit: { range: byteSpanToRange(model, b2u, span), text },
-            })),
-          },
-        });
+        const ranked = fixable
+          .map(({ span, text }) => ({ range: byteSpanToRange(model, b2u, span), text }))
+          .sort(
+            (a, b) =>
+              a.range.startLineNumber - b.range.startLineNumber ||
+              a.range.startColumn - b.range.startColumn,
+          );
+        // Greedily keep edits whose range starts at/after the previous kept edit's end (drop overlaps).
+        const nonOverlapping: typeof ranked = [];
+        for (const e of ranked) {
+          const prev = nonOverlapping.at(-1);
+          if (!prev || before(prev.range, e.range.startLineNumber, e.range.startColumn)) {
+            nonOverlapping.push(e);
+          }
+        }
+        if (nonOverlapping.length > 1) {
+          actions.push({
+            title: `Fix all (${nonOverlapping.length})`,
+            kind: "quickfix",
+            edit: {
+              edits: nonOverlapping.map(({ range, text }) => ({
+                resource: model.uri,
+                versionId: model.getVersionId(),
+                textEdit: { range, text },
+              })),
+            },
+          });
+        }
       }
 
       return { actions, dispose() {} };
