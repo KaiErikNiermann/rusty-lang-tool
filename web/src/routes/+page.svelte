@@ -61,16 +61,20 @@
 
   async function selectLanguage(code: string) {
     if (!client || !monaco || !model) return;
+    const previous = currentLang;
+    // Highlight the picked language immediately (the artifact swap can take a beat) and revert if it
+    // fails — so the button feels responsive instead of waiting on the internal load.
+    currentLang = code;
     busy = true;
     errorMessage = null;
     try {
       await client.select(code);
-      currentLang = code;
       ready = true;
       const sample = SAMPLE_TEXT[code];
       if (sample !== undefined) model.setValue(sample);
       await runCheck();
     } catch (err) {
+      currentLang = previous;
       errorMessage = err instanceof Error ? err.message : String(err);
     } finally {
       busy = false;
@@ -160,8 +164,26 @@
     <ErrorBanner message={errorMessage} onretry={() => selectLanguage(currentLang)} />
   {/if}
 
-  <div class="overflow-hidden rounded-lg border border-white/10">
-    <div bind:this={editorEl} class="h-[60vh] w-full"></div>
+  <div class="relative overflow-hidden rounded-lg border border-white/10">
+    <div
+      bind:this={editorEl}
+      class="h-[60vh] w-full transition duration-200"
+      class:blur-[2px]={busy}
+      class:opacity-50={busy}
+      class:pointer-events-none={busy}
+    ></div>
+    {#if busy}
+      <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <span
+          class="flex items-center gap-2 rounded-md bg-black/60 px-3 py-1.5 text-xs text-zinc-200 backdrop-blur-sm"
+        >
+          <span
+            class="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white/90"
+          ></span>
+          Loading {manifest?.languages[currentLang]?.label ?? "language"}…
+        </span>
+      </div>
+    {/if}
   </div>
 
   <footer class="flex items-center justify-between text-xs text-zinc-500">
