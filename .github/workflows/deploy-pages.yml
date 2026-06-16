@@ -31,14 +31,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-rust
         with: { targets: wasm32-unknown-unknown, cache-key: deploy-pages }
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: { version: 10 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with: { node-version: 20, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
 
       - name: Resolve the artifact Release tag
@@ -71,7 +71,7 @@ jobs:
           VITE_ARTIFACT_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ steps.art.outputs.tag }}
         run: pnpm --prefix web run build
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with: { path: web/build }
 
   deploy:
@@ -82,4 +82,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
