@@ -1,12 +1,51 @@
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+
 import { sveltekit } from "@sveltejs/kit/vite";
-import { defineConfig } from "vite";
+import { defineConfig, type Connect, type Plugin } from "vite";
+
+const ARTIFACTS_DIR = fileURLToPath(new URL("static/artifacts", import.meta.url));
+
+// The language artifacts are gzip *content* we decompress in JS (DecompressionStream) — they must reach
+// the browser verbatim. But Vite's dev/preview static server treats a `.gz` file as transport-compressed
+// and sends `Content-Encoding: gzip`, so the browser transparently re-inflates it and the bytes the
+// fetch sees no longer match the manifest's SHA-256 (→ "integrity mismatch"). This middleware serves
+// `/artifacts/*.gz` as raw octet-stream with no Content-Encoding. Production is unaffected (the artifacts
+// come from a GitHub Release, which already serves them verbatim).
+function rawArtifacts(): Plugin {
+  const handler: Connect.NextHandleFunction = (req, res, next) => {
+    const path = (req.url ?? "").split("?")[0] ?? "";
+    const marker = "/artifacts/";
+    const at = path.indexOf(marker);
+    if (at === -1 || !path.endsWith(".gz")) return next();
+    const name = path.slice(at + marker.length);
+    if (name.includes("/")) return next(); // flat dir only; no traversal
+    readFile(`${ARTIFACTS_DIR}/${name}`).then(
+      (buf) => {
+        res.setHeader("Content-Type", "application/octet-stream");
+        res.setHeader("Content-Length", buf.length);
+        res.end(buf);
+      },
+      () => next(),
+    );
+  };
+  return {
+    name: "rlt-raw-artifacts",
+    configureServer: (server) => void server.middlewares.use(handler),
+    configurePreviewServer: (server) => void server.middlewares.use(handler),
+  };
+}
 
 // `$wasm` (the wasm-pack --target web bundle) is aliased via kit.alias in svelte.config.js, which feeds
 // both Vite and TS. It's imported dynamically (client-only) so it never enters the SSR/prerender graph,
 // and excluded from dep-optimization so Vite serves the .wasm with the right MIME type.
 export default defineConfig({
-  plugins: [sveltekit()],
+  plugins: [rawArtifacts(), sveltekit()],
   optimizeDeps: { exclude: ["$wasm"] },
+  // The wasm-pack bundle (`$wasm`) + its `rlt_wasm_bg.wasm` live in ../crates/rlt-wasm/pkg, outside the
+  // web root, so the dev server must be allowed to serve from the repo root (the `?url` asset import in
+  // checker/wasm.ts pulls the binary from there).
+  server: { fs: { allow: [".."] } },
   // The checker worker dynamically imports `$wasm` (code-splitting), so it must be bundled as an ES
   // module — Vite's default IIFE worker format can't code-split.
   worker: { format: "es" },
