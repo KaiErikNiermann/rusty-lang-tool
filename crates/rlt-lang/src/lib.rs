@@ -110,6 +110,9 @@ pub struct SpellConfig {
     /// spell-checked, and the pool edit-distance-1 suggestions are drawn from. ASCII `a–z` for
     /// en/de; Cyrillic `а–я` + `ё` for ru.
     pub alphabet: &'static str,
+    /// The L1 spelling-diagnostic message, in the language itself — LanguageTool's `spelling` string
+    /// from `MessagesBundle_<code>.properties` (so a German hit reads German, not English).
+    pub message: &'static str,
 }
 
 /// The structural tags a language's grammar anchors on, assigned by the engine from token shape.
@@ -314,6 +317,7 @@ pub static EN: LangConfig = LangConfig {
     },
     spell: SpellConfig {
         alphabet: "abcdefghijklmnopqrstuvwxyz",
+        message: "Possible spelling mistake found.",
     },
     normalization: Normalization::None,
     elision: &[],
@@ -356,6 +360,7 @@ pub static DE: LangConfig = LangConfig {
     },
     spell: SpellConfig {
         alphabet: "abcdefghijklmnopqrstuvwxyz",
+        message: "Möglicher Tippfehler gefunden.",
     },
     normalization: Normalization::None,
     elision: &[],
@@ -400,6 +405,7 @@ pub static RU: LangConfig = LangConfig {
     },
     spell: SpellConfig {
         alphabet: "абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
+        message: "Возможно найдена орфографическая ошибка.",
     },
     normalization: Normalization::None,
     elision: &[],
@@ -443,6 +449,7 @@ pub static AR: LangConfig = LangConfig {
     // handled generically by the spell layer, so marks are not in the alphabet. Derived by lang-inspect.
     spell: SpellConfig {
         alphabet: "ءآأؤإئابةتثجحخدذرزسشصضطظعغـفقكلمنهوىي",
+        message: "وُجد خطأ إملائي محتمل",
     },
     normalization: Normalization::StripCombiningMarks,
     elision: &[],
@@ -482,6 +489,7 @@ pub static FR: LangConfig = LangConfig {
     },
     spell: SpellConfig {
         alphabet: "abcdefghijklmnopqrstuvwxyzàâçéèêëîïôûùüÿœæ",
+        message: "Faute de frappe possible trouvée.",
     },
     normalization: Normalization::None,
     // French elision clitics (the apostrophe-final dict keys): articles/pronouns/conjunctions that
@@ -528,6 +536,7 @@ pub static ES: LangConfig = LangConfig {
     },
     spell: SpellConfig {
         alphabet: "abcdefghijklmnopqrstuvwxyzáéíóúüñ",
+        message: "Se ha encontrado un posible error ortográfico.",
     },
     normalization: Normalization::None,
     elision: &[],
@@ -565,6 +574,7 @@ pub static IT: LangConfig = LangConfig {
     },
     spell: SpellConfig {
         alphabet: "abcdefghijklmnopqrstuvwxyzàèéìîïòóùú",
+        message: "Trovato un probabile errore di battitura.",
     },
     normalization: Normalization::None,
     // Italian elision clitics: articles, articulated prepositions, and a few pronouns/adjectives that

@@ -92,11 +92,11 @@ impl RltChecker {
         ir_blob: &[u8],
     ) -> Result<RltChecker, JsValue> {
         console_error_panic_hook::set_once();
-        let alphabet = lang_alphabet(lang)?;
+        let (alphabet, spell_msg) = lang_spell(lang)?;
         let engine = load_native_engine(lang, segment_srx, tagger, disambig)?;
         let ir = load_ir(ir_blob)?;
         Ok(Self {
-            inner: Box::new(Checker::with_spell(Composite::new(engine, ir), alphabet)),
+            inner: Box::new(Checker::with_spell(Composite::new(engine, ir), alphabet, spell_msg)),
         })
     }
 
@@ -116,7 +116,7 @@ impl RltChecker {
         confusion_blob: &[u8],
     ) -> Result<RltChecker, JsValue> {
         console_error_panic_hook::set_once();
-        let alphabet = lang_alphabet(lang)?;
+        let (alphabet, spell_msg) = lang_spell(lang)?;
         let engine = load_native_engine(lang, segment_srx, tagger, disambig)?;
         let ir = load_ir(ir_blob)?;
         let confusion = ConfusionChecker::from_rkyv_bytes(confusion_blob)
@@ -125,6 +125,7 @@ impl RltChecker {
             inner: Box::new(Checker::with_spell(
                 WithConfusion::new(Composite::new(engine, ir), confusion),
                 alphabet,
+                spell_msg,
             )),
         })
     }
@@ -147,7 +148,7 @@ impl RltChecker {
         l4_verb: &[u8],
     ) -> Result<RltChecker, JsValue> {
         console_error_panic_hook::set_once();
-        let alphabet = lang_alphabet(lang)?;
+        let (alphabet, spell_msg) = lang_spell(lang)?;
         let engine = load_native_engine(lang, segment_srx, tagger, disambig)?;
         let ir = load_ir(ir_blob)?;
         let l4 = Tagger::from_bytes(l4_model, l4_tokenizer, l4_labels, l4_meta, l4_verb)
@@ -156,6 +157,7 @@ impl RltChecker {
             inner: Box::new(Checker::with_spell(
                 WithGrammar::new(Composite::new(engine, ir), l4),
                 alphabet,
+                spell_msg,
             )),
         })
     }
@@ -178,10 +180,11 @@ fn load_engine(tokenizer_bin: &[u8], rules_bin: &[u8]) -> Result<VendoredEngine,
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
-/// The language's L1 spell-check alphabet (Cyrillic for ru, ASCII for en/de).
-fn lang_alphabet(lang: &str) -> Result<&'static str, JsValue> {
+/// The language's L1 spell-check alphabet (Cyrillic for ru, ASCII for en/de) and its localized
+/// spelling-diagnostic message (LanguageTool's `spelling` string, so a German hit reads German).
+fn lang_spell(lang: &str) -> Result<(&'static str, &'static str), JsValue> {
     rlt_lang::config(lang)
-        .map(|c| c.spell.alphabet)
+        .map(|c| (c.spell.alphabet, c.spell.message))
         .ok_or_else(|| JsValue::from_str(&format!("unknown language {lang:?}")))
 }
 

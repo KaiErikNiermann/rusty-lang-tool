@@ -154,7 +154,14 @@ pub struct Checker<B: Engine + GrammarChecker> {
     /// The script's lower-case alphabet, driving L1 spell-check membership + edit generation.
     /// Defaults to [`spell::ASCII_ALPHABET`] (en/de); the CLI/wasm pass the language's alphabet.
     alphabet: &'static str,
+    /// The L1 spelling-diagnostic message, in the checked language (LanguageTool's localized
+    /// `spelling` string). Defaults to English; the CLI/wasm pass the language's variant.
+    spell_message: &'static str,
 }
+
+/// English default for the L1 spelling message when no language-specific one is supplied (the nlprule
+/// baseline path); the native path passes the localized [`rlt_lang::SpellConfig::message`].
+const DEFAULT_SPELL_MESSAGE: &str = "Possible spelling mistake found.";
 
 impl<B: Engine + GrammarChecker> Checker<B> {
     /// Construct a checker over the given analysis + grammar backend, spell-checking against the
@@ -163,13 +170,18 @@ impl<B: Engine + GrammarChecker> Checker<B> {
         Self {
             backend,
             alphabet: spell::ASCII_ALPHABET,
+            spell_message: DEFAULT_SPELL_MESSAGE,
         }
     }
 
-    /// Construct a checker whose L1 spell-checker uses `alphabet` — the active language's lower-case
-    /// letters (e.g. Cyrillic for Russian), from `rlt_lang::SpellConfig`.
-    pub fn with_spell(backend: B, alphabet: &'static str) -> Self {
-        Self { backend, alphabet }
+    /// Construct a checker whose L1 spell-checker uses the active language's `alphabet` (e.g. Cyrillic
+    /// for Russian) and localized `spell_message` — both from `rlt_lang::SpellConfig`.
+    pub fn with_spell(backend: B, alphabet: &'static str, spell_message: &'static str) -> Self {
+        Self {
+            backend,
+            alphabet,
+            spell_message,
+        }
     }
 
     /// Run the full cascade (L1 spelling + L2 grammar) over `text` and return all diagnostics,
@@ -177,7 +189,8 @@ impl<B: Engine + GrammarChecker> Checker<B> {
     #[must_use]
     pub fn check(&self, text: &str) -> Vec<Diagnostic> {
         let analysis = self.backend.analyze(text);
-        let mut diagnostics = spell::spelling_diagnostics(&self.backend, &analysis, self.alphabet);
+        let mut diagnostics =
+            spell::spelling_diagnostics(&self.backend, &analysis, self.alphabet, self.spell_message);
         diagnostics.extend(self.backend.grammar_diagnostics(text, &analysis));
         strip_noop_suggestions(text, &mut diagnostics);
         diagnostics.sort_by_key(|d| d.span.start);

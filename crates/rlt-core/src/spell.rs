@@ -37,6 +37,7 @@ pub(crate) fn spelling_diagnostics<E: Engine>(
     engine: &E,
     analysis: &Analysis,
     alphabet: &str,
+    message: &str,
 ) -> Vec<Diagnostic> {
     let alphabet: Vec<char> = alphabet.chars().collect();
     let mut diagnostics = Vec::new();
@@ -47,7 +48,7 @@ pub(crate) fn spelling_diagnostics<E: Engine>(
         diagnostics.push(Diagnostic {
             span: token.span,
             code: "SPELL".to_owned(),
-            message: format!("“{}” may be misspelled.", token.text),
+            message: message.to_owned(),
             suggestions: suggestions(engine, &token.text, &alphabet),
             source: Source::Spelling,
         });
@@ -183,7 +184,7 @@ mod tests {
             tokens: vec![token("recieve")],
         };
 
-        let diags = spelling_diagnostics(&engine, &analysis, ASCII_ALPHABET);
+        let diags = spelling_diagnostics(&engine, &analysis, ASCII_ALPHABET, "misspelled");
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].source, Source::Spelling);
         assert!(
@@ -204,7 +205,7 @@ mod tests {
         let analysis = Analysis {
             tokens: vec![token("the"), token("message")],
         };
-        assert!(spelling_diagnostics(&engine, &analysis, ASCII_ALPHABET).is_empty());
+        assert!(spelling_diagnostics(&engine, &analysis, ASCII_ALPHABET, "misspelled").is_empty());
     }
 
     #[test]
@@ -215,7 +216,7 @@ mod tests {
         let analysis = Analysis {
             tokens: vec![token("42"), token("a"), token("x1y")],
         };
-        assert!(spelling_diagnostics(&engine, &analysis, ASCII_ALPHABET).is_empty());
+        assert!(spelling_diagnostics(&engine, &analysis, ASCII_ALPHABET, "misspelled").is_empty());
     }
 
     #[test]
@@ -228,7 +229,7 @@ mod tests {
             &Analysis {
                 tokens: vec![token("Recieve")],
             },
-            ASCII_ALPHABET,
+            ASCII_ALPHABET, "misspelled",
         );
         assert!(
             diags[0]
@@ -266,7 +267,7 @@ mod tests {
             &Analysis {
                 tokens: vec![token("превет")],
             },
-            RU_ALPHABET,
+            RU_ALPHABET, "misspelled",
         );
         assert_eq!(diags.len(), 1, "expected one Cyrillic misspelling");
         assert!(
@@ -286,14 +287,14 @@ mod tests {
             spelling_diagnostics(
                 &engine,
                 &Analysis { tokens: vec![token("Мир")] },
-                RU_ALPHABET,
+                RU_ALPHABET, "misspelled",
             )
             .is_empty()
         );
         let diags = spelling_diagnostics(
             &engine,
             &Analysis { tokens: vec![token("Превет")] },
-            RU_ALPHABET,
+            RU_ALPHABET, "misspelled",
         );
         assert!(
             diags[0].suggestions.iter().any(|s| s.replacement == "Привет"),

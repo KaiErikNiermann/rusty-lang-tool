@@ -318,12 +318,15 @@ fn check_with_layers<B: Engine + GrammarChecker>(
     confusion: ConfusionChecker,
     tagger: Option<Tagger<RtenTagSource>>,
     alphabet: &'static str,
+    spell_message: &'static str,
     text: &str,
 ) -> Vec<Diagnostic> {
     let confused = WithConfusion::new(backend, confusion);
     match tagger {
-        Some(t) => Checker::with_spell(WithGrammar::new(confused, t), alphabet).check(text),
-        None => Checker::with_spell(confused, alphabet).check(text),
+        Some(t) => {
+            Checker::with_spell(WithGrammar::new(confused, t), alphabet, spell_message).check(text)
+        }
+        None => Checker::with_spell(confused, alphabet, spell_message).check(text),
     }
 }
 
@@ -369,18 +372,18 @@ fn run_check(
             } else {
                 tracing::warn!("{rules} not found — spelling only (run `cargo xtask fetch-engine`)");
             }
-            check_with_layers(nlprule, confusion, tagger, cfg.spell.alphabet, &text)
+            check_with_layers(nlprule, confusion, tagger, cfg.spell.alphabet, cfg.spell.message, &text)
         }
         Matcher::Ir => {
             let ir = load_ir_matcher(cfg)?;
             match engine {
                 AnalysisEngine::Native => {
                     let native = load_native_engine(cfg)?;
-                    check_with_layers(Composite::new(native, ir), confusion, tagger, cfg.spell.alphabet, &text)
+                    check_with_layers(Composite::new(native, ir), confusion, tagger, cfg.spell.alphabet, cfg.spell.message, &text)
                 }
                 AnalysisEngine::Nlprule => {
                     let nlprule = load_nlprule_engine()?;
-                    check_with_layers(Composite::new(nlprule, ir), confusion, tagger, cfg.spell.alphabet, &text)
+                    check_with_layers(Composite::new(nlprule, ir), confusion, tagger, cfg.spell.alphabet, cfg.spell.message, &text)
                 }
             }
         }
