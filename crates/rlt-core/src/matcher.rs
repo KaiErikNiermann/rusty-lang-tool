@@ -195,6 +195,9 @@ struct TokenMatcher {
     postag: Option<TagMatch>,
     inflected: bool,
     negate: bool,
+    /// `spacebefore`: `Some(true)` requires whitespace before the token, `Some(false)` forbids it,
+    /// `None` ignores it (the default). Checked against the gap between adjacent token spans.
+    space_before: Option<bool>,
     exceptions: Vec<TokenMatcher>,
 }
 
@@ -464,6 +467,7 @@ fn compile_token(t: &TokenPat) -> Option<TokenMatcher> {
         postag,
         inflected: t.inflected,
         negate: t.negate,
+        space_before: t.space_before,
         exceptions,
     })
 }
@@ -481,6 +485,7 @@ fn compile_exception(e: &ExceptionPat) -> Option<TokenMatcher> {
         postag,
         inflected: e.inflected,
         negate: e.negate,
+        space_before: None, // exceptions constrain the token's content, not its spacing
         exceptions: Vec::new(),
     })
 }
@@ -517,20 +522,34 @@ fn anchored(pattern: &str, case_insensitive: bool) -> Option<Regex> {
     Regex::new(&format!("{prefix}^(?:{pattern})$")).ok()
 }
 
+/// Whether whitespace precedes `tokens[k]` — i.e. there is a gap between this token's start and the
+/// previous token's end (the tokenizer drops only whitespace, so any gap is a space). The first token
+/// is treated as preceded by whitespace (it follows the segment boundary).
+fn has_space_before(tokens: &[Token], k: usize) -> bool {
+    k == 0 || tokens.get(k - 1).is_none_or(|prev| tokens[k].span.start > prev.span.end)
+}
+
 impl Matcher {
-    /// Whether this position-matcher accepts `token`.
-    fn matches(&self, token: &Token) -> bool {
+    /// Whether this position-matcher accepts `tokens[k]`.
+    fn matches(&self, tokens: &[Token], k: usize) -> bool {
         match self {
-            Matcher::One(m) => m.matches(token),
-            Matcher::Or(ms) => ms.iter().any(|m| m.matches(token)),
-            Matcher::And(ms) => ms.iter().all(|m| m.matches(token)),
+            Matcher::One(m) => m.matches(tokens, k),
+            Matcher::Or(ms) => ms.iter().any(|m| m.matches(tokens, k)),
+            Matcher::And(ms) => ms.iter().all(|m| m.matches(tokens, k)),
         }
     }
 }
 
 impl TokenMatcher {
-    /// Whether this matcher accepts `token` (applying negation and exceptions).
-    fn matches(&self, token: &Token) -> bool {
+    /// Whether this matcher accepts `tokens[k]` (applying the spacebefore constraint, negation, and
+    /// exceptions).
+    fn matches(&self, tokens: &[Token], k: usize) -> bool {
+        if let Some(want) = self.space_before {
+            if has_space_before(tokens, k) != want {
+                return false;
+            }
+        }
+        let token = &tokens[k];
         let mut hit = self.constraint(token);
         if self.negate {
             hit = !hit;
@@ -599,7 +618,7 @@ fn match_elements(
     let max = elem.max.min(remaining);
 
     for count in elem.min..=max {
-        if count > 0 && !(ti..ti + count).all(|k| elem.matcher.matches(&tokens[k])) {
+        if count > 0 && !(ti..ti + count).all(|k| elem.matcher.matches(tokens, k)) {
             break; // contiguous run broken — larger counts cannot match either
         }
         captures[ei] = (count > 0).then_some((ti, ti + count));
@@ -974,6 +993,24 @@ mod tests {
             text: Some(word.to_owned()),
             ..Default::default()
         })
+    }
+
+    #[test]
+    fn has_space_before_reflects_the_gap_between_token_spans() {
+        let tok = |s: usize, e: usize| Token {
+            text: String::new(),
+            span: Span { start: s, end: e },
+            tags: Vec::new(),
+            lemmas: Vec::new(),
+        };
+        // "pan. No": pan[0,3] .[3,4] No[5,7] — a space precedes "No".
+        let spaced = [tok(0, 3), tok(3, 4), tok(5, 7)];
+        // "pan.No":  pan[0,3] .[3,4] No[4,6] — "No" is adjacent to the period.
+        let adjacent = [tok(0, 3), tok(3, 4), tok(4, 6)];
+        assert!(has_space_before(&spaced, 0), "first token treated as preceded by the boundary");
+        assert!(!has_space_before(&spaced, 1), "'.' is adjacent to 'pan'");
+        assert!(has_space_before(&spaced, 2), "'No' has a space before it");
+        assert!(!has_space_before(&adjacent, 2), "'No' is adjacent to '.' — no space");
     }
 
     #[test]

@@ -18,10 +18,10 @@ MVP complete (English): **L1 spelling + L2 grammar**, as a Rust crate + CLI with
 bundled `<example>` sentences:
 
 - **nlprule baseline** (LT v5.2 rules): reproduces **55.3%**.
-- **IR matcher** (our converter's LT **v6.7** rules): reproduces **60.9%** — the on-thesis path,
-  ahead of the baseline, at 6.2% false-positive rate. Handles tokens/`<or>`/`<and>`/`<marker>`/
-  `<exception>`/`<antipattern>`/`<phraseref>`/rule-level `<regexp>` and `<match>` `regexp_replace`
-  transforms; `<unify>` is unused in English and `postag_replace` synthesis is out of scope.
+- **IR matcher** (our converter's LT **v6.7** rules): reproduces **61.1%** — the on-thesis path,
+  ahead of the baseline, at 5.4% false-positive rate. Handles tokens/`<or>`/`<and>`/`<marker>`/
+  `<exception>`/`<antipattern>`/`<phraseref>`/`spacebefore`/rule-level `<regexp>` and `<match>`
+  `regexp_replace` transforms; `<unify>` is unused in English and `postag_replace` synthesis is out of scope.
 - **L3 confusion** (real-word errors, e.g. their/there): **82.6%** recall on perturbed sentences,
   via a bigram + POS-context likelihood ratio over Norvig's n-grams pruned to LT's confusion sets.
 - **L4 neural** (long-tail grammar): a GECToR edit-tagger, **int8-quantized and run in pure Rust via

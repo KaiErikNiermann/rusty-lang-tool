@@ -887,7 +887,17 @@ fn lower_token(t: &pattern::TokenElementType) -> TokenPat {
         max: t.max,
         skip: t.skip,
         case_sensitive: t.case_sensitive.as_ref().is_some_and(is_yes),
+        space_before: space_before(&t.spacebefore),
         exceptions,
+    }
+}
+
+/// Lower LT's `spacebefore` (`yes`/`no`/`ignore`) to the IR's optional whitespace constraint.
+fn space_before(s: &pattern::TokenSpacebeforeType) -> Option<bool> {
+    match s {
+        pattern::TokenSpacebeforeType::Yes => Some(true),
+        pattern::TokenSpacebeforeType::No => Some(false),
+        pattern::TokenSpacebeforeType::Ignore => None,
     }
 }
 

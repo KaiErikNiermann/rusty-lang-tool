@@ -166,6 +166,7 @@ fn lower_token(t: &XToken) -> Option<TokenPat> {
         max: t.max,
         skip: t.skip,
         case_sensitive: is_yes(t.case_sensitive.as_deref()),
+        space_before: None, // disambiguation.xml's hand-written model doesn't parse spacebefore (rare there)
         exceptions: t.exception.iter().map(lower_exception).collect(),
     })
 }

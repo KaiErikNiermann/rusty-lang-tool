@@ -248,6 +248,10 @@ pub struct TokenPat {
     pub skip: Option<i32>,
     /// `case_sensitive="yes"`: match [`text`](Self::text) case-sensitively (default is insensitive).
     pub case_sensitive: bool,
+    /// `spacebefore`: whether whitespace must (`Some(true)`) or must not (`Some(false)`) precede this
+    /// token; `None` (LT's `ignore`, the default) places no constraint. Drives spacing rules like
+    /// `ESPACIO_DESPUES_DE_PUNTO` — without it they fire on already-correct text and emit no-op fixes.
+    pub space_before: Option<bool>,
     /// `<exception>` children: the token does *not* match if any exception matches it.
     pub exceptions: Vec<ExceptionPat>,
 }
