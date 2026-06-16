@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: sync
@@ -115,7 +115,7 @@ jobs:
 
       - name: Open / update the sync PR
         if: steps.ver.outputs.newer == 'true'
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: lt-sync/${{ steps.ver.outputs.latest }}
           commit-message: "chore: sync LanguageTool ${{ steps.ver.outputs.pinned }} -> ${{ steps.ver.outputs.latest }}"
