@@ -9,10 +9,10 @@ let monacoPromise: Promise<typeof Monaco> | null = null;
 
 /** Per-source squiggle/overview colors — kept in sync with tailwind.config.ts tokens. */
 export const SOURCE_COLOR: Record<DiagnosticSource, string> = {
-  Spelling: "#e5484d",
-  Grammar: "#3b82f6",
-  Statistical: "#a855f7",
-  Neural: "#10b981",
+  Spelling: "#f14c4c", // VS Code error red — brighter, so it reads on the gray editor background
+  Grammar: "#3b9eff",
+  Statistical: "#c586c0",
+  Neural: "#4ec9b0",
 };
 
 /** The dark "techy" theme; minimal, so the editor reads as a tool, not a document. */
@@ -34,9 +34,11 @@ export async function loadMonaco(): Promise<typeof Monaco> {
       inherit: true,
       rules: [],
       colors: {
-        "editor.background": "#0f1115",
-        "editorGutter.background": "#0f1115",
-        "editor.lineHighlightBackground": "#161a21",
+        // VS Code Dark+ grey rather than near-black, so red error squiggles stand out (they were
+        // hard to see on the previous very-dark background).
+        "editor.background": "#1e1e1e",
+        "editorGutter.background": "#1e1e1e",
+        "editor.lineHighlightBackground": "#2a2d2e",
         // Squiggle palette: word-level errors (Spelling + L3 confusion → Warning) read red; structural
         // (Grammar + L4 → Info) read blue. Two crisp categories rather than Monaco's default amber/teal.
         "editorWarning.foreground": SOURCE_COLOR.Spelling,

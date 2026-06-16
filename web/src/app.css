@@ -19,14 +19,14 @@
 /* Diagnostic squiggle underlines keyed by source (Monaco draws markers; these tint the inline class
    decorations the editor layer adds for precise per-source color). */
 .rlt-squiggle-spelling {
-  text-decoration: underline wavy var(--rlt-spelling, #e5484d) 1px;
+  text-decoration: underline wavy var(--rlt-spelling, #f14c4c) 1px;
 }
 .rlt-squiggle-grammar {
-  text-decoration: underline wavy var(--rlt-grammar, #3b82f6) 1px;
+  text-decoration: underline wavy var(--rlt-grammar, #3b9eff) 1px;
 }
 .rlt-squiggle-statistical {
-  text-decoration: underline wavy var(--rlt-statistical, #a855f7) 1px;
+  text-decoration: underline wavy var(--rlt-statistical, #c586c0) 1px;
 }
 .rlt-squiggle-neural {
-  text-decoration: underline wavy var(--rlt-neural, #10b981) 1px;
+  text-decoration: underline wavy var(--rlt-neural, #4ec9b0) 1px;
 }
