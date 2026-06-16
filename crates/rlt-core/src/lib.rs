@@ -179,9 +179,33 @@ impl<B: Engine + GrammarChecker> Checker<B> {
         let analysis = self.backend.analyze(text);
         let mut diagnostics = spell::spelling_diagnostics(&self.backend, &analysis, self.alphabet);
         diagnostics.extend(self.backend.grammar_diagnostics(text, &analysis));
+        strip_noop_suggestions(text, &mut diagnostics);
         diagnostics.sort_by_key(|d| d.span.start);
         diagnostics
     }
+}
+
+/// Drop "fixes" that would replace a span with the text it already contains. Such **no-op suggestions**
+/// are the formal signature of a *cyclic correction*: the user applies the fix, the text is unchanged,
+/// the same diagnostic re-fires, and the editor offers the identical no-op again. They arise from
+/// false-positive matches (e.g. a spacing rule firing on already-correct text and reconstructing it) or
+/// a suggestion template that rebuilds its own input.
+///
+/// Enforcing "every surfaced suggestion strictly changes its span" makes the cyclic state
+/// *unrepresentable* at this single chokepoint (every concrete checker funnels through here): applying
+/// any offered fix is guaranteed to change the text, so it always makes progress. A diagnostic whose
+/// suggestions were *all* no-ops has no real change to offer and is itself spurious, so it is removed;
+/// a diagnostic that never carried a suggestion is informational (nothing to apply, cannot cycle) and
+/// is kept.
+fn strip_noop_suggestions(text: &str, diagnostics: &mut Vec<Diagnostic>) {
+    diagnostics.retain_mut(|d| {
+        if d.suggestions.is_empty() {
+            return true;
+        }
+        let spanned = text.get(d.span.start..d.span.end).unwrap_or_default();
+        d.suggestions.retain(|s| s.replacement != spanned);
+        !d.suggestions.is_empty()
+    });
 }
 
 /// Composes a separate [`Engine`] and [`GrammarChecker`] into one backend — e.g. nlprule for
@@ -250,3 +274,58 @@ impl<B: Engine + GrammarChecker, G: GrammarChecker> GrammarChecker for WithGramm
 /// L3 real-word-error detection stacked onto any backend — the [`WithGrammar`] specialisation for
 /// [`ConfusionChecker`]. With an empty model it is a no-op. Construct via `WithConfusion::new`.
 pub type WithConfusion<B> = WithGrammar<B, ConfusionChecker>;
+
+#[cfg(test)]
+mod noop_guard_tests {
+    use super::*;
+
+    fn diag(start: usize, end: usize, reps: &[&str]) -> Diagnostic {
+        Diagnostic {
+            span: Span { start, end },
+            code: "TEST".to_owned(),
+            message: String::new(),
+            suggestions: reps
+                .iter()
+                .map(|r| Suggestion { replacement: (*r).to_owned() })
+                .collect(),
+            source: Source::Grammar,
+        }
+    }
+
+    #[test]
+    fn drops_diagnostic_whose_only_suggestion_is_identity() {
+        // ESPACIO firing on correctly-spaced text: span ". No" suggested as ". No".
+        let text = "pan. No se";
+        let mut d = vec![diag(3, 7, &[". No"])];
+        strip_noop_suggestions(text, &mut d);
+        assert!(d.is_empty(), "a sole no-op suggestion → drop the spurious diagnostic");
+    }
+
+    #[test]
+    fn keeps_real_fix_that_changes_the_span() {
+        // ESPACIO firing on genuinely-missing space: span ".No" suggested as ". No".
+        let text = "pan.No se";
+        let mut d = vec![diag(3, 6, &[". No"])];
+        strip_noop_suggestions(text, &mut d);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].suggestions.len(), 1);
+    }
+
+    #[test]
+    fn strips_only_the_noop_when_mixed() {
+        let text = "teh cat";
+        let mut d = vec![diag(0, 3, &["teh", "the"])]; // identity + real
+        strip_noop_suggestions(text, &mut d);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].suggestions, vec![Suggestion { replacement: "the".to_owned() }]);
+    }
+
+    #[test]
+    fn keeps_informational_diagnostic_with_no_suggestions() {
+        // A spell flag with no candidate (e.g. an OOV with no edit-1 hit) cannot cycle → keep it.
+        let text = "xyzzy";
+        let mut d = vec![diag(0, 5, &[])];
+        strip_noop_suggestions(text, &mut d);
+        assert_eq!(d.len(), 1);
+    }
+}
