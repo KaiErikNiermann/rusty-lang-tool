@@ -71,6 +71,10 @@ jobs:
         run: pnpm --prefix web run check
       - name: Unit tests (spanmap vectors)
         run: pnpm --prefix web test
+      # `vite build` directly (not `pnpm run build`, which would stage artifacts) — a compile-only gate
+      # that catches build-time breaks the type-check misses, e.g. a Tailwind/PostCSS major bump.
+      - name: Production build gate
+        run: pnpm --prefix web exec vite build
 
   # --- Engine gate: fetch LT, build the English artifacts, run the on-thesis oracle -------------
   engine-oracle:
