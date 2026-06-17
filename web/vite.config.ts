@@ -2,7 +2,10 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { sveltekit } from "@sveltejs/kit/vite";
-import { defineConfig, type Connect, type Plugin } from "vite";
+import type { Connect, Plugin } from "vite";
+// `defineConfig` from vitest/config (a superset of vite's) so the `test` block typechecks — vitest 4
+// no longer augments vite's own `UserConfig` with a `test` key.
+import { defineConfig } from "vitest/config";
 
 const ARTIFACTS_DIR = fileURLToPath(new URL("static/artifacts", import.meta.url));
 
