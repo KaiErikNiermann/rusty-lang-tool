@@ -16,6 +16,23 @@ to one LT release's format. `rlt`'s answer is a **self-maintaining converter**: 
 parser from LT's own XSD schemas, and use LT's ~22,666 bundled `<example>` sentences as a
 differential oracle — so tracking a new LT release is "run the harness, triage the red".
 
+## Acknowledgements
+
+This project stands entirely on the shoulders of others:
+
+- **[LanguageTool](https://github.com/languagetool-org/languagetool)** and its contributors — for ~20
+  years of hand-authored, open multilingual grammar rules, dictionaries, and the `<example>` corpus
+  that this tool reuses and is differentially tested against. rlt is a reuse of their data, not a
+  replacement for their work; please support the upstream project.
+- **[nlprule](https://github.com/bminixhofer/nlprule)** by Benjamin Minixhofer — the original Rust
+  reuse of LanguageTool's rule engine, which inspired this project's approach (and whose analysis
+  engine is vendored behind the baseline backend).
+- The POS-dictionary maintainers whose morfologik data the taggers build on — including
+  [Softcatalà](https://github.com/Softcatala) (Spanish/French dictionaries) and the LanguageTool
+  language-module authors.
+- **[rten](https://github.com/robertknight/rten)** — the pure-Rust ONNX runtime powering the L4 neural
+  tagger, and the [GECToR](https://github.com/grammarly/gector) line of work it derives from.
+
 ## Status
 
 MVP complete (English): **L1 spelling + L2 grammar**, as a Rust crate + CLI with a working
@@ -34,7 +51,7 @@ bundled `<example>` sentences:
   school"` → `"go" → "goes"`; composes onto L1–L3 behind the same trait. **F0.5 = 0.545** on BEA-2019
   dev (ERRANT). Non-commercial (see Licensing).
 
-## Architecture (the cascade)
+## Architecture 
 
 Each layer slots in additively behind clean traits (`Engine` / `GrammarChecker`, composed by
 `WithGrammar`); a new layer never overrides the ones below it.
@@ -93,20 +110,3 @@ Code is `Apache-2.0 OR MIT`. LanguageTool-derived data artifacts (`en.rkyv`, `co
 checkpoint, so **any distribution that bundles L4 is non-commercial** (PolyForm Noncommercial); the
 Rust code stays permissive and L4 is opt-in/separable (without `resources/l4/`, the checker is
 L1–L3 only). See [`LICENSES.md`](LICENSES.md) and [`NOTICE`](NOTICE).
-
-## Acknowledgements
-
-This project stands entirely on the shoulders of others:
-
-- **[LanguageTool](https://github.com/languagetool-org/languagetool)** and its contributors — for ~20
-  years of hand-authored, open multilingual grammar rules, dictionaries, and the `<example>` corpus
-  that this tool reuses and is differentially tested against. rlt is a reuse of their data, not a
-  replacement for their work; please support the upstream project.
-- **[nlprule](https://github.com/bminixhofer/nlprule)** by Benjamin Minixhofer — the original Rust
-  reuse of LanguageTool's rule engine, which inspired this project's approach (and whose analysis
-  engine is vendored behind the baseline backend).
-- The POS-dictionary maintainers whose morfologik data the taggers build on — including
-  [Softcatalà](https://github.com/Softcatala) (Spanish/French dictionaries) and the LanguageTool
-  language-module authors.
-- **[rten](https://github.com/robertknight/rten)** — the pure-Rust ONNX runtime powering the L4 neural
-  tagger, and the [GECToR](https://github.com/grammarly/gector) line of work it derives from.
