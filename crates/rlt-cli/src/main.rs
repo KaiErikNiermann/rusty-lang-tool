@@ -272,8 +272,12 @@ fn load_native_engine(cfg: &'static rlt_lang::LangConfig) -> Result<rlt_native::
 /// Load + compile the IR grammar matcher from `cfg`'s rkyv blob.
 fn load_ir_matcher(cfg: &rlt_lang::LangConfig) -> Result<IrMatcher> {
     let blob = cfg.grammar_blob_path();
-    let bytes = std::fs::read(&blob)
-        .with_context(|| format!("reading {blob} (run `cargo xtask build-blob --lang {}`?)", cfg.code))?;
+    let bytes = std::fs::read(&blob).with_context(|| {
+        format!(
+            "reading {blob} (run `cargo xtask build-blob --lang {}`?)",
+            cfg.code
+        )
+    })?;
     IrMatcher::from_rkyv_bytes(&bytes).map_err(|e| anyhow!("compiling IR rules from {blob}: {e}"))
 }
 
@@ -299,7 +303,10 @@ fn load_tagger(cfg: &rlt_lang::LangConfig) -> Option<Tagger<RtenTagSource>> {
     }
     let dir = PathBuf::from(cfg.l4_dir());
     if !dir.join("model.int8.onnx").exists() {
-        tracing::warn!("{} not found — L4 disabled (run `cargo xtask build-l4`)", dir.display());
+        tracing::warn!(
+            "{} not found — L4 disabled (run `cargo xtask build-l4`)",
+            dir.display()
+        );
         return None;
     }
     match Tagger::from_dir(&dir) {
@@ -370,20 +377,43 @@ fn run_check(
                     .with_rules_path(std::path::Path::new(rules))
                     .with_context(|| format!("loading grammar rules from {rules}"))?;
             } else {
-                tracing::warn!("{rules} not found — spelling only (run `cargo xtask fetch-engine`)");
+                tracing::warn!(
+                    "{rules} not found — spelling only (run `cargo xtask fetch-engine`)"
+                );
             }
-            check_with_layers(nlprule, confusion, tagger, cfg.spell.alphabet, cfg.spell.message, &text)
+            check_with_layers(
+                nlprule,
+                confusion,
+                tagger,
+                cfg.spell.alphabet,
+                cfg.spell.message,
+                &text,
+            )
         }
         Matcher::Ir => {
             let ir = load_ir_matcher(cfg)?;
             match engine {
                 AnalysisEngine::Native => {
                     let native = load_native_engine(cfg)?;
-                    check_with_layers(Composite::new(native, ir), confusion, tagger, cfg.spell.alphabet, cfg.spell.message, &text)
+                    check_with_layers(
+                        Composite::new(native, ir),
+                        confusion,
+                        tagger,
+                        cfg.spell.alphabet,
+                        cfg.spell.message,
+                        &text,
+                    )
                 }
                 AnalysisEngine::Nlprule => {
                     let nlprule = load_nlprule_engine()?;
-                    check_with_layers(Composite::new(nlprule, ir), confusion, tagger, cfg.spell.alphabet, cfg.spell.message, &text)
+                    check_with_layers(
+                        Composite::new(nlprule, ir),
+                        confusion,
+                        tagger,
+                        cfg.spell.alphabet,
+                        cfg.spell.message,
+                        &text,
+                    )
                 }
             }
         }

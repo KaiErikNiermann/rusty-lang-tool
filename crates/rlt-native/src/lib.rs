@@ -134,8 +134,11 @@ impl NativeEngine {
         tagger: &Path,
         disambig: Option<&Path>,
     ) -> Result<Self, NativeError> {
-        let mut engine =
-            Self::from_bytes(cfg, &std::fs::read_to_string(segment_srx)?, &std::fs::read(tagger)?)?;
+        let mut engine = Self::from_bytes(
+            cfg,
+            &std::fs::read_to_string(segment_srx)?,
+            &std::fs::read(tagger)?,
+        )?;
         if let Some(path) = disambig {
             engine.disambiguator = Some(
                 Disambiguator::from_rkyv_bytes(&std::fs::read(path)?)
@@ -155,7 +158,10 @@ impl Engine for NativeEngine {
             // it, every position-anchored pattern mis-aligns.
             let mut sentence = vec![Token {
                 text: String::new(),
-                span: Span { start: range.start, end: range.start },
+                span: Span {
+                    start: range.start,
+                    end: range.start,
+                },
                 tags: vec![self.tagset.sent_start.to_owned()],
                 lemmas: Vec::new(),
             }];
@@ -176,7 +182,9 @@ impl Engine for NativeEngine {
                 // constituent's analyses (so e.g. German `Haustür` is tagged, not flagged unknown).
                 if token.tags.is_empty() {
                     if let Some(rules) = self.compounds {
-                        if let Some(analyses) = compound::analyze_compound(&token.text, &self.tagger, rules) {
+                        if let Some(analyses) =
+                            compound::analyze_compound(&token.text, &self.tagger, rules)
+                        {
                             for wd in &analyses {
                                 push_tag(&mut token.tags, &wd.tag);
                                 push_tag(&mut token.lemmas, &wd.lemma);
@@ -267,14 +275,25 @@ fn push_structural_tags(token: &mut Token, tagset: &TagSet) {
     }
     if !text.is_empty() && text.chars().all(|c| tagset.punctuation_chars.contains(&c)) {
         push_tag(&mut token.tags, tagset.punctuation_tag);
-        if let Some((_, class)) = tagset.punctuation_classes.iter().find(|(ch, _)| *ch == text) {
+        if let Some((_, class)) = tagset
+            .punctuation_classes
+            .iter()
+            .find(|(ch, _)| *ch == text)
+        {
             push_tag(&mut token.tags, class);
         }
         return;
     }
     if token.tags.is_empty() {
         let capitalized = text.chars().next().is_some_and(char::is_uppercase);
-        push_tag(&mut token.tags, if capitalized { tagset.proper_noun_tag } else { tagset.oov_tag });
+        push_tag(
+            &mut token.tags,
+            if capitalized {
+                tagset.proper_noun_tag
+            } else {
+                tagset.oov_tag
+            },
+        );
     }
 }
 
@@ -352,14 +371,20 @@ fn split_elision(token: Token, clitics: &[&str], out: &mut Vec<Token>) {
                 let start = token.span.start;
                 out.push(Token {
                     text: prefix.to_owned(),
-                    span: Span { start, end: start + after },
+                    span: Span {
+                        start,
+                        end: start + after,
+                    },
                     tags: Vec::new(),
                     lemmas: Vec::new(),
                 });
                 split_elision(
                     Token {
                         text: token.text[after..].to_owned(),
-                        span: Span { start: start + after, end: token.span.end },
+                        span: Span {
+                            start: start + after,
+                            end: token.span.end,
+                        },
                         tags: Vec::new(),
                         lemmas: Vec::new(),
                     },
@@ -410,12 +435,15 @@ mod tests {
     #[test]
     fn tokenizes_words_and_punctuation_with_spans() {
         let toks = surfaces("Hello, world!");
-        assert_eq!(toks, vec![
-            (0, 5, "Hello".to_owned()),
-            (5, 6, ",".to_owned()),
-            (7, 12, "world".to_owned()),
-            (12, 13, "!".to_owned()),
-        ]);
+        assert_eq!(
+            toks,
+            vec![
+                (0, 5, "Hello".to_owned()),
+                (5, 6, ",".to_owned()),
+                (7, 12, "world".to_owned()),
+                (12, 13, "!".to_owned()),
+            ]
+        );
     }
 
     #[test]
@@ -436,10 +464,10 @@ mod tests {
     fn handles_unicode_spans() {
         // "café." — é is 2 bytes, so the word span is 0..5 and the period 5..6.
         let toks = surfaces("café.");
-        assert_eq!(toks, vec![
-            (0, 5, "café".to_owned()),
-            (5, 6, ".".to_owned()),
-        ]);
+        assert_eq!(
+            toks,
+            vec![(0, 5, "café".to_owned()), (5, 6, ".".to_owned()),]
+        );
     }
 
     #[test]
@@ -475,7 +503,10 @@ mod tests {
         assert_eq!(split("aujourd'hui", rlt_lang::FR.elision).len(), 1);
         // Italian: dell'arte splits; the truncation `po'` (terminal apostrophe) stays whole.
         assert_eq!(split("dell'arte", rlt_lang::IT.elision)[0].2, "dell'");
-        assert_eq!(split("po'", rlt_lang::IT.elision), vec![(0, 3, "po'".into())]);
+        assert_eq!(
+            split("po'", rlt_lang::IT.elision),
+            vec![(0, 3, "po'".into())]
+        );
         // No elision configured → tokens pass through unchanged (en/de/ru/ar/es byte-identical).
         assert_eq!(split("don't", &[]), vec![(0, 5, "don't".into())]);
     }
@@ -486,7 +517,10 @@ mod tests {
         let digit_tags = |text: &str| {
             let mut t = Token {
                 text: text.to_owned(),
-                span: Span { start: 0, end: text.len() },
+                span: Span {
+                    start: 0,
+                    end: text.len(),
+                },
                 tags: Vec::new(),
                 lemmas: Vec::new(),
             };
@@ -519,7 +553,10 @@ mod tests {
             .map(|r| text[r.clone()].to_owned())
             .collect();
         assert_eq!(sents.len(), 2, "{sents:?}");
-        assert!(sents[0].contains("home") && sents[1].contains("stayed"), "{sents:?}");
+        assert!(
+            sents[0].contains("home") && sents[1].contains("stayed"),
+            "{sents:?}"
+        );
         // Spans must tile the text exactly.
         assert_eq!(sents.concat(), text);
     }
@@ -536,8 +573,20 @@ mod tests {
         let segmenter = Segmenter::from_srx(&xml, "en").expect("parse segment.srx");
 
         let mut words = BTreeMap::new();
-        words.insert("the".to_owned(), vec![WordData { lemma: "the".to_owned(), tag: "DT".to_owned() }]);
-        words.insert("cat".to_owned(), vec![WordData { lemma: "cat".to_owned(), tag: "NN".to_owned() }]);
+        words.insert(
+            "the".to_owned(),
+            vec![WordData {
+                lemma: "the".to_owned(),
+                tag: "DT".to_owned(),
+            }],
+        );
+        words.insert(
+            "cat".to_owned(),
+            vec![WordData {
+                lemma: "cat".to_owned(),
+                tag: "NN".to_owned(),
+            }],
+        );
         let tagger = Tagger::from_bytes(&build_artifact(&words).unwrap()).unwrap();
 
         let engine = NativeEngine::new(segmenter, tagger);
@@ -547,12 +596,15 @@ mod tests {
             .iter()
             .map(|t| (t.text.as_str(), t.tags.iter().map(String::as_str).collect()))
             .collect();
-        assert_eq!(toks, vec![
-            ("", vec!["SENT_START"]),             // zero-width sentence-start sentinel
-            ("The", vec!["DT"]),                  // lower-case fallback resolves the sentence-initial cap
-            ("cat", vec!["NN"]),
-            (".", vec!["PCT", ".", "SENT_END"]),  // structural: punctuation class + sentence-final
-        ]);
+        assert_eq!(
+            toks,
+            vec![
+                ("", vec!["SENT_START"]), // zero-width sentence-start sentinel
+                ("The", vec!["DT"]),      // lower-case fallback resolves the sentence-initial cap
+                ("cat", vec!["NN"]),
+                (".", vec!["PCT", ".", "SENT_END"]), // structural: punctuation class + sentence-final
+            ]
+        );
         assert!(engine.is_known("The") && !engine.is_known("zzz"));
     }
 }

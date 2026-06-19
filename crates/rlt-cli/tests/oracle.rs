@@ -79,8 +79,16 @@ fn de_native_reproduces_examples() {
         report.negative_total,
         report.false_positive_pct,
     );
-    assert!(report.reproduced >= 4500, "de reproduction regressed: {}", report.reproduced);
-    assert!(report.false_positives <= 600, "de false positives regressed: {}", report.false_positives);
+    assert!(
+        report.reproduced >= 4500,
+        "de reproduction regressed: {}",
+        report.reproduced
+    );
+    assert!(
+        report.false_positives <= 600,
+        "de false positives regressed: {}",
+        report.false_positives
+    );
 }
 
 /// Russian — the first far-from-Latin language end-to-end. Proves the infra generalizes to Cyrillic
@@ -122,8 +130,16 @@ fn ru_native_reproduces_examples() {
         report.negative_total,
         report.false_positive_pct,
     );
-    assert!(report.reproduced >= 450, "ru reproduction regressed: {}", report.reproduced);
-    assert!(report.false_positives <= 120, "ru false positives regressed: {}", report.false_positives);
+    assert!(
+        report.reproduced >= 450,
+        "ru reproduction regressed: {}",
+        report.reproduced
+    );
+    assert!(
+        report.false_positives <= 120,
+        "ru false positives regressed: {}",
+        report.false_positives
+    );
 }
 
 /// Arabic — the first RTL / combining-mark language end-to-end. Proves the infra generalizes to
@@ -166,8 +182,16 @@ fn ar_native_reproduces_examples() {
         report.negative_total,
         report.false_positive_pct,
     );
-    assert!(report.reproduced >= 300, "ar reproduction regressed: {}", report.reproduced);
-    assert!(report.false_positives <= 40, "ar false positives regressed: {}", report.false_positives);
+    assert!(
+        report.reproduced >= 300,
+        "ar reproduction regressed: {}",
+        report.reproduced
+    );
+    assert!(
+        report.false_positives <= 40,
+        "ar false positives regressed: {}",
+        report.false_positives
+    );
 }
 
 /// French — Romance, Maven-shipped CFSA2/UTF-8 dict with precomposed Latin accents (é/à/ç/ù) and
@@ -208,8 +232,16 @@ fn fr_native_reproduces_examples() {
         report.negative_total,
         report.false_positive_pct,
     );
-    assert!(report.reproduced >= 3300, "fr reproduction regressed: {}", report.reproduced);
-    assert!(report.false_positives <= 700, "fr false positives regressed: {}", report.false_positives);
+    assert!(
+        report.reproduced >= 3300,
+        "fr reproduction regressed: {}",
+        report.reproduced
+    );
+    assert!(
+        report.false_positives <= 700,
+        "fr false positives regressed: {}",
+        report.false_positives
+    );
 }
 
 /// Spanish — Romance, Maven-shipped (Softcatalà) POS dict, EAGLES/Freeling tagset, precomposed accents
@@ -250,8 +282,16 @@ fn es_native_reproduces_examples() {
         report.negative_total,
         report.false_positive_pct,
     );
-    assert!(report.reproduced >= 1300, "es reproduction regressed: {}", report.reproduced);
-    assert!(report.false_positives <= 280, "es false positives regressed: {}", report.false_positives);
+    assert!(
+        report.reproduced >= 1300,
+        "es reproduction regressed: {}",
+        report.reproduced
+    );
+    assert!(
+        report.false_positives <= 280,
+        "es false positives regressed: {}",
+        report.false_positives
+    );
 }
 
 /// Italian — the first FSA5-format language (`italian.dict` is morfologik FSA5 + ISO-8859-15, read by
@@ -292,8 +332,16 @@ fn it_native_reproduces_examples() {
         report.negative_total,
         report.false_positive_pct,
     );
-    assert!(report.reproduced >= 55, "it reproduction regressed: {}", report.reproduced);
-    assert!(report.false_positives <= 10, "it false positives regressed: {}", report.false_positives);
+    assert!(
+        report.reproduced >= 55,
+        "it reproduction regressed: {}",
+        report.reproduced
+    );
+    assert!(
+        report.false_positives <= 10,
+        "it false positives regressed: {}",
+        report.false_positives
+    );
 }
 
 #[test]
@@ -507,10 +555,11 @@ fn de_l3_confusion_precision_recall() {
     ]) {
         return;
     }
-    let engine =
-        rlt_native::NativeEngine::from_paths(cfg, &srx, &tagger, None).expect("load native de engine");
-    let model = rlt_ir::deserialize_confusion(&std::fs::read(&model_path).expect("read de confusion"))
-        .expect("deserialize de confusion model");
+    let engine = rlt_native::NativeEngine::from_paths(cfg, &srx, &tagger, None)
+        .expect("load native de engine");
+    let model =
+        rlt_ir::deserialize_confusion(&std::fs::read(&model_path).expect("read de confusion"))
+            .expect("deserialize de confusion model");
     let checker = ConfusionChecker::new(&model);
 
     let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
@@ -538,7 +587,9 @@ fn de_l3_confusion_precision_recall() {
                 perturbed.tokens[i].text.clone_from(err);
                 let recovered = checker.grammar_diagnostics(s, &perturbed).iter().any(|d| {
                     d.span == span
-                        && d.suggestions.iter().any(|sg| sg.replacement.eq_ignore_ascii_case(&word))
+                        && d.suggestions
+                            .iter()
+                            .any(|sg| sg.replacement.eq_ignore_ascii_case(&word))
                 });
                 if recovered {
                     tp += 1;
@@ -555,8 +606,14 @@ fn de_l3_confusion_precision_recall() {
     );
     // Measured with LanguageTool's own German n-grams (via tools/NgramDump.java): 1774/2925 = 60.6%
     // recovered, 43 false positives. Floors guard both (a Leipzig fallback drops recall to ~1.9%).
-    assert!(tp >= 1500, "de L3 recall regressed: recovered {tp}; expected >= 1500");
-    assert!(fp <= 120, "de L3 false positives regressed: {fp}; expected <= 120");
+    assert!(
+        tp >= 1500,
+        "de L3 recall regressed: recovered {tp}; expected >= 1500"
+    );
+    assert!(
+        fp <= 120,
+        "de L3 false positives regressed: {fp}; expected <= 120"
+    );
 }
 
 #[test]
@@ -575,10 +632,11 @@ fn fr_l3_confusion_precision_recall() {
     ]) {
         return;
     }
-    let engine =
-        rlt_native::NativeEngine::from_paths(cfg, &srx, &tagger, None).expect("load native fr engine");
-    let model = rlt_ir::deserialize_confusion(&std::fs::read(&model_path).expect("read fr confusion"))
-        .expect("deserialize fr confusion model");
+    let engine = rlt_native::NativeEngine::from_paths(cfg, &srx, &tagger, None)
+        .expect("load native fr engine");
+    let model =
+        rlt_ir::deserialize_confusion(&std::fs::read(&model_path).expect("read fr confusion"))
+            .expect("deserialize fr confusion model");
     let checker = ConfusionChecker::new(&model);
 
     let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
@@ -606,7 +664,9 @@ fn fr_l3_confusion_precision_recall() {
                 perturbed.tokens[i].text.clone_from(err);
                 let recovered = checker.grammar_diagnostics(s, &perturbed).iter().any(|d| {
                     d.span == span
-                        && d.suggestions.iter().any(|sg| sg.replacement.eq_ignore_ascii_case(&word))
+                        && d.suggestions
+                            .iter()
+                            .any(|sg| sg.replacement.eq_ignore_ascii_case(&word))
                 });
                 if recovered {
                     tp += 1;
@@ -622,8 +682,14 @@ fn fr_l3_confusion_precision_recall() {
         sentences.len(),
     );
     // Floors set just below the first measured values (filled after the build).
-    assert!(tp >= 400, "fr L3 recall regressed: recovered {tp}; expected >= 400");
-    assert!(fp <= 50, "fr L3 false positives regressed: {fp}; expected <= 50");
+    assert!(
+        tp >= 400,
+        "fr L3 recall regressed: recovered {tp}; expected >= 400"
+    );
+    assert!(
+        fp <= 50,
+        "fr L3 false positives regressed: {fp}; expected <= 50"
+    );
 }
 
 #[test]
@@ -642,10 +708,11 @@ fn es_l3_confusion_precision_recall() {
     ]) {
         return;
     }
-    let engine =
-        rlt_native::NativeEngine::from_paths(cfg, &srx, &tagger, None).expect("load native es engine");
-    let model = rlt_ir::deserialize_confusion(&std::fs::read(&model_path).expect("read es confusion"))
-        .expect("deserialize es confusion model");
+    let engine = rlt_native::NativeEngine::from_paths(cfg, &srx, &tagger, None)
+        .expect("load native es engine");
+    let model =
+        rlt_ir::deserialize_confusion(&std::fs::read(&model_path).expect("read es confusion"))
+            .expect("deserialize es confusion model");
     let checker = ConfusionChecker::new(&model);
 
     let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
@@ -673,7 +740,9 @@ fn es_l3_confusion_precision_recall() {
                 perturbed.tokens[i].text.clone_from(err);
                 let recovered = checker.grammar_diagnostics(s, &perturbed).iter().any(|d| {
                     d.span == span
-                        && d.suggestions.iter().any(|sg| sg.replacement.eq_ignore_ascii_case(&word))
+                        && d.suggestions
+                            .iter()
+                            .any(|sg| sg.replacement.eq_ignore_ascii_case(&word))
                 });
                 if recovered {
                     tp += 1;
@@ -689,8 +758,14 @@ fn es_l3_confusion_precision_recall() {
         sentences.len(),
     );
     // Floors set just below the first measured values (filled after the build).
-    assert!(tp >= 60, "es L3 recall regressed: recovered {tp}; expected >= 60");
-    assert!(fp <= 20, "es L3 false positives regressed: {fp}; expected <= 20");
+    assert!(
+        tp >= 60,
+        "es L3 recall regressed: recovered {tp}; expected >= 60"
+    );
+    assert!(
+        fp <= 20,
+        "es L3 false positives regressed: {fp}; expected <= 20"
+    );
 }
 
 /// L4 quality smoke/regression: a curated set of grammatical errors the neural tagger should fix,
@@ -763,5 +838,8 @@ fn l4_edit_tagger_precision_recall() {
         "L4 recall regressed: {recalled}/{}",
         errors.len()
     );
-    assert!(false_positives == 0, "L4 false positives: {false_positives}");
+    assert!(
+        false_positives == 0,
+        "L4 false positives: {false_positives}"
+    );
 }

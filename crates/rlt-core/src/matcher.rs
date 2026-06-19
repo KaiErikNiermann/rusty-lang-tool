@@ -528,7 +528,10 @@ fn anchored(pattern: &str, case_insensitive: bool) -> Option<Regex> {
 /// previous token's end (the tokenizer drops only whitespace, so any gap is a space). The first token
 /// is treated as preceded by whitespace (it follows the segment boundary).
 fn has_space_before(tokens: &[Token], k: usize) -> bool {
-    k == 0 || tokens.get(k - 1).is_none_or(|prev| tokens[k].span.start > prev.span.end)
+    k == 0
+        || tokens
+            .get(k - 1)
+            .is_none_or(|prev| tokens[k].span.start > prev.span.end)
 }
 
 impl Matcher {
@@ -689,7 +692,9 @@ fn render(
     Some(Diagnostic {
         span,
         code: rule.id.clone(),
-        message: render_message_refs(&rule.message, |n| captured_surface(n, text, tokens, captures)),
+        message: render_message_refs(&rule.message, |n| {
+            captured_surface(n, text, tokens, captures)
+        }),
         suggestions,
         source: Source::Grammar,
     })
@@ -704,7 +709,8 @@ fn captured_surface(
     captures: &[Option<(usize, usize)>],
 ) -> Option<String> {
     let (ts, te) = captures.get(no.checked_sub(1)?).copied().flatten()?;
-    text.get(tokens[ts].span.start..tokens[te - 1].span.end).map(str::to_owned)
+    text.get(tokens[ts].span.start..tokens[te - 1].span.end)
+        .map(str::to_owned)
 }
 
 /// Substitute `\N` backreferences in a message with `resolve(N)` (the Nth matched token/group surface);
@@ -804,10 +810,21 @@ struct CompiledDisambig {
 
 /// A compiled [`TagAction`]: postag/lemma edits applied to a matched token's flattened tag/lemma lists.
 enum CompiledAction {
-    Replace { postags: Vec<String>, lemmas: Vec<String> },
-    Add { postags: Vec<String>, lemmas: Vec<String> },
-    Remove { tags: Vec<TagMatch>, lemmas: Vec<String> },
-    Filter { tags: Vec<TagMatch> },
+    Replace {
+        postags: Vec<String>,
+        lemmas: Vec<String>,
+    },
+    Add {
+        postags: Vec<String>,
+        lemmas: Vec<String>,
+    },
+    Remove {
+        tags: Vec<TagMatch>,
+        lemmas: Vec<String>,
+    },
+    Filter {
+        tags: Vec<TagMatch>,
+    },
 }
 
 impl Disambiguator {
@@ -946,7 +963,11 @@ fn compile_disambig(r: &DisambigRule) -> Option<CompiledDisambig> {
     }
     // Drop (don't skip the rule for) any antipattern with an unmatchable construct — a missing
     // antipattern only costs precision, same policy as the grammar matcher.
-    let antipatterns = r.antipatterns.iter().filter_map(|ap| compile_elements(ap)).collect();
+    let antipatterns = r
+        .antipatterns
+        .iter()
+        .filter_map(|ap| compile_elements(ap))
+        .collect();
     (!elements.is_empty()).then_some(CompiledDisambig {
         elements,
         marker,
@@ -1033,7 +1054,10 @@ mod tests {
     #[test]
     fn render_message_refs_substitutes_known_and_keeps_unknown() {
         let resolve = |n: usize| (n == 1).then(|| "should".to_owned());
-        assert_eq!(render_message_refs("Use \\1 have.", resolve), "Use should have.");
+        assert_eq!(
+            render_message_refs("Use \\1 have.", resolve),
+            "Use should have."
+        );
         assert_eq!(render_message_refs("a \\2 b", resolve), "a \\2 b"); // unresolved → literal
         assert_eq!(render_message_refs("plain text", resolve), "plain text");
     }
@@ -1050,10 +1074,16 @@ mod tests {
         let spaced = [tok(0, 3), tok(3, 4), tok(5, 7)];
         // "pan.No":  pan[0,3] .[3,4] No[4,6] — "No" is adjacent to the period.
         let adjacent = [tok(0, 3), tok(3, 4), tok(4, 6)];
-        assert!(has_space_before(&spaced, 0), "first token treated as preceded by the boundary");
+        assert!(
+            has_space_before(&spaced, 0),
+            "first token treated as preceded by the boundary"
+        );
         assert!(!has_space_before(&spaced, 1), "'.' is adjacent to 'pan'");
         assert!(has_space_before(&spaced, 2), "'No' has a space before it");
-        assert!(!has_space_before(&adjacent, 2), "'No' is adjacent to '.' — no space");
+        assert!(
+            !has_space_before(&adjacent, 2),
+            "'No' is adjacent to '.' — no space"
+        );
     }
 
     #[test]
@@ -1073,26 +1103,42 @@ mod tests {
         };
         let dis = Disambiguator::new(&[
             // remove NNS from the verb "gives"
-            rule("R", "gives", TagAction::Remove {
-                postags: vec!["NNS".to_owned()],
-                lemmas: vec![],
-                postag_regexp: false,
-            }),
+            rule(
+                "R",
+                "gives",
+                TagAction::Remove {
+                    postags: vec!["NNS".to_owned()],
+                    lemmas: vec![],
+                    postag_regexp: false,
+                },
+            ),
             // add PCT to a comma
-            rule("A", ",", TagAction::Add {
-                postags: vec!["PCT".to_owned()],
-                lemmas: vec![],
-            }),
+            rule(
+                "A",
+                ",",
+                TagAction::Add {
+                    postags: vec!["PCT".to_owned()],
+                    lemmas: vec![],
+                },
+            ),
             // soft-replace: "or" narrows to CC (present) — JJ/NN:U dropped
-            rule("S", "or", TagAction::Replace {
-                postags: vec!["CC".to_owned()],
-                lemmas: vec![],
-            }),
+            rule(
+                "S",
+                "or",
+                TagAction::Replace {
+                    postags: vec!["CC".to_owned()],
+                    lemmas: vec![],
+                },
+            ),
             // soft-replace where target absent → added, not clobbered
-            rule("S2", "10", TagAction::Replace {
-                postags: vec!["CD".to_owned()],
-                lemmas: vec![],
-            }),
+            rule(
+                "S2",
+                "10",
+                TagAction::Replace {
+                    postags: vec!["CD".to_owned()],
+                    lemmas: vec![],
+                },
+            ),
         ]);
 
         let mut tokens = vec![
@@ -1105,7 +1151,11 @@ mod tests {
         assert_eq!(tokens[0].tags, vec!["VBZ"], "NNS removed");
         assert_eq!(tokens[1].tags, vec!["PCT"], "PCT added");
         assert_eq!(tokens[2].tags, vec!["CC"], "narrowed to the present target");
-        assert_eq!(tokens[3].tags, vec!["FOO", "CD"], "target absent → added, not clobbered");
+        assert_eq!(
+            tokens[3].tags,
+            vec!["FOO", "CD"],
+            "target absent → added, not clobbered"
+        );
     }
 
     #[test]
@@ -1131,11 +1181,19 @@ mod tests {
 
         let mut alone = vec![tok("May", &["NNP", "VB"])];
         dis.disambiguate(&mut alone);
-        assert_eq!(alone[0].tags, vec!["VB"], "rule applies outside the antipattern context");
+        assert_eq!(
+            alone[0].tags,
+            vec!["VB"],
+            "rule applies outside the antipattern context"
+        );
 
         let mut ctx = vec![tok("in", &["IN"]), tok("May", &["NNP", "VB"])];
         dis.disambiguate(&mut ctx);
-        assert_eq!(ctx[1].tags, vec!["NNP", "VB"], "antipattern context suppresses the action");
+        assert_eq!(
+            ctx[1].tags,
+            vec!["NNP", "VB"],
+            "antipattern context suppresses the action"
+        );
     }
 
     #[test]

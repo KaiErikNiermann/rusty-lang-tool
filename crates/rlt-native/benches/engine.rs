@@ -25,8 +25,21 @@ Nevertheless, the board decided to postpone its final decision until next quarte
 
 /// Words for the `is_known` throughput bench — a mix of common, inflected, proper, and unknown forms.
 const WORDS: &[&str] = &[
-    "the", "running", "London", "quickly", "children", "recieve", "thoughtfulness", "an", "be",
-    "zxqwv", "gives", "their", "should", "Paris", "establishments",
+    "the",
+    "running",
+    "London",
+    "quickly",
+    "children",
+    "recieve",
+    "thoughtfulness",
+    "an",
+    "be",
+    "zxqwv",
+    "gives",
+    "their",
+    "should",
+    "Paris",
+    "establishments",
 ];
 
 /// Resolve a workspace-root-relative path (the bench's CWD is the crate dir under `cargo bench -p`).
@@ -53,10 +66,14 @@ fn bench_analyze(c: &mut Criterion) {
     let mut group = c.benchmark_group("analyze");
     group.throughput(criterion::Throughput::Bytes(CORPUS.len() as u64));
     if let Some(engine) = load_native() {
-        group.bench_function("native", |b| b.iter(|| black_box(engine.analyze(black_box(CORPUS)))));
+        group.bench_function("native", |b| {
+            b.iter(|| black_box(engine.analyze(black_box(CORPUS))));
+        });
     }
     if let Some(engine) = load_nlprule() {
-        group.bench_function("nlprule", |b| b.iter(|| black_box(engine.analyze(black_box(CORPUS)))));
+        group.bench_function("nlprule", |b| {
+            b.iter(|| black_box(engine.analyze(black_box(CORPUS))));
+        });
     }
     group.finish();
 }
@@ -65,12 +82,22 @@ fn bench_is_known(c: &mut Criterion) {
     let mut group = c.benchmark_group("is_known");
     if let Some(engine) = load_native() {
         group.bench_function("native", |b| {
-            b.iter(|| WORDS.iter().filter(|w| engine.is_known(black_box(w))).count());
+            b.iter(|| {
+                WORDS
+                    .iter()
+                    .filter(|w| engine.is_known(black_box(w)))
+                    .count()
+            });
         });
     }
     if let Some(engine) = load_nlprule() {
         group.bench_function("nlprule", |b| {
-            b.iter(|| WORDS.iter().filter(|w| engine.is_known(black_box(w))).count());
+            b.iter(|| {
+                WORDS
+                    .iter()
+                    .filter(|w| engine.is_known(black_box(w)))
+                    .count()
+            });
         });
     }
     group.finish();
@@ -79,7 +106,9 @@ fn bench_is_known(c: &mut Criterion) {
 fn bench_load(c: &mut Criterion) {
     // Cold load reads + validates the multi-MB artifacts, so keep the sample small.
     let mut group = c.benchmark_group("load");
-    group.sample_size(20).measurement_time(Duration::from_secs(10));
+    group
+        .sample_size(20)
+        .measurement_time(Duration::from_secs(10));
     if load_native().is_some() {
         group.bench_function("native", |b| b.iter(|| black_box(load_native())));
     }

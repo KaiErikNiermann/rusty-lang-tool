@@ -59,7 +59,10 @@ pub fn parse_info(info: &str) -> Result<DictMeta> {
         match key.trim() {
             "fsa.dict.separator" => {
                 let bytes = value.trim().as_bytes();
-                ensure!(bytes.len() == 1, "separator must be one byte, got {value:?}");
+                ensure!(
+                    bytes.len() == 1,
+                    "separator must be one byte, got {value:?}"
+                );
                 separator = Some(bytes[0]);
             }
             "fsa.dict.encoder" => {
@@ -111,7 +114,10 @@ fn decode_field(bytes: &[u8], meta: &DictMeta) -> Option<String> {
 /// # Errors
 /// Returns an error if the bytes are not a supported morfologik automaton.
 pub fn read_triples(dict: &[u8], meta: &DictMeta) -> Result<Vec<(String, String, String)>> {
-    ensure!(dict.len() > 8 && &dict[..4] == b"\\fsa", "not a morfologik FSA (bad magic)");
+    ensure!(
+        dict.len() > 8 && &dict[..4] == b"\\fsa",
+        "not a morfologik FSA (bad magic)"
+    );
     let mut out = Vec::new();
     match dict[4] {
         0xc6 => collect_triples(&Cfsa2::parse(dict)?, meta, &mut out),
@@ -229,9 +235,16 @@ impl<'a> Cfsa2<'a> {
     fn parse(file: &'a [u8]) -> Result<Self> {
         ensure!(file.len() > 8, "file too short for a CFSA2 header");
         ensure!(&file[..4] == b"\\fsa", "not a morfologik FSA (bad magic)");
-        ensure!(file[4] == 0xc6, "unsupported FSA version {:#x} (expected CFSA2 0xc6)", file[4]);
+        ensure!(
+            file[4] == 0xc6,
+            "unsupported FSA version {:#x} (expected CFSA2 0xc6)",
+            file[4]
+        );
         let flags = (u16::from(file[5]) << 8) | u16::from(file[6]);
-        ensure!(flags & FLAG_NUMBERS == 0, "CFSA2 with NUMBERS flag is unsupported");
+        ensure!(
+            flags & FLAG_NUMBERS == 0,
+            "CFSA2 with NUMBERS flag is unsupported"
+        );
         let n_labels = usize::from(file[7]);
         let table_end = 8 + n_labels;
         ensure!(file.len() >= table_end, "truncated label table");
@@ -364,7 +377,11 @@ impl<'a> Fsa5<'a> {
     fn parse(file: &'a [u8]) -> Result<Self> {
         ensure!(file.len() > 8, "file too short for an FSA5 header");
         ensure!(&file[..4] == b"\\fsa", "not a morfologik FSA (bad magic)");
-        ensure!(file[4] == 0x05, "expected FSA5 version 0x05, got {:#x}", file[4]);
+        ensure!(
+            file[4] == 0x05,
+            "expected FSA5 version 0x05, got {:#x}",
+            file[4]
+        );
         // file[5] = filler, file[6] = annotation separator, file[7] = hgtl.
         let hgtl = file[7];
         let node_data_length = usize::from(hgtl >> 4);
@@ -483,21 +500,38 @@ mod tests {
 
         let triples = read_triples(&dict, &meta).expect("read dict");
         eprintln!("english.dict: {} triples", triples.len());
-        assert!(triples.len() > 100_000, "expected a large dictionary, got {}", triples.len());
+        assert!(
+            triples.len() > 100_000,
+            "expected a large dictionary, got {}",
+            triples.len()
+        );
 
         // Group by inflected → set of (lemma, tag), then spot-check known forms.
         let mut by_word: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
         for (inflected, lemma, tag) in &triples {
-            by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
+            by_word
+                .entry(inflected.clone())
+                .or_default()
+                .push((lemma.clone(), tag.clone()));
         }
         let has = |w: &str, lemma: &str, tag: &str| {
-            by_word.get(w).is_some_and(|v| v.iter().any(|(l, t)| l == lemma && t == tag))
+            by_word
+                .get(w)
+                .is_some_and(|v| v.iter().any(|(l, t)| l == lemma && t == tag))
         };
         // Closed-class words AGID lacked, and a couple of inflections — proving the decode is correct.
         assert!(has("the", "the", "DT"), "the/DT: {:?}", by_word.get("the"));
-        assert!(has("running", "run", "VBG"), "running: {:?}", by_word.get("running"));
+        assert!(
+            has("running", "run", "VBG"),
+            "running: {:?}",
+            by_word.get("running")
+        );
         assert!(has("is", "be", "VBZ"), "is: {:?}", by_word.get("is"));
-        assert!(has("better", "good", "JJR") || has("better", "well", "RBR"), "better: {:?}", by_word.get("better"));
+        assert!(
+            has("better", "good", "JJR") || has("better", "well", "RBR"),
+            "better: {:?}",
+            by_word.get("better")
+        );
     }
 
     #[test]
@@ -509,7 +543,9 @@ mod tests {
             std::fs::read(base.join("pos.dict")),
             std::fs::read_to_string(base.join("pos.info")),
         ) else {
-            eprintln!("skip: resources/de/pos.dict not present (cargo xtask build-tagger --lang de)");
+            eprintln!(
+                "skip: resources/de/pos.dict not present (cargo xtask build-tagger --lang de)"
+            );
             return;
         };
         let meta = parse_info(&info).expect("parse .info");
@@ -518,19 +554,40 @@ mod tests {
 
         let triples = read_triples(&dict, &meta).expect("read dict");
         eprintln!("german.dict: {} triples", triples.len());
-        assert!(triples.len() > 1_000_000, "German morphology is rich; got {}", triples.len());
+        assert!(
+            triples.len() > 1_000_000,
+            "German morphology is rich; got {}",
+            triples.len()
+        );
 
         let mut by_word: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
         for (inflected, lemma, tag) in &triples {
-            by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
+            by_word
+                .entry(inflected.clone())
+                .or_default()
+                .push((lemma.clone(), tag.clone()));
         }
         let has = |w: &str, lemma: &str, tag: &str| {
-            by_word.get(w).is_some_and(|v| v.iter().any(|(l, t)| l == lemma && t == tag))
+            by_word
+                .get(w)
+                .is_some_and(|v| v.iter().any(|(l, t)| l == lemma && t == tag))
         };
         // Closed-class + an umlaut plural (Häuser→Haus) — the umlaut proves multibyte SUFFIX trimming.
-        assert!(has("der", "der", "ART:DEF:DAT:SIN:FEM"), "der: {:?}", by_word.get("der"));
-        assert!(has("ist", "sein", "VER:3:SIN:PRÄ:NON"), "ist: {:?}", by_word.get("ist"));
-        assert!(has("Häuser", "Haus", "SUB:NOM:PLU:NEU"), "Häuser: {:?}", by_word.get("Häuser"));
+        assert!(
+            has("der", "der", "ART:DEF:DAT:SIN:FEM"),
+            "der: {:?}",
+            by_word.get("der")
+        );
+        assert!(
+            has("ist", "sein", "VER:3:SIN:PRÄ:NON"),
+            "ist: {:?}",
+            by_word.get("ist")
+        );
+        assert!(
+            has("Häuser", "Haus", "SUB:NOM:PLU:NEU"),
+            "Häuser: {:?}",
+            by_word.get("Häuser")
+        );
     }
 
     #[test]
@@ -560,7 +617,11 @@ mod tests {
 
         let triples = read_triples(&dict, &meta).expect("read dict");
         eprintln!("russian.dict: {} triples", triples.len());
-        assert!(triples.len() > 1_000_000, "Russian morphology is rich; got {}", triples.len());
+        assert!(
+            triples.len() > 1_000_000,
+            "Russian morphology is rich; got {}",
+            triples.len()
+        );
 
         // Every decoded string must be valid UTF-8 Cyrillic (no KOI8-R bytes leaked through, no
         // replacement chars from a mis-decode).
@@ -574,17 +635,29 @@ mod tests {
 
         let mut by_word: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
         for (inflected, lemma, tag) in &triples {
-            by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
+            by_word
+                .entry(inflected.clone())
+                .or_default()
+                .push((lemma.clone(), tag.clone()));
         }
         // Lemma + tag-prefix spot-checks (exact morphology strings aren't pinned): «книги» (a non-Nom
         // form of «книга», book) is a SUFFIX diff that must reconstruct the base; «читаю» → «читать».
         let lemma_with_tag = |w: &str, lemma: &str, tag_prefix: &str| {
-            by_word
-                .get(w)
-                .is_some_and(|v| v.iter().any(|(l, t)| l == lemma && t.starts_with(tag_prefix)))
+            by_word.get(w).is_some_and(|v| {
+                v.iter()
+                    .any(|(l, t)| l == lemma && t.starts_with(tag_prefix))
+            })
         };
-        assert!(lemma_with_tag("книги", "книга", "NN"), "книги→книга/NN: {:?}", by_word.get("книги"));
-        assert!(lemma_with_tag("читаю", "читать", "VB"), "читаю→читать/VB: {:?}", by_word.get("читаю"));
+        assert!(
+            lemma_with_tag("книги", "книга", "NN"),
+            "книги→книга/NN: {:?}",
+            by_word.get("книги")
+        );
+        assert!(
+            lemma_with_tag("читаю", "читать", "VB"),
+            "читаю→читать/VB: {:?}",
+            by_word.get("читаю")
+        );
     }
 
     #[test]
@@ -606,31 +679,48 @@ mod tests {
         let meta = parse_info(&info).expect("parse .info");
         assert_eq!(meta.separator, b'+');
         assert_eq!(meta.encoder, Encoder::Suffix);
-        assert_eq!(meta.encoding, None, "arabic.info declares fsa.dict.encoding=utf-8");
+        assert_eq!(
+            meta.encoding, None,
+            "arabic.info declares fsa.dict.encoding=utf-8"
+        );
 
         let triples = read_triples(&dict, &meta).expect("read dict");
         eprintln!("arabic.dict: {} triples", triples.len());
-        assert!(triples.len() > 1_000_000, "Arabic morphology is rich; got {}", triples.len());
+        assert!(
+            triples.len() > 1_000_000,
+            "Arabic morphology is rich; got {}",
+            triples.len()
+        );
 
         // Decoded forms are clean UTF-8, and the dict keys carry no tashkeel (Arabic combining marks
         // U+064B–065F / U+0670) — i.e. the dict is unvocalized, which is what makes the engine's
         // `StripCombiningMarks` necessary for vocalized input.
-        let tashkeel = |s: &str| s.chars().any(|c| ('\u{064B}'..='\u{065F}').contains(&c) || c == '\u{0670}');
+        let tashkeel = |s: &str| {
+            s.chars()
+                .any(|c| ('\u{064B}'..='\u{065F}').contains(&c) || c == '\u{0670}')
+        };
         assert!(
             triples
                 .iter()
                 .take(20_000)
-                .all(|(i, l, _)| !i.contains('\u{fffd}') && !l.contains('\u{fffd}') && !tashkeel(i)),
+                .all(|(i, l, _)| !i.contains('\u{fffd}')
+                    && !l.contains('\u{fffd}')
+                    && !tashkeel(i)),
             "decoded keys must be clean, unvocalized UTF-8",
         );
 
         // كتاب (kitāb, "book") is a noun — assert it's an inflected key with a noun (`N`) tag.
         let mut by_word: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
         for (inflected, lemma, tag) in &triples {
-            by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
+            by_word
+                .entry(inflected.clone())
+                .or_default()
+                .push((lemma.clone(), tag.clone()));
         }
         assert!(
-            by_word.get("كتاب").is_some_and(|v| v.iter().any(|(_, t)| t.starts_with('N'))),
+            by_word
+                .get("كتاب")
+                .is_some_and(|v| v.iter().any(|(_, t)| t.starts_with('N'))),
             "كتاب should be a known noun: {:?}",
             by_word.get("كتاب"),
         );
@@ -647,30 +737,47 @@ mod tests {
             std::fs::read(base.join("pos.dict")),
             std::fs::read_to_string(base.join("pos.info")),
         ) else {
-            eprintln!("skip: resources/fr/pos.dict not present (run `cargo xtask build-tagger --lang fr`)");
+            eprintln!(
+                "skip: resources/fr/pos.dict not present (run `cargo xtask build-tagger --lang fr`)"
+            );
             return;
         };
         let meta = parse_info(&info).expect("parse .info");
-        assert_eq!(meta.separator, b'_', "french.info declares fsa.dict.separator=_");
+        assert_eq!(
+            meta.separator, b'_',
+            "french.info declares fsa.dict.separator=_"
+        );
         assert_eq!(meta.encoder, Encoder::Suffix);
-        assert_eq!(meta.encoding, None, "french.info declares fsa.dict.encoding=utf-8");
+        assert_eq!(
+            meta.encoding, None,
+            "french.info declares fsa.dict.encoding=utf-8"
+        );
 
         let triples = read_triples(&dict, &meta).expect("read dict");
         eprintln!("french pos.dict: {} triples", triples.len());
-        assert!(triples.len() > 600_000, "French morphology is rich; got {}", triples.len());
+        assert!(
+            triples.len() > 600_000,
+            "French morphology is rich; got {}",
+            triples.len()
+        );
 
         let combining = |s: &str| s.chars().any(|c| ('\u{0300}'..='\u{036F}').contains(&c));
         assert!(
             triples
                 .iter()
                 .take(20_000)
-                .all(|(i, l, _)| !i.contains('\u{fffd}') && !l.contains('\u{fffd}') && !combining(i)),
+                .all(|(i, l, _)| !i.contains('\u{fffd}')
+                    && !l.contains('\u{fffd}')
+                    && !combining(i)),
             "decoded keys must be clean, precomposed (no combining marks) UTF-8",
         );
 
         let mut by_word: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
         for (inflected, lemma, tag) in &triples {
-            by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
+            by_word
+                .entry(inflected.clone())
+                .or_default()
+                .push((lemma.clone(), tag.clone()));
         }
         // «chats» (cats) → lemma «chat», masculine-plural noun. The tag is exactly `N m p` — the
         // trailing `frequency-included` byte (`N m pK` in the raw dict) is stripped by the reader.
@@ -683,7 +790,9 @@ mod tests {
         );
         // An accented common noun «canapé» (couch) must read back cleanly as a masculine noun.
         assert!(
-            by_word.get("canapé").is_some_and(|v| v.iter().any(|(_, t)| t.starts_with("N m"))),
+            by_word
+                .get("canapé")
+                .is_some_and(|v| v.iter().any(|(_, t)| t.starts_with("N m"))),
             "canapé should be a known masculine noun: {:?}",
             by_word.get("canapé"),
         );
@@ -703,35 +812,54 @@ mod tests {
             return;
         };
         let meta = parse_info(&info).expect("parse .info");
-        assert_eq!(meta.separator, b'_', "es-ES.info declares fsa.dict.separator=_");
+        assert_eq!(
+            meta.separator, b'_',
+            "es-ES.info declares fsa.dict.separator=_"
+        );
         assert_eq!(meta.encoder, Encoder::Suffix);
-        assert_eq!(meta.encoding, None, "es-ES.info declares fsa.dict.encoding=utf-8");
+        assert_eq!(
+            meta.encoding, None,
+            "es-ES.info declares fsa.dict.encoding=utf-8"
+        );
 
         let triples = read_triples(&dict, &meta).expect("read dict");
         eprintln!("es pos.dict: {} triples", triples.len());
-        assert!(triples.len() > 1_000_000, "Spanish morphology is rich; got {}", triples.len());
+        assert!(
+            triples.len() > 1_000_000,
+            "Spanish morphology is rich; got {}",
+            triples.len()
+        );
 
         let combining = |s: &str| s.chars().any(|c| ('\u{0300}'..='\u{036F}').contains(&c));
         assert!(
             triples
                 .iter()
                 .take(50_000)
-                .all(|(i, l, _)| !i.contains('\u{fffd}') && !l.contains('\u{fffd}') && !combining(i)),
+                .all(|(i, l, _)| !i.contains('\u{fffd}')
+                    && !l.contains('\u{fffd}')
+                    && !combining(i)),
             "decoded keys must be clean, precomposed UTF-8",
         );
 
         let mut by_word: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
         for (inflected, lemma, tag) in &triples {
-            by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
+            by_word
+                .entry(inflected.clone())
+                .or_default()
+                .push((lemma.clone(), tag.clone()));
         }
         // «casa» (house) is a common noun → EAGLES `NC`; «sofá» (accented) must be a first-class key.
         assert!(
-            by_word.get("casa").is_some_and(|v| v.iter().any(|(_, t)| t.starts_with("NC"))),
+            by_word
+                .get("casa")
+                .is_some_and(|v| v.iter().any(|(_, t)| t.starts_with("NC"))),
             "casa should be a known common noun: {:?}",
             by_word.get("casa"),
         );
         assert!(
-            by_word.get("sofá").is_some_and(|v| v.iter().any(|(l, t)| l == "sofá" && t.starts_with('N'))),
+            by_word
+                .get("sofá")
+                .is_some_and(|v| v.iter().any(|(l, t)| l == "sofá" && t.starts_with('N'))),
             "accented sofá should be a known noun key: {:?}",
             by_word.get("sofá"),
         );
@@ -765,21 +893,32 @@ mod tests {
 
         let triples = read_triples(&dict, &meta).expect("read FSA5 dict");
         eprintln!("italian.dict (FSA5): {} triples", triples.len());
-        assert!(triples.len() > 400_000, "Italian morphology is rich; got {}", triples.len());
+        assert!(
+            triples.len() > 400_000,
+            "Italian morphology is rich; got {}",
+            triples.len()
+        );
 
         let mut by_word: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
         for (inflected, lemma, tag) in &triples {
-            by_word.entry(inflected.clone()).or_default().push((lemma.clone(), tag.clone()));
+            by_word
+                .entry(inflected.clone())
+                .or_default()
+                .push((lemma.clone(), tag.clone()));
         }
         // «gatto» (cat) → masculine noun; «città» (accented, ISO-8859-15 à) must be a clean key —
         // proving the FSA5 traversal + ISO-8859-15 decode reconstruct real Italian forms.
         assert!(
-            by_word.get("gatto").is_some_and(|v| v.iter().any(|(_, t)| t.starts_with("NOUN-M"))),
+            by_word
+                .get("gatto")
+                .is_some_and(|v| v.iter().any(|(_, t)| t.starts_with("NOUN-M"))),
             "gatto should be a masculine noun: {:?}",
             by_word.get("gatto"),
         );
         assert!(
-            by_word.get("città").is_some_and(|v| v.iter().any(|(_, t)| t.starts_with("NOUN"))),
+            by_word
+                .get("città")
+                .is_some_and(|v| v.iter().any(|(_, t)| t.starts_with("NOUN"))),
             "accented città should decode as a clean noun key: {:?}",
             by_word.get("città"),
         );
@@ -799,6 +938,9 @@ mod tests {
             },
         )
         .expect_err("unknown FSA version must be rejected");
-        assert!(err.to_string().contains("unsupported FSA version"), "actionable error: {err}");
+        assert!(
+            err.to_string().contains("unsupported FSA version"),
+            "actionable error: {err}"
+        );
     }
 }

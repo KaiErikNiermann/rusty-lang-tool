@@ -34,8 +34,8 @@ pub struct DisambigReport {
 /// # Errors
 /// Returns an error if the file cannot be read or the XML cannot be parsed.
 pub fn lower_disambiguation(path: &std::path::Path) -> Result<DisambigReport> {
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let raw =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let xml = expand_entities(&raw, path.parent())
         .with_context(|| format!("expanding entities in {}", path.display()))?;
     let parsed: XRules = quick_xml::de::from_str(&xml)
@@ -58,7 +58,10 @@ pub fn lower_disambiguation(path: &std::path::Path) -> Result<DisambigReport> {
 ///
 /// # Errors
 /// Returns an error if the XML can't be parsed or the artifact can't be written.
-pub fn convert_disambiguation(disambig_path: &std::path::Path, out: &std::path::Path) -> Result<DisambigReport> {
+pub fn convert_disambiguation(
+    disambig_path: &std::path::Path,
+    out: &std::path::Path,
+) -> Result<DisambigReport> {
     let report = lower_disambiguation(disambig_path)?;
     let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&report.rules)
         .map_err(|e| anyhow!("serializing disambiguation rules: {e}"))?;
@@ -90,7 +93,9 @@ fn lower_rule(rule: &XRule, group_id: Option<&str>) -> DisambigRule {
         None => false,
     };
     let action = if supported_pattern && !pattern.is_empty() {
-        rule.disambig.as_ref().map_or(TagAction::Unsupported, lower_action)
+        rule.disambig
+            .as_ref()
+            .map_or(TagAction::Unsupported, lower_action)
     } else {
         TagAction::Unsupported
     };
@@ -109,7 +114,12 @@ fn lower_rule(rule: &XRule, group_id: Option<&str>) -> DisambigRule {
             })
         })
         .collect();
-    DisambigRule { id, pattern, antipatterns, action }
+    DisambigRule {
+        id,
+        pattern,
+        antipatterns,
+        action,
+    }
 }
 
 /// Lower an ordered list of pattern items into constructs, returning `false` if any is unsupported
@@ -204,8 +214,15 @@ fn lower_action(d: &XDisambig) -> TagAction {
     match d.action.as_deref().unwrap_or("replace") {
         "replace" => TagAction::Replace { postags, lemmas },
         "add" => TagAction::Add { postags, lemmas },
-        "remove" => TagAction::Remove { postags, lemmas, postag_regexp },
-        "filter" => TagAction::Filter { postags, postag_regexp },
+        "remove" => TagAction::Remove {
+            postags,
+            lemmas,
+            postag_regexp,
+        },
+        "filter" => TagAction::Filter {
+            postags,
+            postag_regexp,
+        },
         _ => TagAction::Unsupported, // filterall, unify, ignore_spelling
     }
 }
@@ -374,7 +391,9 @@ mod tests {
         let parsed: XRules = quick_xml::de::from_str(xml).expect("parse");
         let rule = lower_rule(&parsed.rule[0], None);
         assert!(
-            rule.pattern.iter().any(|c| matches!(c, Construct::Token(t) if t.case_sensitive)),
+            rule.pattern
+                .iter()
+                .any(|c| matches!(c, Construct::Token(t) if t.case_sensitive)),
             "disambig pattern-level case_sensitive was not propagated to the token",
         );
     }
@@ -391,7 +410,8 @@ mod tests {
         // The file has ~1061 <disambig> actions; most should lower to an applicable action.
         let n = report.rules.len();
         let applied = report.applicable;
-        let action_mix = |f: fn(&TagAction) -> bool| report.rules.iter().filter(|r| f(&r.action)).count();
+        let action_mix =
+            |f: fn(&TagAction) -> bool| report.rules.iter().filter(|r| f(&r.action)).count();
         eprintln!(
             "disambig: {n} rules, {applied} applicable | replace={} add={} remove={} filter={} unsupported={}",
             action_mix(|a| matches!(a, TagAction::Replace { .. })),
@@ -401,6 +421,9 @@ mod tests {
             action_mix(TagAction::is_unsupported),
         );
         assert!(n > 800, "expected ~1000 rules, got {n}");
-        assert!(applied > 500, "expected most rules applicable, got {applied}");
+        assert!(
+            applied > 500,
+            "expected most rules applicable, got {applied}"
+        );
     }
 }

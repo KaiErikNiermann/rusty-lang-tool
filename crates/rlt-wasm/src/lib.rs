@@ -96,7 +96,11 @@ impl RltChecker {
         let engine = load_native_engine(lang, segment_srx, tagger, disambig)?;
         let ir = load_ir(ir_blob)?;
         Ok(Self {
-            inner: Box::new(Checker::with_spell(Composite::new(engine, ir), alphabet, spell_msg)),
+            inner: Box::new(Checker::with_spell(
+                Composite::new(engine, ir),
+                alphabet,
+                spell_msg,
+            )),
         })
     }
 
@@ -134,7 +138,10 @@ impl RltChecker {
     ///
     /// # Errors
     /// Returns a JS error if any engine or L4 artifact buffer is invalid.
-    #[allow(clippy::too_many_arguments, reason = "wasm-bindgen flattens the artifact tuple")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "wasm-bindgen flattens the artifact tuple"
+    )]
     pub fn with_native_neural(
         lang: &str,
         segment_srx: &str,

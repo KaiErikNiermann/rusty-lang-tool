@@ -273,7 +273,11 @@ pub fn config(code: &str) -> Option<&'static LangConfig> {
 /// messages — derived from [`LANGUAGES`] so the help text can never list a stale set.
 #[must_use]
 pub fn known() -> String {
-    LANGUAGES.iter().map(|c| c.code).collect::<Vec<_>>().join(", ")
+    LANGUAGES
+        .iter()
+        .map(|c| c.code)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The `SENT_END`/`SENT_START` punctuation characters LanguageTool tags `PCT`. Shared default.
@@ -495,8 +499,8 @@ pub static FR: LangConfig = LangConfig {
     // French elision clitics (the apostrophe-final dict keys): articles/pronouns/conjunctions that
     // elide before a vowel — `l'eau`, `qu'il`, `jusqu'à`.
     elision: &[
-        "l'", "d'", "j'", "m'", "t'", "s'", "n'", "c'", "ç'", "qu'", "jusqu'", "lorsqu'", "puisqu'",
-        "quoiqu'", "quelqu'",
+        "l'", "d'", "j'", "m'", "t'", "s'", "n'", "c'", "ç'", "qu'", "jusqu'", "lorsqu'",
+        "puisqu'", "quoiqu'", "quelqu'",
     ],
     compounds: None,
 };
@@ -595,7 +599,12 @@ mod tests {
     fn config_lookup_and_paths() {
         assert!(config("xx").is_none());
         let fr = config("fr").unwrap();
-        assert!(fr.pos_dict.jar_url().as_deref().is_some_and(|u| u.ends_with("french-pos-dict-0.7.jar")));
+        assert!(
+            fr.pos_dict
+                .jar_url()
+                .as_deref()
+                .is_some_and(|u| u.ends_with("french-pos-dict-0.7.jar"))
+        );
         assert_eq!(fr.tagset.digit_tag, "Y");
         let en = config("en").unwrap();
         assert_eq!(en.tagger_path(), "resources/en/tagger.rkyv");
@@ -603,12 +612,16 @@ mod tests {
         assert_eq!(en.segment_srx_path(), "resources/segment.srx");
         assert_eq!(
             en.pos_dict.jar_url().as_deref(),
-            Some("https://repo1.maven.org/maven2/org/languagetool/english-pos-dict/0.6/english-pos-dict-0.6.jar")
+            Some(
+                "https://repo1.maven.org/maven2/org/languagetool/english-pos-dict/0.6/english-pos-dict-0.6.jar"
+            )
         );
         let de = config("de").unwrap();
         assert_eq!(
             de.pos_dict.jar_url().as_deref(),
-            Some("https://repo1.maven.org/maven2/de/danielnaber/german-pos-dict/1.2.4/german-pos-dict-1.2.4.jar")
+            Some(
+                "https://repo1.maven.org/maven2/de/danielnaber/german-pos-dict/1.2.4/german-pos-dict-1.2.4.jar"
+            )
         );
         assert!(de.compounds.is_some() && en.compounds.is_none());
 

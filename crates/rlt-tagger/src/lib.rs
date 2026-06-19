@@ -243,7 +243,10 @@ impl<S: TagSource> Tagger<S> {
         if words.is_empty() {
             return Vec::new();
         }
-        let original: Vec<String> = words.iter().map(|w| text[w.start..w.end].to_owned()).collect();
+        let original: Vec<String> = words
+            .iter()
+            .map(|w| text[w.start..w.end].to_owned())
+            .collect();
 
         let mut tokens = original.clone();
         for _ in 0..self.config.max_iterations.max(1) {
@@ -272,7 +275,10 @@ impl<S: TagSource> Tagger<S> {
     /// `$DELETE` dropping a token and append/replace/split producing one or more.
     fn apply_edits(&self, tokens: &[String], preds: &[WordPred]) -> Vec<String> {
         // Sentence-level error gate: unless some token is confidently erroneous, change nothing.
-        if !preds.iter().any(|p| p.error_prob >= self.config.min_error_probability) {
+        if !preds
+            .iter()
+            .any(|p| p.error_prob >= self.config.min_error_probability)
+        {
             return tokens.to_vec();
         }
         let mut out: Vec<String> = Vec::with_capacity(tokens.len());
@@ -300,7 +306,12 @@ impl<S: TagSource> Tagger<S> {
                 }
                 Edit::SplitHyphen => out.extend(tok.split('-').map(str::to_owned)),
                 Edit::Verb(tags) => {
-                    out.push(self.verb_dict.apply(tok, &tags).unwrap_or(tok.as_str()).to_owned());
+                    out.push(
+                        self.verb_dict
+                            .apply(tok, &tags)
+                            .unwrap_or(tok.as_str())
+                            .to_owned(),
+                    );
                 }
                 Edit::Keep | Edit::Unsupported => out.push(tok.clone()),
             }
@@ -475,13 +486,13 @@ mod tests {
     /// Vocabulary used across the decoder tests.
     fn labels() -> Labels {
         Labels::new(vec![
-            "$KEEP".to_owned(),                       // 0
-            "$DELETE".to_owned(),                     // 1
-            "$REPLACE_believe".to_owned(),            // 2
-            "$APPEND_the".to_owned(),                 // 3
-            "$TRANSFORM_CASE_CAPITAL".to_owned(),     // 4
-            "$TRANSFORM_VERB_VB_VBZ".to_owned(),      // 5 (needs the verb dict)
-            "$TRANSFORM_AGREEMENT_PLURAL".to_owned(), // 6
+            "$KEEP".to_owned(),                         // 0
+            "$DELETE".to_owned(),                       // 1
+            "$REPLACE_believe".to_owned(),              // 2
+            "$APPEND_the".to_owned(),                   // 3
+            "$TRANSFORM_CASE_CAPITAL".to_owned(),       // 4
+            "$TRANSFORM_VERB_VB_VBZ".to_owned(),        // 5 (needs the verb dict)
+            "$TRANSFORM_AGREEMENT_PLURAL".to_owned(),   // 6
             "$TRANSFORM_AGREEMENT_SINGULAR".to_owned(), // 7
         ])
     }
@@ -512,10 +523,13 @@ mod tests {
     #[test]
     fn splits_words_with_byte_spans() {
         let spans = split_words("  hi  world ");
-        assert_eq!(spans, vec![
-            WordSpan { start: 2, end: 4 },
-            WordSpan { start: 6, end: 11 },
-        ]);
+        assert_eq!(
+            spans,
+            vec![
+                WordSpan { start: 2, end: 4 },
+                WordSpan { start: 6, end: 11 },
+            ]
+        );
     }
 
     #[test]
@@ -539,7 +553,11 @@ mod tests {
 
     #[test]
     fn delete_edit_suggests_empty_replacement() {
-        let diags = run("the the cat", vec![keep(), edit(1), keep()], TaggerConfig::default());
+        let diags = run(
+            "the the cat",
+            vec![keep(), edit(1), keep()],
+            TaggerConfig::default(),
+        );
         assert_eq!(diags.len(), 1, "{diags:?}");
         assert_eq!(diags[0].suggestions[0].replacement, "");
     }
@@ -562,9 +580,12 @@ mod tests {
     fn verb_transform_resolves_via_dict() {
         // "She go" → $TRANSFORM_VERB_VB_VBZ on "go" → "goes" via the verb dict.
         let vd = VerbDict::parse("go_goes:VB_VBZ\nrun_runs:VB_VBZ\n");
-        let tagger =
-            Tagger::new(MockSource::new(vec![keep(), edit(5)]), labels(), TaggerConfig::default())
-                .with_verb_dict(vd);
+        let tagger = Tagger::new(
+            MockSource::new(vec![keep(), edit(5)]),
+            labels(),
+            TaggerConfig::default(),
+        )
+        .with_verb_dict(vd);
         let diags = tagger.grammar_diagnostics("She go", &Analysis::default());
         assert_eq!(diags.len(), 1, "{diags:?}");
         assert_eq!(diags[0].suggestions[0].replacement, "goes");
@@ -638,6 +659,13 @@ mod tests {
             keep_prob: 0.05,
             error_prob: 0.1, // below min_error_probability
         };
-        assert!(run("I beleive it", vec![keep(), pred, keep()], TaggerConfig::default()).is_empty());
+        assert!(
+            run(
+                "I beleive it",
+                vec![keep(), pred, keep()],
+                TaggerConfig::default()
+            )
+            .is_empty()
+        );
     }
 }

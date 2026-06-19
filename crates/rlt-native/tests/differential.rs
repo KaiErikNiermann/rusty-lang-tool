@@ -85,7 +85,16 @@ fn bootstrap_tagger(nlprule: &VendoredEngine, segmenter: &Segmenter, texts: &[St
 /// capitalization/digit-driven retags. The native engine grows these in P3 (disambiguation); excluding
 /// them isolates the P1 question — does *lexical* tag lookup match nlprule exactly?
 const STRUCTURAL_TAGS: &[&str] = &[
-    "PCT", "SENT_START", "SENT_END", "PARA_END", "RB_SENT", "UNKNOWN", "NNP", "NNPS", "CD", "ORD",
+    "PCT",
+    "SENT_START",
+    "SENT_END",
+    "PARA_END",
+    "RB_SENT",
+    "UNKNOWN",
+    "NNP",
+    "NNPS",
+    "CD",
+    "ORD",
 ];
 
 fn is_structural(tag: &str) -> bool {
@@ -97,15 +106,19 @@ fn is_structural(tag: &str) -> bool {
 struct Tally {
     ref_tokens: usize,
     span_hits: usize,
-    tag_hits: usize,     // all reference tags contained (informational; structural tags drag this down)
-    lex_hits: usize,     // all *non-structural* reference tags contained (the P1 invariant)
+    tag_hits: usize, // all reference tags contained (informational; structural tags drag this down)
+    lex_hits: usize, // all *non-structural* reference tags contained (the P1 invariant)
     missing: BTreeMap<String, usize>, // non-structural tags nlprule had but native lacked
 }
 
 fn compare(reference: &Analysis, native: &Analysis, t: &mut Tally) {
     for r in &reference.tokens {
         t.ref_tokens += 1;
-        let Some(n) = native.tokens.iter().find(|n| n.span == r.span && n.text == r.text) else {
+        let Some(n) = native
+            .tokens
+            .iter()
+            .find(|n| n.span == r.span && n.text == r.text)
+        else {
             continue; // tokenization mismatch (contraction/hyphen/abbreviation split)
         };
         t.span_hits += 1;
@@ -132,7 +145,9 @@ fn compare(reference: &Analysis, native: &Analysis, t: &mut Tally) {
 #[test]
 fn native_engine_reproduces_nlprule_over_example_corpus() {
     let Some((nlprule, segmenter, texts)) = fixtures() else {
-        eprintln!("skip: native differential needs resources/segment.srx + en_tokenizer.bin + grammar.xml");
+        eprintln!(
+            "skip: native differential needs resources/segment.srx + en_tokenizer.bin + grammar.xml"
+        );
         return;
     };
     let tagger = bootstrap_tagger(&nlprule, &segmenter, &texts);
@@ -162,7 +177,10 @@ fn native_engine_reproduces_nlprule_over_example_corpus() {
     if !t.missing.is_empty() {
         let mut top: Vec<(&String, &usize)> = t.missing.iter().collect();
         top.sort_by(|a, b| b.1.cmp(a.1));
-        eprintln!("residual lexical-tag misses: {:?}", &top[..top.len().min(15)]);
+        eprintln!(
+            "residual lexical-tag misses: {:?}",
+            &top[..top.len().min(15)]
+        );
     }
 
     // Tokenization parity is the engine-code gate; the residual is contraction/abbreviation splitting

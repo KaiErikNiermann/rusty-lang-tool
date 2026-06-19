@@ -21,7 +21,14 @@ const EN_WORDS: &[&str] = &["the", "running", "London", "recieve", "gives", "zxq
 const DE_CORPUS: &str = "Der Ausschuss prüfte den Vorschlag sorgfältig vor der Sitzung. \
 Mehrere Mitglieder äußerten Bedenken über das Budget, das beträchtlich gewachsen war. \
 Die Haustür war offen und das Arbeitszimmer ist groß.";
-const DE_WORDS: &[&str] = &["der", "Häuser", "Haustür", "schön", "xqzzy", "Arbeitszimmer"];
+const DE_WORDS: &[&str] = &[
+    "der",
+    "Häuser",
+    "Haustür",
+    "schön",
+    "xqzzy",
+    "Arbeitszimmer",
+];
 const ITERS: usize = 3000;
 
 fn main() {

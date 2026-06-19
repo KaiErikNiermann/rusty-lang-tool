@@ -291,7 +291,12 @@ fn main() -> Result<()> {
             lt_module,
             dict,
             info,
-        } => lang_inspect(&code, lt_module.as_deref(), dict.as_deref(), info.as_deref()),
+        } => lang_inspect(
+            &code,
+            lt_module.as_deref(),
+            dict.as_deref(),
+            info.as_deref(),
+        ),
         Task::LangStatus { lang } => lang_status(lang.as_deref()),
         Task::LangManifest { lang } => lang_manifest(lang_cfg(&lang)?),
         Task::LangCoherence => lang_coherence(),
@@ -324,7 +329,14 @@ fn main() -> Result<()> {
         ),
         Task::EvalL4 => run(
             "uv",
-            &["run", "--project", "pipeline", "python", "-m", "rlt_pipeline.evaluate"],
+            &[
+                "run",
+                "--project",
+                "pipeline",
+                "python",
+                "-m",
+                "rlt_pipeline.evaluate",
+            ],
         ),
         Task::AdaptSweep {
             from,
@@ -476,7 +488,9 @@ fn tail(s: &str, n: usize) -> String {
 /// The `[from, to]` inclusive slice of [`LT_VERSIONS`] (defaults: earliest .. pinned).
 fn version_range(from: Option<&str>, to: Option<&str>) -> Result<Vec<String>> {
     let idx = |v: &str| LT_VERSIONS.iter().position(|x| *x == v);
-    let lo = from.map_or(Ok(0), |v| idx(v).with_context(|| format!("unknown LT tag {v}")))?;
+    let lo = from.map_or(Ok(0), |v| {
+        idx(v).with_context(|| format!("unknown LT tag {v}"))
+    })?;
     let hi = match to {
         Some(v) => idx(v).with_context(|| format!("unknown LT tag {v}"))?,
         None => idx(LT_VERSION).unwrap_or(LT_VERSIONS.len() - 1),
@@ -484,7 +498,10 @@ fn version_range(from: Option<&str>, to: Option<&str>) -> Result<Vec<String>> {
     if lo > hi {
         bail!("--from is after --to");
     }
-    Ok(LT_VERSIONS[lo..=hi].iter().map(|s| (*s).to_owned()).collect())
+    Ok(LT_VERSIONS[lo..=hi]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect())
 }
 
 fn load_results() -> Vec<AdaptResult> {
@@ -676,7 +693,8 @@ fn write_report(results: &mut [AdaptResult]) -> Result<()> {
             yn(r.convert_compiles),
             pair(r.rules_total, r.rules_opaque),
             pair(r.reproduced, r.positive_total),
-            r.reproduced_pct.map_or("—".to_owned(), |p| format!("{p:.1}%")),
+            r.reproduced_pct
+                .map_or("—".to_owned(), |p| format!("{p:.1}%")),
             pair(r.false_positives, r.negative_total),
         );
     }
@@ -739,7 +757,9 @@ fn fetch_lt(version: &str) -> Result<()> {
     // adaptability sweep checks out a different tag each iteration).
     run(
         "git",
-        &["-C", repo, "fetch", "--depth", "1", "origin", "tag", version],
+        &[
+            "-C", repo, "fetch", "--depth", "1", "origin", "tag", version,
+        ],
     )?;
     let mut sparse = vec!["-C", repo, "sparse-checkout", "set"];
     sparse.extend_from_slice(SPARSE_PATHS);
@@ -759,7 +779,10 @@ fn fetch_lt(version: &str) -> Result<()> {
             .output()
             .context("extracting segment.srx from the LT checkout")?;
         if !out.status.success() {
-            bail!("git show {blob} failed: {}", String::from_utf8_lossy(&out.stderr));
+            bail!(
+                "git show {blob} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         }
         std::fs::write(srx_dest, &out.stdout).with_context(|| format!("writing {srx_dest}"))?;
         println!("provisioned {srx_dest} ({} bytes)", out.stdout.len());
@@ -869,10 +892,14 @@ fn build_tagger(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
     std::fs::create_dir_all(cfg.resource_dir())?;
     let (mut triples, source) = match morfologik_triples(cfg)? {
         Some(t) => (t, "LT morfologik .dict".to_owned()),
-        None if cfg.sources.uses_agid => {
-            (agid_triples()?, "AGID/POS + remap.awk + closed-class".to_owned())
-        }
-        None => bail!("no morfologik POS dict for {} and no AGID fallback", cfg.code),
+        None if cfg.sources.uses_agid => (
+            agid_triples()?,
+            "AGID/POS + remap.awk + closed-class".to_owned(),
+        ),
+        None => bail!(
+            "no morfologik POS dict for {} and no AGID fallback",
+            cfg.code
+        ),
     };
     let from_dict = triples.len();
 
@@ -881,7 +908,9 @@ fn build_tagger(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
     let res = cfg.lt_resource_dir();
     let added = read_triple_file_opt(&format!("{res}/added.txt"))?;
     let removed: std::collections::HashSet<(String, String, String)> =
-        read_triple_file_opt(&format!("{res}/removed.txt"))?.into_iter().collect();
+        read_triple_file_opt(&format!("{res}/removed.txt"))?
+            .into_iter()
+            .collect();
     let n_added = added.len();
     triples.extend(added);
     let before = triples.len();
@@ -903,11 +932,20 @@ fn build_tagger(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
 /// Build the grammar IR blob for `cfg` (grammar.xml → `resources/<lang>/grammar.rkyv`) via `rlt convert`.
 fn build_blob(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
     std::fs::create_dir_all(cfg.resource_dir())?;
-    run("cargo", &[
-        "run", "-p", "rlt-cli", "--", "convert",
-        "--grammar", &cfg.grammar_xml_path(),
-        "--out", &cfg.grammar_blob_path(),
-    ])
+    run(
+        "cargo",
+        &[
+            "run",
+            "-p",
+            "rlt-cli",
+            "--",
+            "convert",
+            "--grammar",
+            &cfg.grammar_xml_path(),
+            "--out",
+            &cfg.grammar_blob_path(),
+        ],
+    )
 }
 
 /// Read triples straight from LanguageTool's morfologik POS dictionary for `cfg`, fetching the
@@ -949,7 +987,18 @@ fn fetch_pos_dict(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
     let url = cfg.pos_dict.jar_url().expect("Maven dict has a jar URL");
     fetch_if_absent(&jar, &url)?;
     // jars are zip archives; extract the two files flat into resources/<lang>/, renaming to pos.*.
-    run("unzip", &["-o", "-j", &jar, jar_dict_path, jar_info_path, "-d", &cfg.resource_dir()])?;
+    run(
+        "unzip",
+        &[
+            "-o",
+            "-j",
+            &jar,
+            jar_dict_path,
+            jar_info_path,
+            "-d",
+            &cfg.resource_dir(),
+        ],
+    )?;
     // unzip -j strips the dir but keeps the basename (english.dict / german.dict); rename to pos.*.
     let dir = cfg.resource_dir();
     let dict_name = jar_dict_path.rsplit('/').next().unwrap_or("pos.dict");
@@ -985,8 +1034,10 @@ fn agid_triples() -> Result<Vec<(String, String, String)>> {
     // Closed-class override: replace the awk output for the curated function words (awk mistags/omits
     // them). Drop every awk triple whose surface is overridden, then add ours.
     let overrides = read_triple_file(CLOSED_CLASS)?;
-    let overridden: std::collections::HashSet<String> =
-        overrides.iter().map(|(surface, ..)| surface.clone()).collect();
+    let overridden: std::collections::HashSet<String> = overrides
+        .iter()
+        .map(|(surface, ..)| surface.clone())
+        .collect();
     triples.retain(|(surface, ..)| !overridden.contains(surface));
     triples.extend(overrides);
     Ok(triples)
@@ -1021,7 +1072,10 @@ fn lang_cfg(code: &str) -> Result<&'static rlt_lang::LangConfig> {
 /// repo path layout; works before the language has a config (so it can guide that config). The grep
 /// of `grammar.xml`/`disambiguation.xml` surfaces the most-referenced postags so the author picks the
 /// `proper_noun_tag`/`punctuation_tag`/`digit_tag` that match the most rules.
-#[allow(clippy::too_many_lines, reason = "a single linear diagnostic dump; splitting hurts readability")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "a single linear diagnostic dump; splitting hurts readability"
+)]
 fn lang_inspect(
     code: &str,
     lt_module: Option<&str>,
@@ -1086,8 +1140,8 @@ fn lang_inspect(
         meta.encoding.map_or("utf-8", |e| e.name()),
     );
 
-    let triples = rlt_convert::read_triples(&bytes, &meta)
-        .with_context(|| format!("reading {dict_path}"))?;
+    let triples =
+        rlt_convert::read_triples(&bytes, &meta).with_context(|| format!("reading {dict_path}"))?;
     // Top-level tag = the part before the first ':' or ';' (the word-class group across tagsets).
     let top_level = |tag: &str| tag.split([':', ';']).next().unwrap_or(tag).to_owned();
     let mut tag_freq: BTreeMap<String, u64> = BTreeMap::new();
@@ -1095,7 +1149,10 @@ fn lang_inspect(
     let mut letters: std::collections::BTreeSet<char> = std::collections::BTreeSet::new();
     for (inflected, _, tag) in &triples {
         *tag_freq.entry(top_level(tag)).or_default() += 1;
-        if inflected.chars().any(|c| c.general_category() == GeneralCategory::NonspacingMark) {
+        if inflected
+            .chars()
+            .any(|c| c.general_category() == GeneralCategory::NonspacingMark)
+        {
             marks += 1;
         }
         // The spell alphabet: distinct lower-case base letters (skip marks/digits/punct).
@@ -1105,7 +1162,11 @@ fn lang_inspect(
     }
     let mut top: Vec<_> = tag_freq.iter().collect();
     top.sort_by(|a, b| b.1.cmp(a.1));
-    println!("  triples: {}   distinct top-level tags: {}", triples.len(), tag_freq.len());
+    println!(
+        "  triples: {}   distinct top-level tags: {}",
+        triples.len(),
+        tag_freq.len()
+    );
     print!("    top tags:");
     for (tag, n) in top.iter().take(10) {
         print!(" {tag}({n})");
@@ -1130,7 +1191,10 @@ fn lang_inspect(
     // Most-referenced postags in the grammar/disambiguation rules — the structural-tag candidates.
     for (label, path) in [
         ("grammar.xml", format!("{rules}/grammar.xml")),
-        ("disambiguation.xml", format!("{resource}/disambiguation.xml")),
+        (
+            "disambiguation.xml",
+            format!("{resource}/disambiguation.xml"),
+        ),
     ] {
         if let Ok(text) = std::fs::read_to_string(&path) {
             let examples = text.matches("<example").count();
@@ -1154,7 +1218,11 @@ fn lang_inspect(
     let pairs = confusion_words(&confusion).map_or(0, |w| w.len());
     println!(
         "  confusion_sets.txt: {pairs} words → {}",
-        if pairs == 0 { "L3 skip (confusion:false)" } else { "L3 available (confusion:true)" },
+        if pairs == 0 {
+            "L3 skip (confusion:false)"
+        } else {
+            "L3 available (confusion:true)"
+        },
     );
     Ok(())
 }
@@ -1214,17 +1282,34 @@ struct LangManifest {
 
 /// The upstream inputs that feed a language's artifacts: `(key, path, feeds, optional)`. One place so
 /// `lang-manifest` and `lang-status` agree on the set. Paths come from the `LangConfig` getters.
-fn manifest_inputs(cfg: &'static rlt_lang::LangConfig) -> Vec<(&'static str, String, &'static str, bool)> {
+fn manifest_inputs(
+    cfg: &'static rlt_lang::LangConfig,
+) -> Vec<(&'static str, String, &'static str, bool)> {
     let res = cfg.lt_resource_dir();
     vec![
         ("grammar.xml", cfg.grammar_xml_path(), "grammar.rkyv", false),
-        ("disambiguation.xml", cfg.disambiguation_xml_path(), "disambig.rkyv", false),
+        (
+            "disambiguation.xml",
+            cfg.disambiguation_xml_path(),
+            "disambig.rkyv",
+            false,
+        ),
         // Optional: en reconstructs its tagger from AGID (no morfologik dict); de/ru/ar ship one.
         ("pos.dict", cfg.pos_dict_local(), "tagger.rkyv", true),
         ("pos.info", cfg.pos_info_local(), "tagger.rkyv", true),
         ("added.txt", format!("{res}/added.txt"), "tagger.rkyv", true),
-        ("removed.txt", format!("{res}/removed.txt"), "tagger.rkyv", true),
-        ("confusion_sets.txt", format!("{res}/confusion_sets.txt"), "confusion.rkyv", true),
+        (
+            "removed.txt",
+            format!("{res}/removed.txt"),
+            "tagger.rkyv",
+            true,
+        ),
+        (
+            "confusion_sets.txt",
+            format!("{res}/confusion_sets.txt"),
+            "confusion.rkyv",
+            true,
+        ),
     ]
 }
 
@@ -1250,9 +1335,20 @@ fn lang_manifest(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
         let (sha256, bytes) = match sha256_file(&path) {
             Some((s, b)) => (Some(s), b),
             None if optional => (None, 0),
-            None => bail!("required input {key} missing at {path} — run `build-lang --lang {}` first", cfg.code),
+            None => bail!(
+                "required input {key} missing at {path} — run `build-lang --lang {}` first",
+                cfg.code
+            ),
         };
-        inputs.insert(key.to_owned(), ManifestInput { sha256, bytes, feeds: feeds.to_owned(), optional });
+        inputs.insert(
+            key.to_owned(),
+            ManifestInput {
+                sha256,
+                bytes,
+                feeds: feeds.to_owned(),
+                optional,
+            },
+        );
     }
     let tagset_values = [
         ("digit_tag", cfg.tagset.digit_tag),
@@ -1331,13 +1427,20 @@ fn gzip_asset(src: &str, out_dir: &Path, asset: &str) -> Result<Option<WebAsset>
     use std::io::Write as _;
 
     use flate2::{Compression, write::GzEncoder};
-    let Ok(src_meta) = std::fs::metadata(src) else { return Ok(None) };
+    let Ok(src_meta) = std::fs::metadata(src) else {
+        return Ok(None);
+    };
     let dst = out_dir.join(asset);
 
     if is_up_to_date(&dst, &src_meta) {
         let gz = std::fs::read(&dst)?;
         let (sha256, bytes) = sha256_bytes(&gz);
-        return Ok(Some(WebAsset { asset: asset.to_owned(), sha256, bytes, raw_bytes: src_meta.len() }));
+        return Ok(Some(WebAsset {
+            asset: asset.to_owned(),
+            sha256,
+            bytes,
+            raw_bytes: src_meta.len(),
+        }));
     }
 
     let raw = std::fs::read(src)?;
@@ -1346,7 +1449,12 @@ fn gzip_asset(src: &str, out_dir: &Path, asset: &str) -> Result<Option<WebAsset>
     let gz = encoder.finish()?;
     std::fs::write(&dst, &gz)?;
     let (sha256, bytes) = sha256_bytes(&gz);
-    Ok(Some(WebAsset { asset: asset.to_owned(), sha256, bytes, raw_bytes: raw.len() as u64 }))
+    Ok(Some(WebAsset {
+        asset: asset.to_owned(),
+        sha256,
+        bytes,
+        raw_bytes: raw.len() as u64,
+    }))
 }
 
 /// True iff `dst` exists and was modified no earlier than `src` (so its cached gzip is still current).
@@ -1354,7 +1462,9 @@ fn is_up_to_date(dst: &Path, src_meta: &std::fs::Metadata) -> bool {
     let (Ok(dst_meta), Ok(src_mtime)) = (std::fs::metadata(dst), src_meta.modified()) else {
         return false;
     };
-    dst_meta.modified().is_ok_and(|dst_mtime| dst_mtime >= src_mtime)
+    dst_meta
+        .modified()
+        .is_ok_and(|dst_mtime| dst_mtime >= src_mtime)
 }
 
 /// Hex SHA-256 + length of an in-memory buffer (the compressed-asset analogue of [`sha256_file`]).
@@ -1378,7 +1488,10 @@ fn web_manifest(out: &Path, langs: &[String]) -> Result<()> {
 
     // An empty `--langs` means "every built language"; otherwise validate the requested subset.
     if let Some(unknown) = langs.iter().find(|c| rlt_lang::config(c).is_none()) {
-        bail!("unknown language code `{unknown}` (known: {})", rlt_lang::known());
+        bail!(
+            "unknown language code `{unknown}` (known: {})",
+            rlt_lang::known()
+        );
     }
     let wanted = |code: &str| langs.is_empty() || langs.iter().any(|c| c == code);
 
@@ -1395,7 +1508,10 @@ fn web_manifest(out: &Path, langs: &[String]) -> Result<()> {
     for cfg in rlt_lang::LANGUAGES.iter().filter(|c| wanted(c.code)) {
         let code = cfg.code;
         // The artifacts `RltChecker.with_native` consumes: tagger + grammar (required), disambig (optional).
-        let required = [("tagger.rkyv", cfg.tagger_path()), ("grammar.rkyv", cfg.grammar_blob_path())];
+        let required = [
+            ("tagger.rkyv", cfg.tagger_path()),
+            ("grammar.rkyv", cfg.grammar_blob_path()),
+        ];
         let mut files = std::collections::BTreeMap::new();
         let mut missing = false;
         for (name, path) in required {
@@ -1410,17 +1526,29 @@ fn web_manifest(out: &Path, langs: &[String]) -> Result<()> {
             println!("skip {code}: required artifacts not built (run `build-lang --lang {code}`)");
             continue;
         }
-        if let Some(asset) = gzip_asset(&cfg.disambig_path(), out, &format!("{code}-disambig.rkyv.gz"))? {
+        if let Some(asset) = gzip_asset(
+            &cfg.disambig_path(),
+            out,
+            &format!("{code}-disambig.rkyv.gz"),
+        )? {
             files.insert("disambig.rkyv".to_owned(), asset);
         }
         // L3 confusion model (en/de/ru/fr/es); absent for ar/it.
-        if let Some(asset) = gzip_asset(&cfg.confusion_path(), out, &format!("{code}-confusion.rkyv.gz"))? {
+        if let Some(asset) = gzip_asset(
+            &cfg.confusion_path(),
+            out,
+            &format!("{code}-confusion.rkyv.gz"),
+        )? {
             files.insert("confusion.rkyv".to_owned(), asset);
         }
         let total_bytes = files.values().map(|a| a.bytes).sum();
         languages.insert(
             code.to_owned(),
-            WebLang { label: title_case(cfg.name), total_bytes, files },
+            WebLang {
+                label: title_case(cfg.name),
+                total_bytes,
+                files,
+            },
         );
     }
 
@@ -1435,11 +1563,19 @@ fn web_manifest(out: &Path, langs: &[String]) -> Result<()> {
         languages,
     };
     let manifest_path = out.join("web-artifacts.json");
-    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)? + "\n")?;
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest)? + "\n",
+    )?;
     println!(
         "wrote {} + {} gz assets ({} languages) to {}",
         manifest_path.display(),
-        manifest.languages.values().map(|l| l.files.len()).sum::<usize>() + manifest.shared.len(),
+        manifest
+            .languages
+            .values()
+            .map(|l| l.files.len())
+            .sum::<usize>()
+            + manifest.shared.len(),
         manifest.languages.len(),
         out.display(),
     );
@@ -1449,7 +1585,9 @@ fn web_manifest(out: &Path, langs: &[String]) -> Result<()> {
 /// Capitalise the first ASCII letter of a lower-case language name (`english` → `English`).
 fn title_case(s: &str) -> String {
     let mut chars = s.chars();
-    chars.next().map_or_else(String::new, |c| c.to_ascii_uppercase().to_string() + chars.as_str())
+    chars.next().map_or_else(String::new, |c| {
+        c.to_ascii_uppercase().to_string() + chars.as_str()
+    })
 }
 
 /// Rules firing on more than this fraction of the example corpus are flagged. A wildcarded/over-broad
@@ -1460,6 +1598,10 @@ const FIRING_ANOMALY_FRACTION: f64 = 0.15;
 
 /// Grammar-rule health audit: token-literal fidelity (hard bugs — exits non-zero) + L2 firing-rate
 /// anomalies (over-broad rules, informational). See [`Task::AuditRules`].
+#[allow(
+    clippy::too_many_lines,
+    reason = "a flat sequence of audit + reporting steps; rustfmt wrapping pushed it just past 100"
+)]
 fn audit_rules(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
     use rlt_core::{Engine, GrammarChecker};
 
@@ -1472,7 +1614,10 @@ fn audit_rules(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
     if missing.is_empty() {
         println!("  OK — every source <token> literal is present in the lowered IR\n");
     } else {
-        println!("  {} dropped token literal(s) (each became a wildcard):", missing.len());
+        println!(
+            "  {} dropped token literal(s) (each became a wildcard):",
+            missing.len()
+        );
         for lit in &missing {
             println!("    {lit:?}");
         }
@@ -1485,24 +1630,31 @@ fn audit_rules(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
         cfg,
         Path::new(cfg.segment_srx_path()),
         &std::path::PathBuf::from(cfg.tagger_path()),
-        Path::new(&cfg.disambig_path()).exists().then(|| std::path::PathBuf::from(cfg.disambig_path())).as_deref(),
+        Path::new(&cfg.disambig_path())
+            .exists()
+            .then(|| std::path::PathBuf::from(cfg.disambig_path()))
+            .as_deref(),
     )
     .map_err(|e| anyhow::anyhow!("loading {} native engine (build-lang first): {e}", cfg.code))?;
     let ir = rlt_core::IrMatcher::from_rkyv_bytes(&std::fs::read(cfg.grammar_blob_path())?)
         .map_err(|e| anyhow::anyhow!("loading {}: {e}", cfg.grammar_blob_path()))?;
 
     // Deduped example sentences as the corpus — grammatical-ish text where a sound rule rarely fires.
-    let mut sentences: Vec<String> =
-        rlt_convert::extract_examples(Path::new(&grammar_xml))?.into_iter().map(|e| e.text).collect();
+    let mut sentences: Vec<String> = rlt_convert::extract_examples(Path::new(&grammar_xml))?
+        .into_iter()
+        .map(|e| e.text)
+        .collect();
     sentences.sort();
     sentences.dedup();
     let total = sentences.len();
 
     // Per rule: how many sentences it fired on (≤ once per sentence) + one sample (sentence, matched text).
-    let mut fired: std::collections::HashMap<String, (usize, String)> = std::collections::HashMap::new();
+    let mut fired: std::collections::HashMap<String, (usize, String)> =
+        std::collections::HashMap::new();
     // Rules that produced a no-op suggestion (replacement == the matched text) — the cyclic-correction
     // signature the runtime guard strips. Reported below so the buggy rules can be root-caused.
-    let mut noop: std::collections::HashMap<String, (usize, String)> = std::collections::HashMap::new();
+    let mut noop: std::collections::HashMap<String, (usize, String)> =
+        std::collections::HashMap::new();
     for text in &sentences {
         let analysis = engine.analyze(text);
         let mut seen_here = std::collections::HashSet::new();
@@ -1516,18 +1668,23 @@ fn audit_rules(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
             if !seen_here.insert(d.code.clone()) {
                 continue; // count a rule at most once per sentence
             }
-            let entry = fired.entry(d.code.clone()).or_insert_with(|| {
-                (0, format!("{matched:?} in {:?}", truncate(text, 60)))
-            });
+            let entry = fired
+                .entry(d.code.clone())
+                .or_insert_with(|| (0, format!("{matched:?} in {:?}", truncate(text, 60))));
             entry.0 += 1;
         }
     }
 
-    let mut ranked: Vec<(&String, usize, &str)> =
-        fired.iter().map(|(code, (n, sample))| (code, *n, sample.as_str())).collect();
+    let mut ranked: Vec<(&String, usize, &str)> = fired
+        .iter()
+        .map(|(code, (n, sample))| (code, *n, sample.as_str()))
+        .collect();
     ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
 
-    println!("  {total} sentences; {} rules fired. Top firing rules:", ranked.len());
+    println!(
+        "  {total} sentences; {} rules fired. Top firing rules:",
+        ranked.len()
+    );
     let mut anomalies = 0usize;
     for (code, n, sample) in ranked.iter().take(30) {
         #[allow(clippy::cast_precision_loss)]
@@ -1538,7 +1695,11 @@ fn audit_rules(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
         } else {
             ""
         };
-        println!("    {:<28} {n:>5}  {:>5.1}%  e.g. {sample}{flag}", code, frac * 100.0);
+        println!(
+            "    {:<28} {n:>5}  {:>5.1}%  e.g. {sample}{flag}",
+            code,
+            frac * 100.0
+        );
     }
     println!(
         "\n  {anomalies} rule(s) fired on ≥{:.0}% of sentences — eyeball these for over-broad matches.",
@@ -1569,7 +1730,10 @@ fn audit_rules(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
     }
 
     if !missing.is_empty() {
-        bail!("{} token literal(s) dropped — see the fidelity report above", missing.len());
+        bail!(
+            "{} token literal(s) dropped — see the fidelity report above",
+            missing.len()
+        );
     }
     Ok(())
 }
@@ -1599,13 +1763,16 @@ fn lang_status(opt_lang: Option<&str>) -> Result<()> {
             drifted = true;
             continue;
         };
-        let manifest: LangManifest = serde_json::from_str(&text)
-            .with_context(|| format!("parsing {manifest_path}"))?;
+        let manifest: LangManifest =
+            serde_json::from_str(&text).with_context(|| format!("parsing {manifest_path}"))?;
         let pinned = lt_version();
         if pinned == manifest.lt_version {
             println!("{code}: LT {pinned}");
         } else {
-            println!("{code}: LT pinned {pinned} ≠ manifest {} — re-validate + re-pin", manifest.lt_version);
+            println!(
+                "{code}: LT pinned {pinned} ≠ manifest {} — re-validate + re-pin",
+                manifest.lt_version
+            );
         }
         for (key, path, _feeds, optional) in manifest_inputs(cfg) {
             let current = sha256_file(&path).map(|(s, _)| s);
@@ -1661,7 +1828,11 @@ struct Check {
 
 impl Check {
     fn new(label: &'static str, severity: Severity, ok: bool, hint: String) -> Self {
-        Self { label, severity, result: if ok { Ok(()) } else { Err(hint) } }
+        Self {
+            label,
+            severity,
+            result: if ok { Ok(()) } else { Err(hint) },
+        }
     }
     fn required(label: &'static str, ok: bool, hint: String) -> Self {
         Self::new(label, Severity::Required, ok, hint)
@@ -1682,7 +1853,10 @@ fn lang_coherence() -> Result<()> {
         .context("reading crates/rlt-convert/src/morfologik.rs")?;
 
     let count = rlt_lang::LANGUAGES.len();
-    println!("language coherence — {count} configured: {}\n", rlt_lang::known());
+    println!(
+        "language coherence — {count} configured: {}\n",
+        rlt_lang::known()
+    );
 
     let mut failures = 0usize;
     for cfg in rlt_lang::LANGUAGES {
@@ -1691,12 +1865,17 @@ fn lang_coherence() -> Result<()> {
             Check::required(
                 "manifest",
                 Path::new(&format!("lang-manifests/{code}.json")).exists(),
-                format!("run `cargo xtask lang-manifest --lang {code}` to write lang-manifests/{code}.json"),
+                format!(
+                    "run `cargo xtask lang-manifest --lang {code}` to write lang-manifests/{code}.json"
+                ),
             ),
             Check::required(
                 "sparse-checkout path",
                 SPARSE_PATHS.contains(&cfg.lt_sparse_path().as_str()),
-                format!("add {:?} to SPARSE_PATHS in xtask/src/main.rs", cfg.lt_sparse_path()),
+                format!(
+                    "add {:?} to SPARSE_PATHS in xtask/src/main.rs",
+                    cfg.lt_sparse_path()
+                ),
             ),
             Check::required(
                 "morfologik dict test",
@@ -1721,7 +1900,9 @@ fn lang_coherence() -> Result<()> {
             checks.push(Check::required(
                 "native oracle test",
                 oracle.contains(&format!("fn {code}_native_reproduces_examples")),
-                format!("add `{code}_native_reproduces_examples` to crates/rlt-cli/tests/oracle.rs"),
+                format!(
+                    "add `{code}_native_reproduces_examples` to crates/rlt-cli/tests/oracle.rs"
+                ),
             ));
         }
 
@@ -1748,7 +1929,11 @@ fn lang_coherence() -> Result<()> {
         let lang_failed = checks
             .iter()
             .any(|c| matches!(c.severity, Severity::Required) && c.result.is_err());
-        println!("{} {code} ({})", if lang_failed { '✗' } else { '✓' }, cfg.name);
+        println!(
+            "{} {code} ({})",
+            if lang_failed { '✗' } else { '✓' },
+            cfg.name
+        );
         for c in &checks {
             match (&c.result, &c.severity) {
                 (Ok(()), _) => println!("    PASS  {}", c.label),
@@ -1847,7 +2032,10 @@ fn build_confusion_from_counts(
         Path::new(&out),
         |w| engine.pos_tags(w),
     )?;
-    println!("wrote {out}: {} pairs, {} bigrams", report.pairs, report.bigrams);
+    println!(
+        "wrote {out}: {} pairs, {} bigrams",
+        report.pairs, report.bigrams
+    );
     Ok(())
 }
 
@@ -1876,11 +2064,22 @@ fn build_confusion_lt_ngrams(cfg: &'static rlt_lang::LangConfig, url: &str) -> R
         for jar in ["lucene-core", "lucene-backward-codecs"] {
             fetch_if_absent(
                 &format!("tools/lib/{jar}-6.6.6.jar"),
-                &format!("https://repo1.maven.org/maven2/org/apache/lucene/{jar}/6.6.6/{jar}-6.6.6.jar"),
+                &format!(
+                    "https://repo1.maven.org/maven2/org/apache/lucene/{jar}/6.6.6/{jar}-6.6.6.jar"
+                ),
             )?;
         }
         std::fs::create_dir_all("tools/out")?;
-        run("javac", &["-cp", "tools/lib/*", "-d", "tools/out", "tools/NgramDump.java"])?;
+        run(
+            "javac",
+            &[
+                "-cp",
+                "tools/lib/*",
+                "-d",
+                "tools/out",
+                "tools/NgramDump.java",
+            ],
+        )?;
     }
     // 3. Dump each index to a Norvig-format TSV (resumable — the dump is the slow step, so skip it
     //    when both TSVs are already present and non-empty).
@@ -1889,8 +2088,26 @@ fn build_confusion_lt_ngrams(cfg: &'static rlt_lang::LangConfig, url: &str) -> R
     let cached = |p: &str| Path::new(p).metadata().is_ok_and(|m| m.len() > 0);
     if !(cached(&count_1w) && cached(&count_2w)) {
         let cp = "tools/lib/*:tools/out";
-        run("java", &["-cp", cp, "NgramDump", &format!("{index_dir}/{}/1grams", cfg.lt_module), &count_1w])?;
-        run("java", &["-cp", cp, "NgramDump", &format!("{index_dir}/{}/2grams", cfg.lt_module), &count_2w])?;
+        run(
+            "java",
+            &[
+                "-cp",
+                cp,
+                "NgramDump",
+                &format!("{index_dir}/{}/1grams", cfg.lt_module),
+                &count_1w,
+            ],
+        )?;
+        run(
+            "java",
+            &[
+                "-cp",
+                cp,
+                "NgramDump",
+                &format!("{index_dir}/{}/2grams", cfg.lt_module),
+                &count_2w,
+            ],
+        )?;
     }
 
     build_confusion_from_counts(cfg, &count_1w, &count_2w)
@@ -1906,7 +2123,18 @@ fn build_confusion_leipzig(cfg: &'static rlt_lang::LangConfig, url: &str) -> Res
         fetch_if_absent(&tar, url)?;
         // The plain `*-sentences.txt` (`id<TAB>sentence`) is present in every Leipzig corpus; the
         // counter strips any `|TAG` itself, so tagged sentences aren't needed.
-        run("tar", &["xzf", &tar, "-C", &dir, "--strip-components=1", "--wildcards", "*-sentences.txt"])?;
+        run(
+            "tar",
+            &[
+                "xzf",
+                &tar,
+                "-C",
+                &dir,
+                "--strip-components=1",
+                "--wildcards",
+                "*-sentences.txt",
+            ],
+        )?;
         let extracted = std::fs::read_dir(&dir)?
             .filter_map(std::result::Result::ok)
             .map(|e| e.path())
@@ -1986,7 +2214,11 @@ fn count_corpus(
     for (g, c) in &bi {
         writeln!(w2, "{g}\t{c}")?;
     }
-    println!("counted {} unigrams, {} confusion-touching bigrams", uni.len(), bi.len());
+    println!(
+        "counted {} unigrams, {} confusion-touching bigrams",
+        uni.len(),
+        bi.len()
+    );
     Ok(())
 }
 
@@ -2059,7 +2291,10 @@ mod tests {
     fn lang_codes_json_is_a_parseable_array_of_the_canonical_codes() {
         // The `lang-codes --json` output the nightly matrix consumes via `fromJSON` must round-trip
         // to exactly the canonical codes.
-        let codes = rlt_lang::LANGUAGES.iter().map(|c| c.code).collect::<Vec<_>>();
+        let codes = rlt_lang::LANGUAGES
+            .iter()
+            .map(|c| c.code)
+            .collect::<Vec<_>>();
         let json = serde_json::to_string(&codes).unwrap();
         let parsed: Vec<String> = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, codes);
@@ -2079,7 +2314,11 @@ mod tests {
 
     #[test]
     fn known_lists_exactly_the_canonical_codes() {
-        let expected = rlt_lang::LANGUAGES.iter().map(|c| c.code).collect::<Vec<_>>().join(", ");
+        let expected = rlt_lang::LANGUAGES
+            .iter()
+            .map(|c| c.code)
+            .collect::<Vec<_>>()
+            .join(", ");
         assert_eq!(rlt_lang::known(), expected);
     }
 }

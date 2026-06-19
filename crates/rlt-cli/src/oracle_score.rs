@@ -65,7 +65,9 @@ pub fn count_reproduced<B: Engine + GrammarChecker>(
                 .filter(|d| d.source == Source::Grammar)
                 .flat_map(|d| d.suggestions.into_iter().map(|s| s.replacement))
                 .collect();
-            ex.corrections.iter().any(|c| produced.iter().any(|p| p == c))
+            ex.corrections
+                .iter()
+                .any(|c| produced.iter().any(|p| p == c))
         })
         .count()
 }
@@ -86,7 +88,10 @@ pub fn count_false_positives<B: Engine + GrammarChecker>(
         .count()
 }
 
-#[allow(clippy::cast_precision_loss, reason = "corpus sizes are well within f64")]
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "corpus sizes are well within f64"
+)]
 fn pct(n: usize, total: usize) -> f64 {
     if total == 0 {
         0.0
@@ -129,7 +134,11 @@ pub fn score_ir_native(
 ///
 /// # Errors
 /// Returns an error if the blob can't load or the grammar can't be parsed.
-pub fn score_ir_with_engine<E: Engine>(engine: E, blob: &Path, grammar: &Path) -> Result<ScoreReport> {
+pub fn score_ir_with_engine<E: Engine>(
+    engine: E,
+    blob: &Path,
+    grammar: &Path,
+) -> Result<ScoreReport> {
     let bytes = std::fs::read(blob).with_context(|| format!("reading {}", blob.display()))?;
     let ir = IrMatcher::from_rkyv_bytes(&bytes)
         .map_err(|e| anyhow!("compiling IR rules from {}: {e}", blob.display()))?;

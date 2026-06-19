@@ -189,8 +189,12 @@ impl<B: Engine + GrammarChecker> Checker<B> {
     #[must_use]
     pub fn check(&self, text: &str) -> Vec<Diagnostic> {
         let analysis = self.backend.analyze(text);
-        let mut diagnostics =
-            spell::spelling_diagnostics(&self.backend, &analysis, self.alphabet, self.spell_message);
+        let mut diagnostics = spell::spelling_diagnostics(
+            &self.backend,
+            &analysis,
+            self.alphabet,
+            self.spell_message,
+        );
         diagnostics.extend(self.backend.grammar_diagnostics(text, &analysis));
         strip_noop_suggestions(text, &mut diagnostics);
         diagnostics.sort_by_key(|d| d.span.start);
@@ -299,7 +303,9 @@ mod noop_guard_tests {
             message: String::new(),
             suggestions: reps
                 .iter()
-                .map(|r| Suggestion { replacement: (*r).to_owned() })
+                .map(|r| Suggestion {
+                    replacement: (*r).to_owned(),
+                })
                 .collect(),
             source: Source::Grammar,
         }
@@ -311,7 +317,10 @@ mod noop_guard_tests {
         let text = "pan. No se";
         let mut d = vec![diag(3, 7, &[". No"])];
         strip_noop_suggestions(text, &mut d);
-        assert!(d.is_empty(), "a sole no-op suggestion → drop the spurious diagnostic");
+        assert!(
+            d.is_empty(),
+            "a sole no-op suggestion → drop the spurious diagnostic"
+        );
     }
 
     #[test]
@@ -330,7 +339,12 @@ mod noop_guard_tests {
         let mut d = vec![diag(0, 3, &["teh", "the"])]; // identity + real
         strip_noop_suggestions(text, &mut d);
         assert_eq!(d.len(), 1);
-        assert_eq!(d[0].suggestions, vec![Suggestion { replacement: "the".to_owned() }]);
+        assert_eq!(
+            d[0].suggestions,
+            vec![Suggestion {
+                replacement: "the".to_owned()
+            }]
+        );
     }
 
     #[test]

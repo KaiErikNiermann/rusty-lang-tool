@@ -87,7 +87,11 @@ pub fn fuzz_edits1(word: &str, alphabet: &str) -> usize {
 fn suggestions<E: Engine>(engine: &E, word: &str, alphabet: &[char]) -> Vec<Suggestion> {
     // Strip combining marks before generating edits so candidates are base-letter forms the lexicon
     // knows (the engine's `is_known` normalizes the same way). No-op for mark-free en/de/ru words.
-    let lower: String = word.to_lowercase().chars().filter(|c| !is_combining_mark(*c)).collect();
+    let lower: String = word
+        .to_lowercase()
+        .chars()
+        .filter(|c| !is_combining_mark(*c))
+        .collect();
     let known: BTreeSet<String> = edits1(&lower, alphabet)
         .into_iter()
         .filter(|cand| engine.is_known(cand))
@@ -229,7 +233,8 @@ mod tests {
             &Analysis {
                 tokens: vec![token("Recieve")],
             },
-            ASCII_ALPHABET, "misspelled",
+            ASCII_ALPHABET,
+            "misspelled",
         );
         assert!(
             diags[0]
@@ -267,11 +272,15 @@ mod tests {
             &Analysis {
                 tokens: vec![token("превет")],
             },
-            RU_ALPHABET, "misspelled",
+            RU_ALPHABET,
+            "misspelled",
         );
         assert_eq!(diags.len(), 1, "expected one Cyrillic misspelling");
         assert!(
-            diags[0].suggestions.iter().any(|s| s.replacement == "привет"),
+            diags[0]
+                .suggestions
+                .iter()
+                .any(|s| s.replacement == "привет"),
             "expected 'привет' among {:?}",
             diags[0].suggestions,
         );
@@ -286,18 +295,27 @@ mod tests {
         assert!(
             spelling_diagnostics(
                 &engine,
-                &Analysis { tokens: vec![token("Мир")] },
-                RU_ALPHABET, "misspelled",
+                &Analysis {
+                    tokens: vec![token("Мир")]
+                },
+                RU_ALPHABET,
+                "misspelled",
             )
             .is_empty()
         );
         let diags = spelling_diagnostics(
             &engine,
-            &Analysis { tokens: vec![token("Превет")] },
-            RU_ALPHABET, "misspelled",
+            &Analysis {
+                tokens: vec![token("Превет")],
+            },
+            RU_ALPHABET,
+            "misspelled",
         );
         assert!(
-            diags[0].suggestions.iter().any(|s| s.replacement == "Привет"),
+            diags[0]
+                .suggestions
+                .iter()
+                .any(|s| s.replacement == "Привет"),
             "expected capitalized 'Привет' among {:?}",
             diags[0].suggestions,
         );
@@ -312,12 +330,21 @@ mod tests {
         // letters are in the alphabet, and marks don't count toward MIN_LEN. So vocalized Arabic
         // reaches the (engine-normalized) membership check instead of being silently skipped.
         let alphabet: Vec<char> = AR_ALPHABET.chars().collect();
-        assert!(is_checkable("كِتَاب", &alphabet), "vocalized 4-letter word must be checkable");
+        assert!(
+            is_checkable("كِتَاب", &alphabet),
+            "vocalized 4-letter word must be checkable"
+        );
         assert!(is_checkable("مَكْتَبَة", &alphabet));
         // Only base letters count toward length: "اَ" is 1 letter + 1 mark → below MIN_LEN.
         assert!(!is_checkable("اَ", &alphabet));
         // edits1 strips marks first, so candidates are clean base-letter strings (no Mn leaks).
-        let cands = edits1(&"كِتَاب".chars().filter(|c| !is_combining_mark(*c)).collect::<String>(), &alphabet);
+        let cands = edits1(
+            &"كِتَاب"
+                .chars()
+                .filter(|c| !is_combining_mark(*c))
+                .collect::<String>(),
+            &alphabet,
+        );
         assert!(cands.iter().all(|c| !c.chars().any(is_combining_mark)));
     }
 

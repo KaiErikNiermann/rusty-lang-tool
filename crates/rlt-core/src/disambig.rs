@@ -84,8 +84,16 @@ impl ConfusionChecker {
                 .collect(),
             unigrams: model.unigrams.iter().copied().collect(),
             bigrams,
-            left_pos: model.left_pos.iter().map(|&(p, m, c)| ((p, m), c)).collect(),
-            right_pos: model.right_pos.iter().map(|&(m, p, c)| ((m, p), c)).collect(),
+            left_pos: model
+                .left_pos
+                .iter()
+                .map(|&(p, m, c)| ((p, m), c))
+                .collect(),
+            right_pos: model
+                .right_pos
+                .iter()
+                .map(|&(m, p, c)| ((m, p), c))
+                .collect(),
         }
     }
 
@@ -126,7 +134,11 @@ impl ConfusionChecker {
     }
 
     fn unigram_smoothed(&self, w: &str) -> f64 {
-        let count = self.idx(w).and_then(|i| self.unigrams.get(&i)).copied().unwrap_or(0);
+        let count = self
+            .idx(w)
+            .and_then(|i| self.unigrams.get(&i))
+            .copied()
+            .unwrap_or(0);
         f64::from(count) + SMOOTH
     }
 

@@ -24,7 +24,11 @@ pub(crate) fn analyze_compound(
     rules: &Compounding,
 ) -> Option<Vec<WordData>> {
     let parts = split(word, tagger, rules)?;
-    let head = if rules.head_is_last { parts.last()? } else { parts.first()? };
+    let head = if rules.head_is_last {
+        parts.last()?
+    } else {
+        parts.first()?
+    };
     let analyses = head_analyses(tagger, head)?;
     Some(
         analyses
@@ -50,7 +54,9 @@ fn known_part(tagger: &Tagger, part: &str) -> bool {
 
 /// The head constituent's analyses (as-is or capitalized lookup).
 fn head_analyses(tagger: &Tagger, part: &str) -> Option<Vec<WordData>> {
-    tagger.analyses(part).or_else(|| tagger.analyses(&capitalize_first(part)))
+    tagger
+        .analyses(part)
+        .or_else(|| tagger.analyses(&capitalize_first(part)))
 }
 
 /// Longest-match left-to-right split of `word` into ≥2 known parts (+ optional linking morphemes).

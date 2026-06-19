@@ -122,18 +122,27 @@ fn intern_confusion(
     }
 
     let mut vocab: Vec<String> = freq.keys().map(|s| (*s).to_owned()).collect();
-    vocab.sort_unstable_by(|a, b| freq[b.as_str()].cmp(&freq[a.as_str()]).then_with(|| a.cmp(b)));
+    vocab.sort_unstable_by(|a, b| {
+        freq[b.as_str()]
+            .cmp(&freq[a.as_str()])
+            .then_with(|| a.cmp(b))
+    });
     let idx: HashMap<&str, u32> = vocab
         .iter()
         .enumerate()
         .map(|(i, s)| (s.as_str(), u32::try_from(i).unwrap_or(u32::MAX)))
         .collect();
 
-    let mut unigrams: Vec<(u32, u32)> = unigrams.iter().map(|(w, c)| (idx[w.as_str()], *c)).collect();
+    let mut unigrams: Vec<(u32, u32)> = unigrams
+        .iter()
+        .map(|(w, c)| (idx[w.as_str()], *c))
+        .collect();
     unigrams.sort_unstable();
     let intern3 = |t: &[(String, String, u32)]| -> Vec<(u32, u32, u32)> {
-        let mut v: Vec<(u32, u32, u32)> =
-            t.iter().map(|(a, b, c)| (idx[a.as_str()], idx[b.as_str()], *c)).collect();
+        let mut v: Vec<(u32, u32, u32)> = t
+            .iter()
+            .map(|(a, b, c)| (idx[a.as_str()], idx[b.as_str()], *c))
+            .collect();
         v.sort_unstable();
         v
     };
@@ -269,14 +278,8 @@ fn prune_bigrams(
     }
     Ok(Bigrams {
         counts: out,
-        left_pos: left_pos
-            .into_iter()
-            .map(|((p, m), c)| (p, m, c))
-            .collect(),
-        right_pos: right_pos
-            .into_iter()
-            .map(|((m, p), c)| (m, p, c))
-            .collect(),
+        left_pos: left_pos.into_iter().map(|((p, m), c)| (p, m, c)).collect(),
+        right_pos: right_pos.into_iter().map(|((m, p), c)| (m, p, c)).collect(),
     })
 }
 
@@ -663,7 +666,10 @@ fn lower_message(m: &rules::MessageElementType) -> (String, Vec<Suggestion>) {
 /// [`lower_suggestion`]; this is only what the human-readable message shows inline.
 fn inline_suggestion(s: &rules::SuggestionElementType) -> String {
     use std::fmt::Write as _;
-    let mut out = s.text_before.as_ref().map_or_else(String::new, |t| t.0.clone());
+    let mut out = s
+        .text_before
+        .as_ref()
+        .map_or_else(String::new, |t| t.0.clone());
     for item in &s.content {
         let _ = write!(out, "\\{}", item.match_.value.no);
         if let Some(after) = &item.match_.text_after {
@@ -928,7 +934,11 @@ fn space_before(s: &pattern::TokenSpacebeforeType) -> Option<bool> {
 /// child's `Mixed::text_after`, not `text_before`. Missing it silently turns the token into a wildcard
 /// (it then matches any word), so gather every text fragment of the element, ignoring child contents.
 fn token_literal(t: &pattern::TokenElementType) -> Option<String> {
-    let mut text = t.text_before.as_ref().map(|x| x.0.clone()).unwrap_or_default();
+    let mut text = t
+        .text_before
+        .as_ref()
+        .map(|x| x.0.clone())
+        .unwrap_or_default();
     for c in &t.content {
         let tail = match c {
             pattern::TokenElementTypeContent::Exception(e) => e.text_after.as_ref(),
@@ -999,8 +1009,9 @@ fn opens_skip_region(name: &[u8], e: &quick_xml::events::BytesStart) -> Result<b
         return Ok(true);
     }
     if matches!(name, b"rule" | b"rulegroup") {
-        if let Some(attr) =
-            e.try_get_attribute("default").map_err(|err| anyhow!("reading default attr: {err}"))?
+        if let Some(attr) = e
+            .try_get_attribute("default")
+            .map_err(|err| anyhow!("reading default attr: {err}"))?
         {
             return Ok(matches!(attr.value.as_ref(), b"off" | b"temp_off"));
         }
@@ -1023,7 +1034,10 @@ fn raw_token_literals(xml: &str) -> Result<std::collections::HashSet<String>> {
     let mut literal: Option<String> = None; // text being accumulated for the open <token>
     let mut out = std::collections::HashSet::new();
     loop {
-        match reader.read_event().map_err(|e| anyhow!("scanning token literals: {e}"))? {
+        match reader
+            .read_event()
+            .map_err(|e| anyhow!("scanning token literals: {e}"))?
+        {
             Event::Start(e) => {
                 let name: Box<[u8]> = e.name().as_ref().into();
                 let skip = opens_skip_region(&name, &e)?;
@@ -1054,8 +1068,12 @@ fn raw_token_literals(xml: &str) -> Result<std::collections::HashSet<String>> {
                 // Only text whose immediate parent is the <token> itself is the token's literal.
                 if let Some(acc) = literal.as_mut() {
                     if stack.last().is_some_and(|(n, _)| n.as_ref() == b"token") {
-                        let s = std::str::from_utf8(&t).map_err(|e| anyhow!("token text utf8: {e}"))?;
-                        acc.push_str(&quick_xml::escape::unescape(s).map_err(|e| anyhow!("unescape: {e}"))?);
+                        let s =
+                            std::str::from_utf8(&t).map_err(|e| anyhow!("token text utf8: {e}"))?;
+                        acc.push_str(
+                            &quick_xml::escape::unescape(s)
+                                .map_err(|e| anyhow!("unescape: {e}"))?,
+                        );
                     }
                 }
             }
@@ -1064,7 +1082,9 @@ fn raw_token_literals(xml: &str) -> Result<std::collections::HashSet<String>> {
             Event::GeneralRef(r) => {
                 if let Some(acc) = literal.as_mut() {
                     if stack.last().is_some_and(|(n, _)| n.as_ref() == b"token") {
-                        if let Some(c) = r.resolve_char_ref().map_err(|e| anyhow!("char ref: {e}"))? {
+                        if let Some(c) =
+                            r.resolve_char_ref().map_err(|e| anyhow!("char ref: {e}"))?
+                        {
                             acc.push(c);
                         } else {
                             let name = r.decode().map_err(|e| anyhow!("ref decode: {e}"))?;
@@ -1308,7 +1328,10 @@ mod tests {
                 _ => None,
             })
             .expect("the rule has a token");
-        assert!(token.case_sensitive, "pattern-level case_sensitive was not propagated to the token");
+        assert!(
+            token.case_sensitive,
+            "pattern-level case_sensitive was not propagated to the token"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1321,11 +1344,17 @@ mod tests {
         let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../"))
             .join(super::DEFAULT_GRAMMAR);
         if !path.exists() {
-            eprintln!("SKIP: {} missing — run `cargo xtask fetch-lt`", path.display());
+            eprintln!(
+                "SKIP: {} missing — run `cargo xtask fetch-lt`",
+                path.display()
+            );
             return;
         }
         let missing = super::token_literal_fidelity(&path).expect("fidelity scan");
-        assert!(missing.is_empty(), "dropped token literals (wildcard bugs): {missing:?}");
+        assert!(
+            missing.is_empty(),
+            "dropped token literals (wildcard bugs): {missing:?}"
+        );
     }
 
     /// en/de/ru/ar have only an *inline* internal subset — a `base_dir` must not change their
@@ -1358,9 +1387,15 @@ mod tests {
                    ]>\n\
                    <rules><a>&shared;</a><b>&local;</b></rules>";
         let out = expand_entities(xml, Some(&dir)).unwrap();
-        assert!(out.contains("<a>hola</a>"), "external entity not expanded: {out}");
+        assert!(
+            out.contains("<a>hola</a>"),
+            "external entity not expanded: {out}"
+        );
         assert!(out.contains("<b>adios</b>"), "inline entity lost: {out}");
-        assert!(!out.contains("&shared;") && !out.contains("%entities;"), "leftover: {out}");
+        assert!(
+            !out.contains("&shared;") && !out.contains("%entities;"),
+            "leftover: {out}"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
