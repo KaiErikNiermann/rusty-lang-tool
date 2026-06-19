@@ -399,6 +399,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "reads fetched LT data from disk; miri runs under fs isolation"
+    )]
     fn lowers_real_disambiguation_xml() {
         let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../"))
             .join(DEFAULT_DISAMBIGUATION);

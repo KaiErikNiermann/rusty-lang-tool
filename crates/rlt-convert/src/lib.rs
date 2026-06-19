@@ -1258,6 +1258,7 @@ mod tests {
     /// turned the token into a wildcard that matched any word (HELL flagged "there" → "he'll"). The
     /// converted token must carry the literal "hell".
     #[test]
+    #[cfg_attr(miri, ignore = "uses temp-file I/O; miri runs under fs isolation")]
     fn token_literal_after_exception_is_not_a_wildcard() {
         let dir = std::env::temp_dir().join(format!("rlt-tok-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1300,6 +1301,7 @@ mod tests {
     /// Regression: `<pattern case_sensitive="yes">` must stamp case-sensitivity onto its tokens. Without
     /// it, an uppercase regex (ru `AllCaps`'s `[А-ЯЁ]{4,4}…`) matches lowercase and fires on every word.
     #[test]
+    #[cfg_attr(miri, ignore = "uses temp-file I/O; miri runs under fs isolation")]
     fn pattern_case_sensitive_propagates_to_tokens() {
         let dir = std::env::temp_dir().join(format!("rlt-cs-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1374,6 +1376,7 @@ mod tests {
     /// es/fr/it pull their general entities from an external `entities.ent` via a parameter entity
     /// (`<!ENTITY % … SYSTEM "rel.ent">` + `%entities;`). Declarations in that file must expand too.
     #[test]
+    #[cfg_attr(miri, ignore = "uses temp-file I/O; miri runs under fs isolation")]
     fn resolves_external_parameter_entity_file() {
         let dir = std::env::temp_dir().join(format!("rlt-ent-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

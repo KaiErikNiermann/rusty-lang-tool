@@ -485,6 +485,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "reads fetched LT data from disk; miri runs under fs isolation"
+    )]
     fn reads_real_languagetool_english_dict() {
         let base = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../resources/en"));
         let (Ok(dict), Ok(info)) = (
@@ -535,6 +539,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "reads fetched LT data from disk; miri runs under fs isolation"
+    )]
     fn reads_real_languagetool_german_dict() {
         // German exercises a different separator (`_`) + non-ASCII (umlaut) SUFFIX decoding + the STTS
         // tagset — proving the reader is language-agnostic, not English-specific.
@@ -591,6 +599,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "reads fetched LT data from disk; miri runs under fs isolation"
+    )]
     fn reads_real_languagetool_russian_dict() {
         // Russian's russian.dict ships in the LT repo and is KOI8-R encoded (not UTF-8) — this proves
         // the `fsa.dict.encoding` path decodes Cyrillic correctly (every triple would be dropped if we
@@ -661,6 +673,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "reads fetched LT data from disk; miri runs under fs isolation"
+    )]
     fn reads_real_languagetool_arabic_dict() {
         // Arabic's arabic.dict ships in the LT repo, CFSA2 + UTF-8 (unlike Russian's KOI8-R). This
         // pins the format and proves Arabic-script SUFFIX decoding produces clean UTF-8 — and that the
@@ -727,6 +743,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "reads fetched LT data from disk; miri runs under fs isolation"
+    )]
     fn reads_real_languagetool_french_dict() {
         // French's POS dict is Maven-shipped (org.languagetool:french-pos-dict), extracted by
         // `cargo xtask build-tagger --lang fr` to resources/fr/pos.dict — CFSA2 + UTF-8, SUFFIX, `_` sep.
@@ -799,6 +819,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "reads fetched LT data from disk; miri runs under fs isolation"
+    )]
     fn reads_real_languagetool_spanish_dict() {
         // Spanish's POS dict is Maven-shipped by Softcatalà (`org.softcatala:spanish-pos-dict`),
         // extracted to `resources/es/pos.dict` by `build-tagger`. CFSA2 + UTF-8, separator `_`, SUFFIX.
@@ -866,6 +890,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "reads fetched LT data from disk; miri runs under fs isolation"
+    )]
     fn reads_real_languagetool_italian_dict() {
         // Italian's italian.dict ships in the LT repo in the **FSA5** format (version 0x05, not CFSA2)
         // and is ISO-8859-15 encoded — this exercises both the FSA5 sibling reader and the `encoding`
