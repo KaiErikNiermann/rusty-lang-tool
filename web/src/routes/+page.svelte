@@ -3,13 +3,17 @@
   import type * as Monaco from "monaco-editor";
 
   import type { FetchState, WebManifest } from "$lib/artifacts/types";
+  import { makeByteToUtf16 } from "$lib/checker/spanmap";
+  import type { Diagnostic } from "$lib/checker/types";
   import { WorkerChecker } from "$lib/checker/worker-client";
   import { ARTIFACT_BASE_URL, DEFAULT_LANG, MANIFEST_URL, SAMPLE_TEXT } from "$lib/config";
   import { registerRltCodeActions } from "$lib/editor/codeactions";
   import { DiagnosticIndex } from "$lib/editor/diagnostics";
+  import { applyFixAll, applyReplacement, byteSpanToRange } from "$lib/editor/fixes";
   import { loadMonaco, RLT_THEME } from "$lib/editor/monaco";
   import DownloadProgress from "$lib/ui/DownloadProgress.svelte";
   import ErrorBanner from "$lib/ui/ErrorBanner.svelte";
+  import FindingsPanel from "$lib/ui/FindingsPanel.svelte";
   import LanguagePicker from "$lib/ui/LanguagePicker.svelte";
 
   let editorEl: HTMLDivElement;
@@ -20,7 +24,11 @@
   let ready = $state(false);
   let fetchState = $state<FetchState>({ kind: "idle" });
   let errorMessage = $state<string | null>(null);
-  let findingCount = $state(0);
+  // The current check's findings plus the exact snapshot they were computed against. Byte spans are
+  // only valid against `checkedText`, so the panel's apply path guards on `model.getValue() === checkedText`.
+  let diagnostics = $state<Diagnostic[]>([]);
+  let checkedText = $state("");
+  const findingCount = $derived(diagnostics.length);
 
   // The cascade layers active for the current language — L3 is shown when it ships a confusion model.
   const activeLayers = $derived(
@@ -44,11 +52,12 @@
     const text = model.getValue();
     const seq = ++checkSeq;
     try {
-      const diagnostics = await client.check(text);
+      const result = await client.check(text);
       // Drop a superseded result, and never map a snapshot's spans onto an edited model.
       if (seq !== checkSeq || !model || model.getValue() !== text) return;
-      index.apply(monaco, model, text, diagnostics);
-      findingCount = diagnostics.length;
+      index.apply(monaco, model, text, result);
+      diagnostics = result;
+      checkedText = text;
     } catch (err) {
       if (seq === checkSeq) console.error("check failed", err);
     }
@@ -59,6 +68,39 @@
     debounceTimer = setTimeout(() => void runCheck(), 300);
   }
 
+  /** Panel applies are only valid while the model still matches the snapshot the spans were built on. */
+  function spansValid(): boolean {
+    return !!model && model.getValue() === checkedText;
+  }
+
+  // After an edit lands the byte spans are stale, so re-check immediately instead of waiting out the
+  // debounce armed by the content-change event — the panel then refreshes within one (fast) check.
+  function recheckNow() {
+    clearTimeout(debounceTimer);
+    void runCheck();
+  }
+
+  function fixOne(diag: Diagnostic, replacement: string) {
+    if (!model || !spansValid()) return;
+    const range = byteSpanToRange(model, makeByteToUtf16(checkedText), diag.span);
+    applyReplacement(model, range, replacement);
+    recheckNow();
+  }
+
+  function fixAll() {
+    if (!model || !spansValid()) return;
+    applyFixAll(model, makeByteToUtf16(checkedText), diagnostics);
+    recheckNow();
+  }
+
+  function reveal(diag: Diagnostic) {
+    if (!model || !editor || !spansValid()) return;
+    const range = byteSpanToRange(model, makeByteToUtf16(checkedText), diag.span);
+    editor.revealRangeInCenter(range);
+    editor.setSelection(range);
+    editor.focus();
+  }
+
   async function selectLanguage(code: string) {
     if (!client || !monaco || !model) return;
     const previous = currentLang;
@@ -67,6 +109,9 @@
     currentLang = code;
     busy = true;
     errorMessage = null;
+    // Drop the previous language's findings so the panel doesn't show stale rows during the load.
+    diagnostics = [];
+    checkedText = "";
     try {
       await client.select(code);
       ready = true;
@@ -164,25 +209,31 @@
     <ErrorBanner message={errorMessage} onretry={() => selectLanguage(currentLang)} />
   {/if}
 
-  <div class="relative overflow-hidden rounded-lg border border-white/10">
-    <div
-      bind:this={editorEl}
-      class="h-[60vh] w-full transition duration-200"
-      class:blur-[2px]={busy}
-      class:opacity-50={busy}
-      class:pointer-events-none={busy}
-    ></div>
-    {#if busy}
-      <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-        <span
-          class="flex items-center gap-2 rounded-md bg-black/60 px-3 py-1.5 text-xs text-zinc-200 backdrop-blur-sm"
-        >
+  <div class="flex gap-3">
+    <div class="relative flex-1 overflow-hidden rounded-lg border border-white/10">
+      <div
+        bind:this={editorEl}
+        class="h-[60vh] w-full transition duration-200"
+        class:blur-[2px]={busy}
+        class:opacity-50={busy}
+        class:pointer-events-none={busy}
+      ></div>
+      {#if busy}
+        <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
           <span
-            class="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white/90"
-          ></span>
-          Loading {manifest?.languages[currentLang]?.label ?? "language"}…
-        </span>
-      </div>
+            class="flex items-center gap-2 rounded-md bg-black/60 px-3 py-1.5 text-xs text-zinc-200 backdrop-blur-sm"
+          >
+            <span
+              class="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white/90"
+            ></span>
+            Loading {manifest?.languages[currentLang]?.label ?? "language"}…
+          </span>
+        </div>
+      {/if}
+    </div>
+
+    {#if ready}
+      <FindingsPanel {diagnostics} onfix={fixOne} onfixall={fixAll} onreveal={reveal} />
     {/if}
   </div>
 
@@ -190,9 +241,9 @@
     <span>
       {#if ready}
         {findingCount}
-        {findingCount === 1 ? "issue" : "issues"} · hover a squiggle, or press
+        {findingCount === 1 ? "issue" : "issues"} · open the findings panel, or press
         <kbd class="rounded bg-white/10 px-1">Ctrl</kbd>+<kbd class="rounded bg-white/10 px-1">.</kbd>
-        to fix
+        in the editor
       {:else if !errorMessage}
         Loading the engine…
       {/if}
