@@ -1428,19 +1428,29 @@ fn lang_manifest(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
     Ok(())
 }
 
-/// One compressed artifact the web client downloads: the flat Release asset name, the SHA-256 of the
-/// *compressed* bytes (what's verified on download, and the cache key), and both sizes.
+/// One compressed *encoding* of an artifact: the flat Release asset name, the SHA-256 of the
+/// compressed bytes (verified on download; also the cache key), and the download size.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct WebAsset {
-    /// Flat asset filename as uploaded to the Release (`en-tagger.rkyv.gz`); the client fetches
+struct WebVariant {
+    /// Flat asset filename as uploaded to the Release (`en-tagger.rkyv.gz` / `.br`); the client fetches
     /// `<VITE_ARTIFACT_BASE_URL>/<asset>`.
     asset: String,
-    /// Hex SHA-256 of the gzipped bytes — verified after download, before decompression.
+    /// Hex SHA-256 of the compressed bytes — verified after download, before decompression.
     sha256: String,
     /// Compressed (downloaded) size in bytes.
     bytes: u64,
-    /// Decompressed `.rkyv` size in bytes (a sanity check after `DecompressionStream`).
+}
+
+/// One artifact the web client downloads, in every encoding we publish. Every artifact ships a `gzip`
+/// variant (the Reliable track) and a `brotli` variant (the Fast track, ≈32% smaller).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebAsset {
+    gzip: WebVariant,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    brotli: Option<WebVariant>,
+    /// Decompressed `.rkyv` size in bytes (a sanity check after the client decompresses, either codec).
     raw_bytes: u64,
 }
 
@@ -1469,44 +1479,85 @@ struct WebManifestJson {
     languages: std::collections::BTreeMap<String, WebLang>,
 }
 
-/// Gzip `src` into `out_dir/<asset>`, returning the manifest entry (hash of the compressed bytes +
-/// both sizes). `None` if `src` is absent (an optional artifact like a language with no disambig).
+/// Compress `src` into both `out_dir/<base>.gz` and `out_dir/<base>.br`, returning the manifest entry
+/// (per-variant hash + size, plus the raw size). `None` if `src` is absent (an optional artifact like a
+/// language with no disambig).
 ///
-/// **Incremental:** if a previously-emitted `<asset>` is newer than `src`, its compressed bytes are
-/// reused (just re-hashed) instead of recompressed — best-compression gzip over the full artifact set
-/// takes minutes, so this keeps a re-run after `pnpm run dev` to seconds when nothing changed.
-fn gzip_asset(src: &str, out_dir: &Path, asset: &str) -> Result<Option<WebAsset>> {
-    use std::io::Write as _;
-
-    use flate2::{Compression, write::GzEncoder};
+/// **Incremental, per variant:** a previously-emitted `<base>.{gz,br}` newer than `src` is reused (just
+/// re-hashed) instead of recompressed. Best-compression gzip *and* brotli-11 over the full artifact set
+/// take minutes, so this keeps a re-run after `pnpm run dev` to seconds when nothing changed. The raw
+/// source is read only when at least one variant is stale.
+fn encode_asset(src: &str, out_dir: &Path, base: &str) -> Result<Option<WebAsset>> {
     let Ok(src_meta) = std::fs::metadata(src) else {
         return Ok(None);
     };
-    let dst = out_dir.join(asset);
-
-    if is_up_to_date(&dst, &src_meta) {
-        let gz = std::fs::read(&dst)?;
-        let (sha256, bytes) = sha256_bytes(&gz);
-        return Ok(Some(WebAsset {
-            asset: asset.to_owned(),
-            sha256,
-            bytes,
-            raw_bytes: src_meta.len(),
-        }));
-    }
-
-    let raw = std::fs::read(src)?;
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
-    encoder.write_all(&raw)?;
-    let gz = encoder.finish()?;
-    std::fs::write(&dst, &gz)?;
-    let (sha256, bytes) = sha256_bytes(&gz);
+    let gz_asset = format!("{base}.gz");
+    let br_asset = format!("{base}.br");
+    let gz_dst = out_dir.join(&gz_asset);
+    let br_dst = out_dir.join(&br_asset);
+    let need_gz = !is_up_to_date(&gz_dst, &src_meta);
+    let need_br = !is_up_to_date(&br_dst, &src_meta);
+    let raw = if need_gz || need_br {
+        Some(std::fs::read(src)?)
+    } else {
+        None
+    };
     Ok(Some(WebAsset {
-        asset: asset.to_owned(),
-        sha256,
-        bytes,
-        raw_bytes: raw.len() as u64,
+        gzip: emit_variant(gz_asset, &gz_dst, need_gz, raw.as_deref(), gzip_bytes)?,
+        brotli: Some(emit_variant(
+            br_asset,
+            &br_dst,
+            need_br,
+            raw.as_deref(),
+            brotli_bytes,
+        )?),
+        raw_bytes: src_meta.len(),
     }))
+}
+
+/// Write (or reuse) one compressed variant and return its manifest entry. When `stale`, `raw` is
+/// recompressed and written; otherwise the cached file on disk is re-read and re-hashed.
+fn emit_variant(
+    asset: String,
+    dst: &Path,
+    stale: bool,
+    raw: Option<&[u8]>,
+    compress: impl Fn(&[u8]) -> Result<Vec<u8>>,
+) -> Result<WebVariant> {
+    let bytes = if stale {
+        let comp = compress(raw.context("source not read though variant is stale")?)?;
+        std::fs::write(dst, &comp)?;
+        comp
+    } else {
+        std::fs::read(dst)?
+    };
+    let (sha256, len) = sha256_bytes(&bytes);
+    Ok(WebVariant {
+        asset,
+        sha256,
+        bytes: len,
+    })
+}
+
+/// Best-compression gzip of `raw` (the Reliable track's encoding).
+fn gzip_bytes(raw: &[u8]) -> Result<Vec<u8>> {
+    use std::io::Write as _;
+
+    use flate2::{Compression, write::GzEncoder};
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
+    encoder.write_all(raw)?;
+    Ok(encoder.finish()?)
+}
+
+/// Quality-11 Brotli of `raw` (the Fast track's encoding) at the standard 22-bit window.
+fn brotli_bytes(raw: &[u8]) -> Result<Vec<u8>> {
+    use std::io::Write as _;
+    let mut out = Vec::new();
+    {
+        let mut writer = brotli::CompressorWriter::new(&mut out, 4096, 11, 22);
+        writer.write_all(raw)?;
+    } // CompressorWriter flushes the brotli stream on drop
+    Ok(out)
 }
 
 /// True iff `dst` exists and was modified no earlier than `src` (so its cached gzip is still current).
@@ -1550,7 +1601,7 @@ fn web_manifest(out: &Path, langs: &[String]) -> Result<()> {
     // The one shared artifact: segment.srx (passed to `with_native` as a string).
     let srx_path = rlt_lang::LANGUAGES[0].segment_srx_path();
     let mut shared = std::collections::BTreeMap::new();
-    if let Some(asset) = gzip_asset(srx_path, out, "segment.srx.gz")? {
+    if let Some(asset) = encode_asset(srx_path, out, "segment.srx")? {
         shared.insert("segment.srx".to_owned(), asset);
     } else {
         bail!("{srx_path} missing — run `fetch-lt` first");
@@ -1567,7 +1618,7 @@ fn web_manifest(out: &Path, langs: &[String]) -> Result<()> {
         let mut files = std::collections::BTreeMap::new();
         let mut missing = false;
         for (name, path) in required {
-            match gzip_asset(&path, out, &format!("{code}-{name}.gz"))? {
+            match encode_asset(&path, out, &format!("{code}-{name}"))? {
                 Some(asset) => {
                     files.insert(name.to_owned(), asset);
                 }
@@ -1578,22 +1629,21 @@ fn web_manifest(out: &Path, langs: &[String]) -> Result<()> {
             println!("skip {code}: required artifacts not built (run `build-lang --lang {code}`)");
             continue;
         }
-        if let Some(asset) = gzip_asset(
-            &cfg.disambig_path(),
-            out,
-            &format!("{code}-disambig.rkyv.gz"),
-        )? {
+        if let Some(asset) =
+            encode_asset(&cfg.disambig_path(), out, &format!("{code}-disambig.rkyv"))?
+        {
             files.insert("disambig.rkyv".to_owned(), asset);
         }
         // L3 confusion model (en/de/ru/fr/es); absent for ar/it.
-        if let Some(asset) = gzip_asset(
+        if let Some(asset) = encode_asset(
             &cfg.confusion_path(),
             out,
-            &format!("{code}-confusion.rkyv.gz"),
+            &format!("{code}-confusion.rkyv"),
         )? {
             files.insert("confusion.rkyv".to_owned(), asset);
         }
-        let total_bytes = files.values().map(|a| a.bytes).sum();
+        // The Reliable (gzip) track's download budget — what the picker shows.
+        let total_bytes = files.values().map(|a| a.gzip.bytes).sum();
         languages.insert(
             code.to_owned(),
             WebLang {
@@ -1609,7 +1659,7 @@ fn web_manifest(out: &Path, langs: &[String]) -> Result<()> {
     }
 
     let manifest = WebManifestJson {
-        schema_version: 1,
+        schema_version: 2,
         lt_version: lt_version(),
         shared,
         languages,
@@ -1619,15 +1669,18 @@ fn web_manifest(out: &Path, langs: &[String]) -> Result<()> {
         &manifest_path,
         serde_json::to_string_pretty(&manifest)? + "\n",
     )?;
+    // Each artifact emits two files (.gz + .br), so the on-disk asset count is 2× the logical count.
+    let logical_assets = manifest
+        .languages
+        .values()
+        .map(|l| l.files.len())
+        .sum::<usize>()
+        + manifest.shared.len();
     println!(
-        "wrote {} + {} gz assets ({} languages) to {}",
+        "wrote {} + {} assets ({} gz + br pairs, {} languages) to {}",
         manifest_path.display(),
-        manifest
-            .languages
-            .values()
-            .map(|l| l.files.len())
-            .sum::<usize>()
-            + manifest.shared.len(),
+        logical_assets * 2,
+        logical_assets,
         manifest.languages.len(),
         out.display(),
     );
