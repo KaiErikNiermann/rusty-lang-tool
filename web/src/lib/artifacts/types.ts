@@ -46,6 +46,63 @@ export interface WebManifest {
   languages: Record<string, LangArtifacts>;
 }
 
+/**
+ * A schemaVersion-1 artifact entry: gzip-only, with the variant fields inlined (no `gzip`/`brotli`
+ * wrapper). A v1 entry is exactly a gzip {@link VariantRef} plus `rawBytes`, so it lifts losslessly to v2.
+ */
+interface V1ArtifactRef {
+  asset: string;
+  sha256: string;
+  bytes: number;
+  rawBytes: number;
+}
+
+/** The manifest as it arrives over the wire — either schema version. Normalized to v2 by {@link normalizeManifest}. */
+export interface RawManifest {
+  schemaVersion: number;
+  ltVersion: string;
+  shared: { "segment.srx": ArtifactRef | V1ArtifactRef };
+  languages: Record<
+    string,
+    { label: string; totalBytes: number; files: Record<string, (ArtifactRef | V1ArtifactRef) | undefined> }
+  >;
+}
+
+/** A v2 entry already carries `gzip`; a v1 entry has the variant fields inline. */
+function isV2Ref(ref: ArtifactRef | V1ArtifactRef): ref is ArtifactRef {
+  return "gzip" in ref;
+}
+
+/** Lift one entry to v2: a v1 (flat, gzip-only) entry becomes a v2 entry with just the `gzip` variant. */
+function liftRef(ref: ArtifactRef | V1ArtifactRef): ArtifactRef {
+  if (isV2Ref(ref)) return ref;
+  return { gzip: { asset: ref.asset, sha256: ref.sha256, bytes: ref.bytes }, rawBytes: ref.rawBytes };
+}
+
+/**
+ * Normalize a fetched manifest of either schema version into the canonical in-memory v2 shape, so the
+ * reader is decoupled from the released manifest version. A v1 manifest (gzip-only) yields entries with
+ * no `brotli` variant — the Fast track then falls back to gzip per artifact (see `ArtifactStore.variantFor`).
+ * This keeps the site working when the deployed code is ahead of the latest artifact Release.
+ */
+export function normalizeManifest(raw: RawManifest): WebManifest {
+  const liftFiles = (files: Record<string, (ArtifactRef | V1ArtifactRef) | undefined>): LangArtifacts["files"] =>
+    Object.fromEntries(
+      Object.entries(files).flatMap(([k, v]) => (v ? [[k, liftRef(v)] as const] : [])),
+    ) as LangArtifacts["files"];
+  return {
+    schemaVersion: 2,
+    ltVersion: raw.ltVersion,
+    shared: { "segment.srx": liftRef(raw.shared["segment.srx"]) },
+    languages: Object.fromEntries(
+      Object.entries(raw.languages).map(([code, l]) => [
+        code,
+        { label: l.label, totalBytes: l.totalBytes, files: liftFiles(l.files) },
+      ]),
+    ),
+  };
+}
+
 /** Which compressed encoding a download track fetches + decompresses. */
 export type Codec = "gzip" | "brotli";
 

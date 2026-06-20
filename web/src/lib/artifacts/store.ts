@@ -1,13 +1,15 @@
 import { writable, type Writable } from "svelte/store";
 
-import type {
-  ArtifactRef,
-  Codec,
-  FetchState,
-  LangArtifacts,
-  LangBytes,
-  VariantRef,
-  WebManifest,
+import {
+  normalizeManifest,
+  type ArtifactRef,
+  type Codec,
+  type FetchState,
+  type LangArtifacts,
+  type LangBytes,
+  type RawManifest,
+  type VariantRef,
+  type WebManifest,
 } from "./types";
 
 const CACHE_NAME = "rlt-artifacts-v1";
@@ -342,7 +344,9 @@ export async function createArtifactStore(
 ): Promise<ArtifactStore> {
   const res = await fetch(manifestUrl, { cache: "no-store" });
   if (!res.ok) throw new Error(`could not load artifact manifest (${res.status})`);
-  const manifest = (await res.json()) as WebManifest;
+  // Accept either schema version: a v1 (gzip-only) manifest lifts to v2 here, so the deployed reader
+  // keeps working when the site is built ahead of the latest artifact Release (which may still be v1).
+  const manifest = normalizeManifest((await res.json()) as RawManifest);
   const store = new ArtifactStore(manifest, baseUrl, brotli);
   void store.gcStale();
   try {
