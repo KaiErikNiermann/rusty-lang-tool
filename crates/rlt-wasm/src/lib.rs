@@ -9,7 +9,7 @@
 
 use rlt_core::{
     Checker, Composite, ConfusionChecker, Diagnostic, Disambiguator, Engine, GrammarChecker,
-    IrMatcher, WithConfusion, WithGrammar,
+    IrMatcher, NoGrammar, WithConfusion, WithGrammar,
 };
 #[cfg(feature = "nlprule")]
 use rlt_engine::VendoredEngine;
@@ -74,6 +74,32 @@ impl RltChecker {
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Self {
             inner: Box::new(Checker::new(WithGrammar::new(engine, tagger))),
+        })
+    }
+
+    /// Construct an **L1-spelling-only** native checker — the first stage of the web demo's
+    /// progressive load. Needs only `segment.srx` + `tagger.rkyv` (+ optional `disambig.rkyv`), so
+    /// spelling lights up before the heavier `grammar.rkyv` finishes downloading. The grammar seam is
+    /// left empty ([`NoGrammar`]); JS re-constructs with [`with_native`]/[`with_native_confusion`]
+    /// once the remaining artifacts arrive.
+    ///
+    /// # Errors
+    /// Returns a JS error if any artifact buffer is invalid.
+    pub fn with_native_spelling(
+        lang: &str,
+        segment_srx: &str,
+        tagger: &[u8],
+        disambig: &[u8],
+    ) -> Result<RltChecker, JsValue> {
+        console_error_panic_hook::set_once();
+        let (alphabet, spell_msg) = lang_spell(lang)?;
+        let engine = load_native_engine(lang, segment_srx, tagger, disambig)?;
+        Ok(Self {
+            inner: Box::new(Checker::with_spell(
+                Composite::new(engine, NoGrammar),
+                alphabet,
+                spell_msg,
+            )),
         })
     }
 
@@ -217,4 +243,21 @@ fn load_native_engine(
 /// Compile the IR grammar matcher from the `en.rkyv` artifact bytes.
 fn load_ir(ir_blob: &[u8]) -> Result<IrMatcher, JsValue> {
     IrMatcher::from_rkyv_bytes(ir_blob).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Decompress Brotli-compressed bytes. Exposed so the web demo's **Fast (beta)** download track can
+/// inflate `.br` artifacts (≈32% smaller than the gzip the reliable track uses) without shipping a
+/// separate JS decoder — the browser already fetches this wasm, so brotli decode costs only the
+/// incremental binary size, not an extra round-trip. The reliable track keeps using the browser's
+/// native `DecompressionStream('gzip')` and never touches this.
+///
+/// # Errors
+/// Returns a JS error if `data` is not a valid Brotli stream.
+#[wasm_bindgen]
+pub fn brotli_decompress(data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    let mut out = Vec::new();
+    let mut input = std::io::Cursor::new(data);
+    brotli_decompressor::BrotliDecompress(&mut input, &mut out)
+        .map_err(|e| JsValue::from_str(&format!("brotli decompress: {e}")))?;
+    Ok(out)
 }

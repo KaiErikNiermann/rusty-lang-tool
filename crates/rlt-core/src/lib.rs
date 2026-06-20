@@ -254,6 +254,18 @@ impl<E: Engine, G: GrammarChecker> GrammarChecker for Composite<E, G> {
     }
 }
 
+/// A [`GrammarChecker`] that contributes nothing — the L2 seam left deliberately empty. Composing it
+/// with an [`Engine`] (via [`Composite`]) yields an L1-spelling-only backend, which the web demo's
+/// progressive load uses to light up spelling the instant the tagger arrives, before the grammar IR
+/// has finished downloading. Replacing it with a real [`IrMatcher`] later is a drop-in upgrade.
+pub struct NoGrammar;
+
+impl GrammarChecker for NoGrammar {
+    fn grammar_diagnostics(&self, _text: &str, _analysis: &Analysis) -> Vec<Diagnostic> {
+        Vec::new()
+    }
+}
+
 /// Stacks an additional [`GrammarChecker`] `G` onto an [`Engine`] + [`GrammarChecker`] backend `B`,
 /// **concatenating** both layers' diagnostics — additive composition where `G` never overrides `B`.
 /// This is the seam every new cascade layer slots onto: analysis (`Engine`) is delegated to `B`,
