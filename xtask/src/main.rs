@@ -844,7 +844,19 @@ fn fetch_engine() -> Result<()> {
             "https://github.com/bminixhofer/nlprule/releases/download/{NLPRULE_VERSION}/{name}.gz"
         );
         let gz = format!("{dest}.gz");
-        run("curl", &["-sSL", "-o", &gz, &url])?;
+        run(
+            "curl",
+            &[
+                "--fail",
+                "--retry",
+                "5",
+                "--retry-connrefused",
+                "-sSL",
+                "-o",
+                &gz,
+                &url,
+            ],
+        )?;
         run("gunzip", &["-f", &gz])?;
         println!("fetched {dest}");
     }
@@ -877,10 +889,50 @@ fn fetch_ngrams() -> Result<()> {
             println!("{dest} exists — skipping (resume)");
             continue;
         }
-        run("curl", &["-sSL", "-o", &dest, url])?;
+        // `--fail` so an HTTP error (5xx, redirect to an HTML page) aborts instead of silently
+        // saving the error body as the data file — a 0-count parse downstream is far harder to
+        // diagnose than a failed download here (see the bigrams=0 nightly regression).
+        run(
+            "curl",
+            &[
+                "--fail",
+                "--retry",
+                "5",
+                "--retry-connrefused",
+                "-sSL",
+                "-o",
+                &dest,
+                url,
+            ],
+        )?;
+        validate_ngram_file(&dest)?;
         println!("fetched {dest}");
     }
     println!("next: `cargo xtask build-confusion` to compile the L3 model");
+    Ok(())
+}
+
+/// Sanity-check a freshly downloaded Norvig n-gram file: it must be non-empty and its first line
+/// must look like `<gram>\t<count>` (TAB-separated, numeric count). This catches a server returning
+/// an HTML error page with a 200 status — which parses to zero counts and silently produces a
+/// useless confusion model.
+fn validate_ngram_file(path: &str) -> Result<()> {
+    let head = std::fs::read_to_string(path)
+        .with_context(|| format!("reading {path}"))?
+        .lines()
+        .next()
+        .map(str::to_owned)
+        .with_context(|| format!("{path} is empty — download likely failed"))?;
+    let Some((_gram, count)) = head.rsplit_once('\t') else {
+        bail!(
+            "{path} is not TAB-separated (first line: {head:?}) — download likely returned an error page"
+        );
+    };
+    if count.trim().parse::<u64>().is_err() {
+        bail!(
+            "{path} has a non-numeric count column (first line: {head:?}) — download likely returned an error page"
+        );
+    }
     Ok(())
 }
 
@@ -2227,7 +2279,19 @@ fn fetch_if_absent(dest: &str, url: &str) -> Result<()> {
     if Path::new(dest).exists() && std::fs::metadata(dest)?.len() > 0 {
         println!("{dest} exists — skipping download (resume)");
     } else {
-        run("curl", &["-sSL", "-o", dest, url])?;
+        run(
+            "curl",
+            &[
+                "--fail",
+                "--retry",
+                "5",
+                "--retry-connrefused",
+                "-sSL",
+                "-o",
+                dest,
+                url,
+            ],
+        )?;
         println!("fetched {dest}");
     }
     Ok(())

@@ -26,7 +26,7 @@ pub use morfologik::{DictMeta, Encoder, parse_info, read_triples};
 
 use std::path::Path;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use regex::Regex;
 use rlt_ir::{Case, Construct, ExceptionPat, Rule, SugPart, Suggestion, TokenPat};
 use xsd_parser_types::quick_xml::{DeserializeSync, SliceReader, XmlReader};
@@ -67,6 +67,7 @@ pub fn build_confusion_model(
     out: &Path,
     pos_tags: impl Fn(&str) -> Vec<String>,
 ) -> Result<ConfusionReport> {
+    let bigrams_path = bigrams.display().to_string();
     let pairs = parse_confusion_sets(confusion_sets)?;
 
     // The set of confusion words to prune the n-grams against.
@@ -83,6 +84,16 @@ pub fn build_confusion_model(
         right_pos,
     } = prune_bigrams(bigrams, &words, &pos_tags)
         .with_context(|| format!("reading {}", bigrams.display()))?;
+
+    // A model with confusion pairs but no bigrams contributes zero L3 recall — it's always the
+    // symptom of a broken n-gram input (e.g. a download that saved an HTML error page). Fail loudly
+    // here rather than writing a useless artifact that fails cryptically far downstream in the oracle.
+    if !pairs.is_empty() && bigrams.is_empty() {
+        bail!(
+            "confusion model has {} pairs but 0 bigrams — the n-gram counts at {bigrams_path} are empty or malformed",
+            pairs.len(),
+        );
+    }
 
     let report = ConfusionReport {
         pairs: pairs.len(),
