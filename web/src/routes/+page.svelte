@@ -6,12 +6,22 @@
   import { makeByteToUtf16 } from "$lib/checker/spanmap";
   import type { Diagnostic } from "$lib/checker/types";
   import { WorkerChecker } from "$lib/checker/worker-client";
-  import { ARTIFACT_BASE_URL, DEFAULT_LANG, MANIFEST_URL, SAMPLE_TEXT } from "$lib/config";
+  import {
+    ARTIFACT_BASE_URL,
+    DEFAULT_LANG,
+    DEFAULT_TRACK,
+    LOAD_PLANS,
+    MANIFEST_URL,
+    SAMPLE_TEXT,
+    TRACK_STORAGE_KEY,
+    type TrackId,
+  } from "$lib/config";
   import { registerRltCodeActions } from "$lib/editor/codeactions";
   import { DiagnosticIndex } from "$lib/editor/diagnostics";
   import { applyFixAll, applyReplacement, byteSpanToRange } from "$lib/editor/fixes";
   import { loadMonaco, RLT_THEME } from "$lib/editor/monaco";
   import DownloadProgress from "$lib/ui/DownloadProgress.svelte";
+  import DownloadTrackToggle from "$lib/ui/DownloadTrackToggle.svelte";
   import ErrorBanner from "$lib/ui/ErrorBanner.svelte";
   import FindingsPanel from "$lib/ui/FindingsPanel.svelte";
   import LanguagePicker from "$lib/ui/LanguagePicker.svelte";
@@ -20,6 +30,8 @@
 
   let manifest = $state<WebManifest | null>(null);
   let currentLang = $state(DEFAULT_LANG);
+  // Which download track the load uses (persisted across visits). Read from localStorage in onMount.
+  let currentTrack = $state<TrackId>(DEFAULT_TRACK);
   let busy = $state(true);
   let ready = $state(false);
   let fetchState = $state<FetchState>({ kind: "idle" });
@@ -101,7 +113,7 @@
     editor.focus();
   }
 
-  async function selectLanguage(code: string) {
+  async function selectLanguage(code: string, rebuild = false) {
     if (!client || !monaco || !model) return;
     const previous = currentLang;
     // Highlight the picked language immediately (the artifact swap can take a beat) and revert if it
@@ -112,18 +124,42 @@
     // Drop the previous language's findings so the panel doesn't show stale rows during the load.
     diagnostics = [];
     checkedText = "";
+    // The first cascade layer to come online flips the UI to interactive; later layers (staged loads)
+    // just re-check so their findings appear progressively. A monolithic load fires this once ("all").
+    let lit = false;
+    const onStage = () => {
+      if (!lit) {
+        lit = true;
+        ready = true;
+        busy = false;
+        const sample = SAMPLE_TEXT[code];
+        if (sample !== undefined && model) model.setValue(sample);
+      }
+      void runCheck();
+    };
     try {
-      await client.select(code);
-      ready = true;
-      const sample = SAMPLE_TEXT[code];
-      if (sample !== undefined) model.setValue(sample);
-      await runCheck();
+      await client.select(code, LOAD_PLANS[currentTrack], onStage, rebuild);
     } catch (err) {
-      currentLang = previous;
+      // Only revert the language if nothing ever became usable — on a staged load, spelling may already
+      // be live (a later layer failing shouldn't yank the user back to the previous language).
+      if (!lit) currentLang = previous;
       errorMessage = err instanceof Error ? err.message : String(err);
     } finally {
       busy = false;
     }
+  }
+
+  // Switch download track: persist the choice and rebuild the current language so the new path runs
+  // (codec + progressive-vs-monolithic differ). Re-fetches only the bytes not already cached.
+  function selectTrack(track: TrackId) {
+    if (track === currentTrack) return;
+    currentTrack = track;
+    try {
+      localStorage.setItem(TRACK_STORAGE_KEY, track);
+    } catch {
+      /* private mode / disabled storage — the choice just won't persist */
+    }
+    void selectLanguage(currentLang, true);
   }
 
   onMount(() => {
@@ -160,6 +196,14 @@
       model = editor.getModel() ?? undefined;
       codeActions = registerRltCodeActions(monaco, index);
       editor.onDidChangeModelContent(scheduleCheck);
+
+      // Restore the saved download track before the first load picks a plan.
+      try {
+        const saved = localStorage.getItem(TRACK_STORAGE_KEY);
+        if (saved === "reliable" || saved === "fast") currentTrack = saved;
+      } catch {
+        /* storage unavailable — fall back to the default track */
+      }
 
       try {
         client = new WorkerChecker();
@@ -200,7 +244,10 @@
   </header>
 
   {#if manifest}
-    <LanguagePicker {manifest} current={currentLang} {busy} onselect={selectLanguage} />
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <LanguagePicker {manifest} current={currentLang} {busy} onselect={selectLanguage} />
+      <DownloadTrackToggle current={currentTrack} {busy} onselect={selectTrack} />
+    </div>
   {/if}
 
   <DownloadProgress state={fetchState} />

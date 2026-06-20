@@ -9,18 +9,19 @@ import { defineConfig } from "vitest/config";
 
 const ARTIFACTS_DIR = fileURLToPath(new URL("static/artifacts", import.meta.url));
 
-// The language artifacts are gzip *content* we decompress in JS (DecompressionStream) — they must reach
-// the browser verbatim. But Vite's dev/preview static server treats a `.gz` file as transport-compressed
-// and sends `Content-Encoding: gzip`, so the browser transparently re-inflates it and the bytes the
-// fetch sees no longer match the manifest's SHA-256 (→ "integrity mismatch"). This middleware serves
-// `/artifacts/*.gz` as raw octet-stream with no Content-Encoding. Production is unaffected (the artifacts
-// come from a GitHub Release, which already serves them verbatim).
+// The language artifacts are compressed *content* we decompress in JS (gzip via DecompressionStream,
+// brotli via our wasm) — they must reach the browser verbatim. But Vite's dev/preview static server
+// treats a `.gz`/`.br` file as transport-compressed and sends `Content-Encoding: gzip`/`br`, so the
+// browser transparently re-inflates it and the bytes the fetch sees no longer match the manifest's
+// SHA-256 (→ "integrity mismatch"). This middleware serves `/artifacts/*.{gz,br}` as raw octet-stream
+// with no Content-Encoding. Production is unaffected (the artifacts come from a GitHub Release, which
+// already serves them verbatim).
 function rawArtifacts(): Plugin {
   const handler: Connect.NextHandleFunction = (req, res, next) => {
     const path = (req.url ?? "").split("?")[0] ?? "";
     const marker = "/artifacts/";
     const at = path.indexOf(marker);
-    if (at === -1 || !path.endsWith(".gz")) return next();
+    if (at === -1 || !(path.endsWith(".gz") || path.endsWith(".br"))) return next();
     const name = path.slice(at + marker.length);
     if (name.includes("/")) return next(); // flat dir only; no traversal
     readFile(`${ARTIFACTS_DIR}/${name}`).then(

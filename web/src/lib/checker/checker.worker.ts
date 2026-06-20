@@ -6,6 +6,7 @@
 
 import { ArtifactStore, createArtifactStore } from "../artifacts/store";
 import { CheckerManager } from "./manager";
+import { initWasm } from "./wasm";
 import type { FromWorker, ToWorker } from "./worker-protocol";
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -16,12 +17,17 @@ let manager: CheckerManager | null = null;
 const post = (msg: FromWorker) => self.postMessage(msg);
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/** Brotli decode for the Fast track, backed by our wasm. `initWasm` is a cached singleton, so this
+ * just awaits the module that the checker build needs anyway — no extra fetch. */
+const brotliDecode = async (bytes: Uint8Array): Promise<Uint8Array> =>
+  (await initWasm()).brotli_decompress(bytes);
+
 self.onmessage = async (event: MessageEvent<ToWorker>) => {
   const msg = event.data;
   switch (msg.type) {
     case "init": {
       try {
-        store = await createArtifactStore(msg.manifestUrl, msg.baseUrl);
+        store = await createArtifactStore(msg.manifestUrl, msg.baseUrl, brotliDecode);
         store.state.subscribe((state) => post({ type: "state", state }));
         manager = new CheckerManager(store);
         post({ type: "inited", manifest: store.manifest });
@@ -32,7 +38,13 @@ self.onmessage = async (event: MessageEvent<ToWorker>) => {
     }
     case "select": {
       try {
-        await manager!.select(msg.code);
+        await manager!.select(
+          msg.code,
+          msg.plan,
+          (layer) => post({ type: "stage", reqId: msg.reqId, layer }),
+          undefined,
+          msg.rebuild,
+        );
         post({ type: "selected", reqId: msg.reqId });
       } catch (e) {
         post({ type: "error", reqId: msg.reqId, message: errText(e), retryable: true });

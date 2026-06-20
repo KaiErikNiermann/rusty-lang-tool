@@ -1,12 +1,15 @@
 import { writable, type Writable } from "svelte/store";
 
-import type { FetchState, WebManifest } from "../artifacts/types";
+import type { FetchState, LoadPlan, WebManifest } from "../artifacts/types";
+import type { StageLayer } from "./manager";
 import type { Diagnostic } from "./types";
 import type { FromWorker, ToWorker } from "./worker-protocol";
 
 interface Pending {
   resolve: (diags: Diagnostic[] | void) => void;
   reject: (err: Error) => void;
+  /** For a `select`, called as each cascade layer becomes active (progressive load). */
+  onStage?: (layer: StageLayer) => void;
 }
 
 /**
@@ -40,6 +43,9 @@ export class WorkerChecker {
         this.initReject?.(new Error(msg.message));
         this.initResolve = this.initReject = null;
         break;
+      case "stage":
+        this.pending.get(msg.reqId)?.onStage?.(msg.layer);
+        break;
       case "selected":
         this.pending.get(msg.reqId)?.resolve();
         this.pending.delete(msg.reqId);
@@ -68,12 +74,24 @@ export class WorkerChecker {
     });
   }
 
-  /** Load + build the checker for `code` (fetches artifacts as needed). */
-  select(code: string): Promise<void> {
+  /**
+   * Load + build the checker for `code` under `plan` (fetches artifacts as needed). `onStage` fires as
+   * each cascade layer becomes active — once (`"all"`) for a monolithic load, or progressively
+   * (`"spelling"` → `"grammar"` → `"confusion"`) for a staged load — so the UI can re-check as
+   * capabilities come online. The promise resolves when the load is fully complete.
+   */
+  select(
+    code: string,
+    plan: LoadPlan,
+    onStage?: (layer: StageLayer) => void,
+    rebuild = false,
+  ): Promise<void> {
     const reqId = this.nextId++;
     return new Promise<void>((resolve, reject) => {
-      this.pending.set(reqId, { resolve: () => resolve(), reject });
-      this.send({ type: "select", reqId, code });
+      const entry: Pending = { resolve: () => resolve(), reject };
+      if (onStage) entry.onStage = onStage;
+      this.pending.set(reqId, entry);
+      this.send({ type: "select", reqId, code, plan, rebuild });
     });
   }
 

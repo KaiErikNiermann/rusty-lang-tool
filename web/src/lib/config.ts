@@ -1,7 +1,28 @@
 import { base } from "$app/paths";
 
+import type { LoadPlan } from "./artifacts/types";
+
 /** The integrity manifest baked into the deployed site (root of trust). */
 export const MANIFEST_URL = `${base}/web-artifacts.json`;
+
+/** The named download tracks the UI toggle picks between. */
+export type TrackId = "reliable" | "fast";
+
+/**
+ * Download-track presets:
+ * - **reliable** — gzip artifacts inflated by the browser, built in one shot. The dependable default.
+ * - **fast** — smaller brotli artifacts (decoded in wasm) loaded progressively, so spelling appears
+ *   before grammar/confusion finish downloading. Newer path, hence "beta".
+ */
+export const LOAD_PLANS: Record<TrackId, LoadPlan> = {
+  reliable: { codec: "gzip", staged: false },
+  fast: { codec: "brotli", staged: true },
+};
+
+export const DEFAULT_TRACK: TrackId = "reliable";
+
+/** `localStorage` key persisting the user's track choice across visits. */
+export const TRACK_STORAGE_KEY = "rlt-download-track";
 
 /**
  * Where the compressed `.gz` artifacts live. In production this is the GitHub Release download URL

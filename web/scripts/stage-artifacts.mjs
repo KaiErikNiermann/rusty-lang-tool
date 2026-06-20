@@ -1,9 +1,10 @@
 // Stage the web demo's language artifacts + integrity manifest into `static/` so a plain
 // `pnpm run dev` / `pnpm run build` works without the manual copy steps the README used to require.
 //
-// Runs `cargo xtask web-manifest` (which gzips each built `.rkyv` and emits `web-artifacts.json`),
-// writing the `.gz` assets straight into `static/artifacts/` (where ARTIFACT_BASE_URL serves them in
-// dev) and relocating the manifest to `static/web-artifacts.json` (the MANIFEST_URL root of trust).
+// Runs `cargo xtask web-manifest` (which compresses each built `.rkyv` to both `.gz` (Reliable track)
+// and `.br` (Fast track) and emits `web-artifacts.json`), writing the assets straight into
+// `static/artifacts/` (where ARTIFACT_BASE_URL serves them in dev) and relocating the manifest to
+// `static/web-artifacts.json` (the MANIFEST_URL root of trust).
 //
 // Language selection (so dev stays fast — gzipping all 7 at best compression takes minutes):
 //   - default: `en` only (the demo's default language)
