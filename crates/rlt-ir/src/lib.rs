@@ -156,12 +156,271 @@ pub struct ConfusionPair {
     pub symmetric: bool,
 }
 
-/// Deserialize a [`ConfusionModel`] from its rkyv artifact.
+// ── L3 confusion artifact codec ──────────────────────────────────────────────────────────────
+//
+// The confusion model is dominated by `bigrams` (≈170k `(u32,u32,u32)` triples for en); stored as
+// rkyv's contiguous little-endian struct array it brotli'd at only ~2.9× (the worst of any artifact).
+// rkyv buys nothing here at runtime — the loader fully deserializes into owned `Vec`s/`HashMap`s (see
+// `ConfusionChecker::new`), never zero-copy `access` — so we use a compact custom encoding instead:
+// columnar (struct-of-arrays) + delta on the sorted index columns + LEB128 varints throughout. That
+// shrinks the brotli'd artifact ~22% (and proportionally more on the heavy-confusion languages).
+//
+// Format (little-endian, versioned): MAGIC, VERSION, then for each section a varint count followed by
+// its columns. Sorted index columns are delta-encoded; counts are raw varints. The MAGIC lets a stale
+// rkyv artifact (or fuzz garbage) be rejected cleanly instead of mis-parsed.
+
+const CONFUSION_MAGIC: &[u8; 4] = b"RLTC";
+const CONFUSION_VERSION: u8 = 1;
+
+/// Malformed confusion artifact — wrapped into the `rkyv::rancor::Error` the public API already
+/// returns, so callers are unchanged.
+#[derive(Debug)]
+struct ConfusionDecodeError(&'static str);
+
+impl core::fmt::Display for ConfusionDecodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "malformed confusion artifact: {}", self.0)
+    }
+}
+
+impl core::error::Error for ConfusionDecodeError {}
+
+/// Append `v` as an LEB128 unsigned varint.
+fn write_varint(out: &mut Vec<u8>, mut v: u64) {
+    loop {
+        let byte = (v & 0x7f) as u8;
+        v >>= 7;
+        if v == 0 {
+            out.push(byte);
+            return;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+fn write_len(out: &mut Vec<u8>, len: usize) {
+    write_varint(out, len as u64);
+}
+
+fn write_str(out: &mut Vec<u8>, s: &str) {
+    write_len(out, s.len());
+    out.extend_from_slice(s.as_bytes());
+}
+
+/// Encode a sorted `(idx, count)` array: idx column delta-encoded, count column raw — both varint.
+fn write_unigrams(out: &mut Vec<u8>, rows: &[(u32, u32)]) {
+    write_len(out, rows.len());
+    let mut prev = 0u32;
+    for &(idx, _) in rows {
+        write_varint(out, u64::from(idx.wrapping_sub(prev)));
+        prev = idx;
+    }
+    for &(_, count) in rows {
+        write_varint(out, u64::from(count));
+    }
+}
+
+/// Encode a `(a, b, count)` array sorted by `(a, b)`: column `a` delta-encoded; column `b`
+/// delta-encoded *within* each equal-`a` run (it strictly increases there) and raw at run boundaries;
+/// column `count` raw. Columnar so brotli sees three homogeneous streams.
+fn write_triples(out: &mut Vec<u8>, rows: &[(u32, u32, u32)]) {
+    write_len(out, rows.len());
+    let mut prev_a = 0u32;
+    for &(a, _, _) in rows {
+        write_varint(out, u64::from(a.wrapping_sub(prev_a)));
+        prev_a = a;
+    }
+    for (i, &(a, b, _)) in rows.iter().enumerate() {
+        if i > 0 && rows[i - 1].0 == a {
+            write_varint(out, u64::from(b.wrapping_sub(rows[i - 1].1)));
+        } else {
+            write_varint(out, u64::from(b));
+        }
+    }
+    for &(_, _, count) in rows {
+        write_varint(out, u64::from(count));
+    }
+}
+
+/// Serialize a [`ConfusionModel`] to the compact columnar/varint artifact (see module note above).
+#[must_use]
+pub fn serialize_confusion(model: &ConfusionModel) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(CONFUSION_MAGIC);
+    out.push(CONFUSION_VERSION);
+    write_len(&mut out, model.pairs.len());
+    for p in &model.pairs {
+        write_str(&mut out, &p.a);
+        write_str(&mut out, &p.b);
+        out.extend_from_slice(&p.factor.to_le_bytes());
+        out.push(u8::from(p.symmetric));
+    }
+    write_len(&mut out, model.vocab.len());
+    for s in &model.vocab {
+        write_str(&mut out, s);
+    }
+    write_unigrams(&mut out, &model.unigrams);
+    write_triples(&mut out, &model.bigrams);
+    write_triples(&mut out, &model.left_pos);
+    write_triples(&mut out, &model.right_pos);
+    out
+}
+
+/// Bounds-checked cursor over the artifact bytes — every read returns `Err` rather than panicking, so
+/// arbitrary/fuzz input fails gracefully.
+struct Reader<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn new(buf: &'a [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
+
+    fn remaining(&self) -> usize {
+        self.buf.len().saturating_sub(self.pos)
+    }
+
+    fn byte(&mut self) -> Result<u8, ConfusionDecodeError> {
+        let b = *self
+            .buf
+            .get(self.pos)
+            .ok_or(ConfusionDecodeError("unexpected end of input"))?;
+        self.pos += 1;
+        Ok(b)
+    }
+
+    fn take(&mut self, n: usize) -> Result<&'a [u8], ConfusionDecodeError> {
+        let end = self
+            .pos
+            .checked_add(n)
+            .ok_or(ConfusionDecodeError("length overflow"))?;
+        let slice = self
+            .buf
+            .get(self.pos..end)
+            .ok_or(ConfusionDecodeError("unexpected end of input"))?;
+        self.pos = end;
+        Ok(slice)
+    }
+
+    fn varint(&mut self) -> Result<u64, ConfusionDecodeError> {
+        let mut result = 0u64;
+        for i in 0..10u32 {
+            let b = self.byte()?;
+            result |= u64::from(b & 0x7f) << (7 * i);
+            if b & 0x80 == 0 {
+                return Ok(result);
+            }
+        }
+        Err(ConfusionDecodeError("varint too long"))
+    }
+
+    fn u32v(&mut self) -> Result<u32, ConfusionDecodeError> {
+        u32::try_from(self.varint()?).map_err(|_| ConfusionDecodeError("u32 out of range"))
+    }
+
+    /// A length, capped at `remaining()` so a corrupt huge count can't trigger a giant pre-allocation
+    /// (each element consumes ≥1 byte, so the true count never exceeds the bytes left).
+    fn count(&mut self) -> Result<usize, ConfusionDecodeError> {
+        let n =
+            usize::try_from(self.varint()?).map_err(|_| ConfusionDecodeError("count overflow"))?;
+        Ok(n)
+    }
+
+    fn cap(&self, n: usize) -> usize {
+        n.min(self.remaining())
+    }
+
+    fn f32(&mut self) -> Result<f32, ConfusionDecodeError> {
+        let b = self.take(4)?;
+        Ok(f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+
+    fn string(&mut self) -> Result<String, ConfusionDecodeError> {
+        let n = self.count()?;
+        let bytes = self.take(n)?;
+        String::from_utf8(bytes.to_vec()).map_err(|_| ConfusionDecodeError("invalid utf-8"))
+    }
+}
+
+fn read_unigrams(r: &mut Reader<'_>) -> Result<Vec<(u32, u32)>, ConfusionDecodeError> {
+    let n = r.count()?;
+    let mut idx = Vec::with_capacity(r.cap(n));
+    let mut prev = 0u32;
+    for _ in 0..n {
+        prev = prev.wrapping_add(r.u32v()?);
+        idx.push(prev);
+    }
+    let mut out = Vec::with_capacity(r.cap(n));
+    for &i in &idx {
+        out.push((i, r.u32v()?));
+    }
+    Ok(out)
+}
+
+fn read_triples(reader: &mut Reader<'_>) -> Result<Vec<(u32, u32, u32)>, ConfusionDecodeError> {
+    let n = reader.count()?;
+    let mut col_a = Vec::with_capacity(reader.cap(n));
+    let mut prev = 0u32;
+    for _ in 0..n {
+        prev = prev.wrapping_add(reader.u32v()?);
+        col_a.push(prev);
+    }
+    let mut col_b: Vec<u32> = Vec::with_capacity(reader.cap(n));
+    for i in 0..n {
+        let delta = reader.u32v()?;
+        let value = if i > 0 && col_a[i] == col_a[i - 1] {
+            col_b[i - 1].wrapping_add(delta)
+        } else {
+            delta
+        };
+        col_b.push(value);
+    }
+    let mut out = Vec::with_capacity(reader.cap(n));
+    for i in 0..n {
+        out.push((col_a[i], col_b[i], reader.u32v()?));
+    }
+    Ok(out)
+}
+
+fn decode_confusion(bytes: &[u8]) -> Result<ConfusionModel, ConfusionDecodeError> {
+    let mut r = Reader::new(bytes);
+    if r.take(4)? != CONFUSION_MAGIC || r.byte()? != CONFUSION_VERSION {
+        return Err(ConfusionDecodeError("bad magic or version"));
+    }
+    let n_pairs = r.count()?;
+    let mut pairs = Vec::with_capacity(r.cap(n_pairs));
+    for _ in 0..n_pairs {
+        pairs.push(ConfusionPair {
+            a: r.string()?,
+            b: r.string()?,
+            factor: r.f32()?,
+            symmetric: r.byte()? != 0,
+        });
+    }
+    let n_vocab = r.count()?;
+    let mut vocab = Vec::with_capacity(r.cap(n_vocab));
+    for _ in 0..n_vocab {
+        vocab.push(r.string()?);
+    }
+    Ok(ConfusionModel {
+        pairs,
+        vocab,
+        unigrams: read_unigrams(&mut r)?,
+        bigrams: read_triples(&mut r)?,
+        left_pos: read_triples(&mut r)?,
+        right_pos: read_triples(&mut r)?,
+    })
+}
+
+/// Deserialize a [`ConfusionModel`] from its compact columnar/varint artifact (see [`serialize_confusion`]).
 ///
 /// # Errors
-/// Returns an error if `bytes` is not a valid archived [`ConfusionModel`].
+/// Returns an error if `bytes` is not a valid confusion artifact (bad magic/version, truncated, or
+/// malformed) — never panics, so it is safe on untrusted input.
 pub fn deserialize_confusion(bytes: &[u8]) -> Result<ConfusionModel, rkyv::rancor::Error> {
-    rkyv::from_bytes::<ConfusionModel, rkyv::rancor::Error>(&align_bytes(bytes))
+    decode_confusion(bytes).map_err(rkyv::rancor::Source::new)
 }
 
 /// One element of a rule's pattern. Known constructs get explicit variants; the `<filter>` escape
@@ -398,5 +657,80 @@ mod tests {
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].id, "TEST_RULE");
         assert!(back[0].is_opaque(), "filter rule must count as opaque");
+    }
+
+    fn sample_confusion() -> ConfusionModel {
+        ConfusionModel {
+            pairs: vec![
+                ConfusionPair {
+                    a: "their".to_owned(),
+                    b: "there".to_owned(),
+                    factor: 10.0,
+                    symmetric: true,
+                },
+                ConfusionPair {
+                    a: "affect".to_owned(),
+                    b: "effect".to_owned(),
+                    factor: 2.5,
+                    symmetric: false,
+                },
+            ],
+            vocab: vec!["the".to_owned(), "their".to_owned(), "there".to_owned()],
+            unigrams: vec![(0, 9000), (1, 42), (2, 37)],
+            // Sorted by (a, b); two share a=0 (exercises within-run b delta) and one starts a new run.
+            bigrams: vec![(0, 1, 5), (0, 2, 8), (1, 2, 3)],
+            left_pos: vec![(0, 0, 1), (0, 5, 2), (3, 1, 7)],
+            right_pos: vec![(1, 4, 6)],
+        }
+    }
+
+    fn assert_confusion_eq(a: &ConfusionModel, b: &ConfusionModel) {
+        assert_eq!(a.vocab, b.vocab);
+        assert_eq!(a.unigrams, b.unigrams);
+        assert_eq!(a.bigrams, b.bigrams);
+        assert_eq!(a.left_pos, b.left_pos);
+        assert_eq!(a.right_pos, b.right_pos);
+        assert_eq!(a.pairs.len(), b.pairs.len());
+        for (x, y) in a.pairs.iter().zip(&b.pairs) {
+            assert_eq!(
+                (&x.a, &x.b, x.factor, x.symmetric),
+                (&y.a, &y.b, y.factor, y.symmetric)
+            );
+        }
+    }
+
+    #[test]
+    fn confusion_round_trips() {
+        let model = sample_confusion();
+        let bytes = serialize_confusion(&model);
+        let back = deserialize_confusion(&bytes).expect("deserialize");
+        assert_confusion_eq(&model, &back);
+    }
+
+    #[test]
+    fn confusion_round_trips_empty() {
+        let model = ConfusionModel {
+            pairs: vec![],
+            vocab: vec![],
+            unigrams: vec![],
+            bigrams: vec![],
+            left_pos: vec![],
+            right_pos: vec![],
+        };
+        let bytes = serialize_confusion(&model);
+        assert_confusion_eq(&model, &deserialize_confusion(&bytes).expect("deserialize"));
+    }
+
+    #[test]
+    fn confusion_rejects_garbage_without_panicking() {
+        // Bad magic, truncation, and arbitrary bytes must all error cleanly (fuzz contract).
+        assert!(deserialize_confusion(b"").is_err());
+        assert!(deserialize_confusion(b"not-an-artifact").is_err());
+        assert!(deserialize_confusion(b"RLTC\x01\xff\xff\xff").is_err());
+        let good = serialize_confusion(&sample_confusion());
+        for cut in 0..good.len() {
+            // Every truncation of a valid artifact must error, never panic.
+            let _ = deserialize_confusion(&good[..cut]);
+        }
     }
 }

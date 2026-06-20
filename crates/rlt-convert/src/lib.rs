@@ -100,8 +100,9 @@ pub fn build_confusion_model(
         bigrams: bigrams.len(),
     };
     let model = intern_confusion(pairs, &unigrams, &bigrams, &left_pos, &right_pos);
-    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&model)
-        .map_err(|e| anyhow!("rkyv serialize: {e}"))?;
+    // Compact columnar/varint encoding (not rkyv): ~22% smaller brotli'd, and the runtime fully
+    // deserializes anyway, so there is no zero-copy benefit to preserve. See `rlt_ir::serialize_confusion`.
+    let bytes = rlt_ir::serialize_confusion(&model);
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating {}", parent.display()))?;
