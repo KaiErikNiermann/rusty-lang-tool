@@ -11,6 +11,12 @@ authors.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# Make the wasm-opt pass explicit (wasm-pack otherwise defaults to `-O`). `-Oz` optimizes hard for
+# size; the checker's hot path runs behind a 300 ms debounce on short editor text, so any size-vs-speed
+# tradeoff is imperceptible here (the CLI's batch path uses the native engine, not this wasm).
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ['-Oz']
+
 [features]
 # `nlprule` (default) keeps the `RltChecker::new`/`with_neural` constructors backed by nlprule's
 # prebuilt binaries. Build with `--no-default-features` for a pure-native bundle (the `with_native*`
