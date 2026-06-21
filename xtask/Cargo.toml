@@ -29,6 +29,9 @@ sha2 = "0.11.0"
 # web-manifest: gzip the served artifacts (the browser decompresses via the native DecompressionStream).
 flate2 = "1.0"
 brotli = "8.0.4"
+# web-manifest: compress every artifact (gzip + brotli) concurrently — brotli on the ~100 MB taggers
+# is the bottleneck, so fanning out across cores keeps the release job well under its CI timeout.
+rayon.workspace = true
 
 [lints]
 workspace = true

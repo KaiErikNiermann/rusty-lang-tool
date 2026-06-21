@@ -1484,7 +1484,7 @@ struct WebManifestJson {
 /// language with no disambig).
 ///
 /// **Incremental, per variant:** a previously-emitted `<base>.{gz,br}` newer than `src` is reused (just
-/// re-hashed) instead of recompressed. Best-compression gzip *and* brotli-11 over the full artifact set
+/// re-hashed) instead of recompressed. Best-compression gzip *and* brotli over the full artifact set
 /// take minutes, so this keeps a re-run after `pnpm run dev` to seconds when nothing changed. The raw
 /// source is read only when at least one variant is stale.
 fn encode_asset(src: &str, out_dir: &Path, base: &str) -> Result<Option<WebAsset>> {
@@ -1549,12 +1549,21 @@ fn gzip_bytes(raw: &[u8]) -> Result<Vec<u8>> {
     Ok(encoder.finish()?)
 }
 
-/// Quality-11 Brotli of `raw` (the Fast track's encoding) at the standard 22-bit window.
+/// Brotli quality for the Fast track. **10, not 11, deliberately:** q11's exhaustive match search is
+/// pathologically slow on the large high-entropy taggers (the ~100 MB `ru` tagger alone took minutes
+/// at q11 and blew the release job's CI timeout), while costing only ~1 MB over q10 on that file. q10
+/// keeps essentially all the win — ~41% smaller than gzip vs q11's ~45% — at a fraction of the time.
+const BROTLI_QUALITY: u32 = 10;
+/// Brotli window (lgwin); 22 is the format max and what browser decoders assume.
+const BROTLI_WINDOW: u32 = 22;
+
+/// Quality-[`BROTLI_QUALITY`] Brotli of `raw` (the Fast track's encoding) at the [`BROTLI_WINDOW`]-bit window.
 fn brotli_bytes(raw: &[u8]) -> Result<Vec<u8>> {
     use std::io::Write as _;
     let mut out = Vec::new();
     {
-        let mut writer = brotli::CompressorWriter::new(&mut out, 4096, 11, 22);
+        let mut writer =
+            brotli::CompressorWriter::new(&mut out, 4096, BROTLI_QUALITY, BROTLI_WINDOW);
         writer.write_all(raw)?;
     } // CompressorWriter flushes the brotli stream on drop
     Ok(out)
@@ -1586,7 +1595,25 @@ fn sha256_bytes(bytes: &[u8]) -> (String, u64) {
 /// Package the web demo's per-language `with_native` artifacts: gzip each into `out` and emit
 /// `web-artifacts.json` (the browser's integrity manifest). Skips any language whose required
 /// artifacts aren't built, so it works on a partial `resources/` (e.g. CI building one matrix leg).
+/// One artifact to compress in [`web_manifest`]'s parallel pass. `code == None` marks the shared
+/// `segment.srx`; otherwise it's the owning language. A required artifact's absence drops its whole
+/// language (the checker can't run without it); an optional one's absence just omits it.
+struct EncodeTask {
+    code: Option<&'static str>,
+    /// Logical artifact key in the manifest (`tagger.rkyv`), and the per-language `files` map key.
+    name: &'static str,
+    required: bool,
+    /// Flat asset base name (`segment.srx`, `en-tagger.rkyv`) → `<base>.gz` / `<base>.br`.
+    base: String,
+    src: String,
+}
+
+#[allow(clippy::too_many_lines)] // one cohesive job: enumerate tasks → compress in parallel → assemble
 fn web_manifest(out: &Path, langs: &[String]) -> Result<()> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use rayon::prelude::*;
+
     std::fs::create_dir_all(out)?;
 
     // An empty `--langs` means "every built language"; otherwise validate the requested subset.
@@ -1598,60 +1625,89 @@ fn web_manifest(out: &Path, langs: &[String]) -> Result<()> {
     }
     let wanted = |code: &str| langs.is_empty() || langs.iter().any(|c| c == code);
 
-    // The one shared artifact: segment.srx (passed to `with_native` as a string).
-    let srx_path = rlt_lang::LANGUAGES[0].segment_srx_path();
-    let mut shared = std::collections::BTreeMap::new();
-    if let Some(asset) = encode_asset(srx_path, out, "segment.srx")? {
-        shared.insert("segment.srx".to_owned(), asset);
-    } else {
-        bail!("{srx_path} missing — run `fetch-lt` first");
-    }
-
-    let mut languages = std::collections::BTreeMap::new();
+    // 1. Enumerate every (source, flat-base) compression task: the one shared segment.srx, then each
+    //    wanted language's tagger + grammar (required by `with_native`) and disambig + confusion
+    //    (optional).
+    let mut tasks = vec![EncodeTask {
+        code: None,
+        name: "segment.srx",
+        required: true,
+        base: "segment.srx".to_owned(),
+        src: rlt_lang::LANGUAGES[0].segment_srx_path().to_owned(),
+    }];
     for cfg in rlt_lang::LANGUAGES.iter().filter(|c| wanted(c.code)) {
         let code = cfg.code;
-        // The artifacts `RltChecker.with_native` consumes: tagger + grammar (required), disambig (optional).
-        let required = [
-            ("tagger.rkyv", cfg.tagger_path()),
-            ("grammar.rkyv", cfg.grammar_blob_path()),
-        ];
-        let mut files = std::collections::BTreeMap::new();
-        let mut missing = false;
-        for (name, path) in required {
-            match encode_asset(&path, out, &format!("{code}-{name}"))? {
-                Some(asset) => {
-                    files.insert(name.to_owned(), asset);
+        for (name, required, src) in [
+            ("tagger.rkyv", true, cfg.tagger_path()),
+            ("grammar.rkyv", true, cfg.grammar_blob_path()),
+            ("disambig.rkyv", false, cfg.disambig_path()),
+            // L3 confusion model (en/de/ru/fr/es); absent for ar/it.
+            ("confusion.rkyv", false, cfg.confusion_path()),
+        ] {
+            tasks.push(EncodeTask {
+                code: Some(code),
+                name,
+                required,
+                base: format!("{code}-{name}"),
+                src,
+            });
+        }
+    }
+
+    // 2. Compress every artifact (gzip + brotli) concurrently. Brotli on the ~100 MB taggers dominates
+    //    wall time, so fanning the whole set across cores is what keeps the release job inside its CI
+    //    budget. Incremental per-variant caching (see `encode_asset`) still skips unchanged files.
+    let assets: Vec<Option<WebAsset>> = tasks
+        .par_iter()
+        .map(|t| encode_asset(&t.src, out, &t.base))
+        .collect::<Result<Vec<_>>>()?;
+
+    // 3. Assemble the manifest. A language missing a *required* artifact is dropped entirely; the shared
+    //    srx missing is fatal (nothing can run without it).
+    let mut skip: BTreeSet<&str> = BTreeSet::new();
+    for (t, asset) in tasks.iter().zip(&assets) {
+        if t.required && asset.is_none() {
+            match t.code {
+                Some(code) => {
+                    skip.insert(code);
                 }
-                None => missing = true,
+                None => bail!("{} missing — run `fetch-lt` first", t.src),
             }
         }
-        if missing {
-            println!("skip {code}: required artifacts not built (run `build-lang --lang {code}`)");
-            continue;
+    }
+    for code in &skip {
+        println!("skip {code}: required artifacts not built (run `build-lang --lang {code}`)");
+    }
+
+    let mut shared = BTreeMap::new();
+    let mut languages: BTreeMap<String, WebLang> = BTreeMap::new();
+    for (t, asset) in tasks.into_iter().zip(assets) {
+        let Some(asset) = asset else { continue };
+        match t.code {
+            None => {
+                shared.insert(t.name.to_owned(), asset);
+            }
+            Some(code) if !skip.contains(code) => {
+                languages
+                    .entry(code.to_owned())
+                    .or_insert_with(|| WebLang {
+                        label: title_case(
+                            rlt_lang::config(code)
+                                .expect("code enumerated from LANGUAGES")
+                                .name,
+                        ),
+                        total_bytes: 0,
+                        files: BTreeMap::new(),
+                    })
+                    .files
+                    .insert(t.name.to_owned(), asset);
+            }
+            Some(_) => {} // skipped language — drop its (optional) artifacts too
         }
-        if let Some(asset) =
-            encode_asset(&cfg.disambig_path(), out, &format!("{code}-disambig.rkyv"))?
-        {
-            files.insert("disambig.rkyv".to_owned(), asset);
-        }
-        // L3 confusion model (en/de/ru/fr/es); absent for ar/it.
-        if let Some(asset) = encode_asset(
-            &cfg.confusion_path(),
-            out,
-            &format!("{code}-confusion.rkyv"),
-        )? {
-            files.insert("confusion.rkyv".to_owned(), asset);
-        }
-        // The Reliable (gzip) track's download budget — what the picker shows.
-        let total_bytes = files.values().map(|a| a.gzip.bytes).sum();
-        languages.insert(
-            code.to_owned(),
-            WebLang {
-                label: title_case(cfg.name),
-                total_bytes,
-                files,
-            },
-        );
+    }
+    // The Reliable (gzip) track's download budget — what the picker shows.
+    for lang in languages.values_mut() {
+        lang.total_bytes = lang.files.values().map(|a| a.gzip.bytes).sum();
     }
 
     if languages.is_empty() {

@@ -2498,6 +2498,7 @@ dependencies = [
  "brotli",
  "clap",
  "flate2",
+ "rayon",
  "rlt-convert",
  "rlt-core",
  "rlt-lang",
