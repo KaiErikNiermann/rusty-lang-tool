@@ -1,10 +1,10 @@
 {
   "code": "en",
-  "lt_version": "v6.7",
+  "lt_version": "v6.8",
   "inputs": {
     "added.txt": {
-      "sha256": "840e1259a90466175cb643c82c80c0ff96a7ddaf85c604ad557928543916c2cd",
-      "bytes": 11502,
+      "sha256": "ac48758904839439ff46c2b893cd7c6e80237d6a5bf073f591ab6c175835a7a2",
+      "bytes": 11519,
       "feeds": "tagger.rkyv",
       "optional": true
     },
@@ -21,8 +21,8 @@
       "optional": false
     },
     "grammar.xml": {
-      "sha256": "e5ac59e7d4d6ddaae4db68eb737c222233738246361ad578ce895e57e13088e0",
-      "bytes": 8260810,
+      "sha256": "25706320a5e186582ef62d53e6676f023602d71a14d38e73ed7632a8ccdf4d78",
+      "bytes": 8265780,
       "feeds": "grammar.rkyv",
       "optional": false
     },

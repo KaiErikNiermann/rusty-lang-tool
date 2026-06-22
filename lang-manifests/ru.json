@@ -1,6 +1,6 @@
 {
   "code": "ru",
-  "lt_version": "v6.7",
+  "lt_version": "v6.8",
   "inputs": {
     "added.txt": {
       "sha256": "4748f15da5cf97095e4d96dda3a3431028c660ff2456c30f143162616d0d8b40",
