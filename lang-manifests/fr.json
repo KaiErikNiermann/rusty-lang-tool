@@ -1,6 +1,6 @@
 {
   "code": "fr",
-  "lt_version": "v6.7",
+  "lt_version": "v6.8",
   "inputs": {
     "added.txt": {
       "sha256": "39a32c755ccd6f4ee3127f839c02128f9b3b7a2d8a4092e05b3c69894c079065",
@@ -21,8 +21,8 @@
       "optional": false
     },
     "grammar.xml": {
-      "sha256": "513f8d87fc4905bf6f63717f010c2baed636453eba3899dbdb264bce1b50ceeb",
-      "bytes": 9056613,
+      "sha256": "5e6706b547890f618ce17246fb3babb95227b4567383436d55b4cc056f7d6a5f",
+      "bytes": 9056623,
       "feeds": "grammar.rkyv",
       "optional": false
     },

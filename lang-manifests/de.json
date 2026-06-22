@@ -1,6 +1,6 @@
 {
   "code": "de",
-  "lt_version": "v6.7",
+  "lt_version": "v6.8",
   "inputs": {
     "added.txt": {
       "sha256": "7ee001fbb2533e79fc9a071632a0005450bf7ce5a26356d5a646fce578f5ff89",
@@ -15,14 +15,14 @@
       "optional": true
     },
     "disambiguation.xml": {
-      "sha256": "fadc1ec38e0cb5abc2209bbb0576e05e03a83f1a393592c56351c08b78a3174b",
-      "bytes": 604849,
+      "sha256": "fff94b7dd76dfee5c8c0b167b46b706a3b72d267acd3247fcee9cd733eb5bd57",
+      "bytes": 605118,
       "feeds": "disambig.rkyv",
       "optional": false
     },
     "grammar.xml": {
-      "sha256": "98df625aa00d85fdfb5da0d775e914dd1467a7efdd272d42e442d9642a668b5a",
-      "bytes": 5055720,
+      "sha256": "debb40adfa8ade80593f77b1127c0842cb038a1bceaf02b1448eb6864773d761",
+      "bytes": 5057300,
       "feeds": "grammar.rkyv",
       "optional": false
     },

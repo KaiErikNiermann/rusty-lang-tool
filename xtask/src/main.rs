@@ -29,7 +29,7 @@ use xsd_parser::{Config, generate};
 /// The LanguageTool release we track. Bump this and re-run `fetch-lt` + `gen-schema` to retarget;
 /// the example oracle then reports exactly which rules drifted. Overridable per-invocation via the
 /// `$RLT_LT_VERSION` env var (used by `adapt-sweep` to run the harness across past releases).
-const LT_VERSION: &str = "v6.7";
+const LT_VERSION: &str = "v6.8";
 const LT_REPO: &str = "https://github.com/languagetool-org/languagetool.git";
 const LT_DEST: &str = "resources/lt";
 
