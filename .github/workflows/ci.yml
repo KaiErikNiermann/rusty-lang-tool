@@ -21,7 +21,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with: { cache-key: lint }
       - name: clippy (blocking — pedantic clean is the house gate)
@@ -35,7 +35,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with: { cache-key: test }
       - name: unit + integration tests (the `#[ignore]` oracle/data tests run in the engine job)
@@ -44,7 +44,7 @@ jobs:
   wasm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with: { targets: wasm32-unknown-unknown, cache-key: wasm }
       - name: wasm32 compile gate (the Node smoke runs in the engine job, which has artifacts)
@@ -55,7 +55,7 @@ jobs:
   web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with: { targets: wasm32-unknown-unknown, cache-key: web }
       - name: Install wasm-pack
@@ -81,7 +81,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with: { targets: wasm32-unknown-unknown, cache-key: engine }
       - name: System deps (gawk for the AGID tagger fallback, wasm-pack + node for the smoke)

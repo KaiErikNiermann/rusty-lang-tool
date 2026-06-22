@@ -28,7 +28,7 @@ jobs:
     outputs:
       langs: ${{ steps.langs.outputs.langs }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with: { cache-key: setup }
       - id: langs
@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with: { components: "miri,rust-src", cache-key: miri }
       - name: miri (tree-borrows) over rlt-core / rlt-ir / rlt-convert
@@ -61,7 +61,7 @@ jobs:
         # RLT_FUZZ_LANG=<code>).
         target: [ir_rkyv, confusion_rkyv, disambig_rkyv, ir_match, tagger_load, spell_edits1, engine_analyze]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with: { cache-key: fuzz }
       - run: cargo install cargo-fuzz --locked
@@ -101,7 +101,7 @@ jobs:
       matrix:
         lang: ${{ fromJSON(needs.setup.outputs.langs) }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: oracle-${{ matrix.lang }}
@@ -132,7 +132,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with: { cache-key: bench }
       - run: sudo apt-get update && sudo apt-get install -y gawk unzip
