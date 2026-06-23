@@ -10,6 +10,13 @@ on:
     # `crates/**` because the wasm bundle compiles the whole engine (rlt-core/native/convert/…), so an
     # engine change must redeploy even though only rlt-wasm is the direct entry point.
     paths: ["web/**", "crates/**", ".github/workflows/deploy-pages.yml"]
+  # Redeploy after the artifacts are re-cut (e.g. on an LT sync) so the demo always serves the latest
+  # release. release-artifacts excludes web/crates, so this is the only path that picks up new artifacts
+  # — the build below resolves the latest `artifacts-*` release, which is the one that just published.
+  workflow_run:
+    workflows: ["Release web artifacts"]
+    types: [completed]
+    branches: [master]
   workflow_dispatch:
     inputs:
       artifact-tag:
@@ -30,6 +37,8 @@ env:
 
 jobs:
   build:
+    # Skip when chained from a *failed* release-artifacts run; push/dispatch always proceed.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

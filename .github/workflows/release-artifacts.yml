@@ -12,6 +12,13 @@ on:
         description: Release tag (blank = artifacts-<LT version>)
         default: ""
   push:
+    # Auto-cut when an LT sync lands on master. `lang-manifests/**` are content-hash manifests of LT's
+    # vendored grammar/dicts, so they change *iff* the artifact bytes would differ — this fires exactly
+    # on a real linguistic update and never on unrelated xtask/web edits. A successful run chains into
+    # deploy-pages (workflow_run). Manual re-cuts still go through workflow_dispatch or an `artifacts-*`
+    # tag push (tags are matched independently of the path filter).
+    branches: [master]
+    paths: ["lang-manifests/**"]
     tags: ["artifacts-*"]
 
 permissions:
