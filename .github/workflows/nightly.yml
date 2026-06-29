@@ -67,7 +67,7 @@ jobs:
       - run: cargo install cargo-fuzz --locked
       - name: System deps + cache LT resources
         run: sudo apt-get update && sudo apt-get install -y gawk unzip
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: |
             resources/lt
@@ -106,7 +106,7 @@ jobs:
         with:
           cache-key: oracle-${{ matrix.lang }}
       - run: sudo apt-get update && sudo apt-get install -y gawk unzip
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: |
             resources/lt
@@ -136,7 +136,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with: { cache-key: bench }
       - run: sudo apt-get update && sudo apt-get install -y gawk unzip
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: |
             resources/lt
