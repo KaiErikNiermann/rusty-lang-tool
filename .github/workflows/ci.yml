@@ -92,7 +92,7 @@ jobs:
         with: { node-version: 20 }
       # The LT checkout + downloaded POS dicts are the slow part — cache them by pinned version.
       - name: Cache LT resources
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             resources/lt
