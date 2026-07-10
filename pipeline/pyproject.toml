@@ -9,7 +9,7 @@ dependencies = [
     # (meta-device guard), so cap below 5.
     "transformers>=5.3.0,<6",
     "huggingface-hub",
-    "onnx>=1.16",
+    "onnx>=1.22.0",
     "onnxruntime>=1.18",
     "numpy",
     "gector",
