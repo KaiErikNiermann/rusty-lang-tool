@@ -4,7 +4,7 @@ version = "0.0.0"
 description = "Offline L4 pipeline: export + int8-quantize the GECToR tagger to ONNX (for rten) and evaluate it."
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "torch>=2.2,<3",
+    "torch>=2.13.0,<3",
     # gector requires >=4.49; transformers 5.x broke its inner AutoModel.from_pretrained
     # (meta-device guard), so cap below 5.
     "transformers>=5.5.0,<6",
