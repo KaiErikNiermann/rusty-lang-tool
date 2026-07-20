@@ -1060,6 +1060,19 @@ fn fetch_pos_dict(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
     Ok(())
 }
 
+/// Ensure `cfg`'s `pos.dict` + `pos.info` are on disk. A no-op for [`PosDict::Repo`] (already in the
+/// checkout after `fetch-lt`) and for an already-downloaded [`PosDict::Maven`] dict; otherwise pulls
+/// the jar. Idempotent — the "absent" state for a Maven dict means *not fetched yet*, never drift.
+fn ensure_pos_dict(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+    if matches!(cfg.pos_dict, rlt_lang::PosDict::Maven { .. })
+        && !Path::new(&cfg.pos_dict_local()).exists()
+    {
+        println!("  fetching Maven POS dict for {}…", cfg.code);
+        fetch_pos_dict(cfg)?;
+    }
+    Ok(())
+}
+
 /// Reconstruct the POS dictionary from AGID + the Moby/WordNet part-of-speech list via LT's own
 /// `remap.awk`, plus the hand-authored closed-class supplement. The English-only fallback when LT's
 /// binary dict isn't available.
@@ -1164,10 +1177,7 @@ fn lang_inspect(
                 if !matches!(cfg.pos_dict, rlt_lang::PosDict::Maven { .. }) {
                     return Err(repo_err.context(format!("no repo .dict under {resource}")));
                 }
-                if !Path::new(&cfg.pos_dict_local()).exists() {
-                    println!("  fetching Maven POS dict for {code}…");
-                    fetch_pos_dict(cfg)?;
-                }
+                ensure_pos_dict(cfg)?;
                 (cfg.pos_dict_local(), cfg.pos_info_local())
             }
         },
@@ -1935,6 +1945,13 @@ fn lang_status(opt_lang: Option<&str>) -> Result<()> {
                 manifest.lt_version
             );
         }
+        // Maven-dict languages (en/de/fr/es) keep pos.dict/.info *outside* the LT checkout, so a tree
+        // that has only had `fetch-lt` run against it has them absent — which the hash comparison below
+        // would otherwise report as MISSING, i.e. phantom upstream drift. Provision first so the report
+        // always compares real bytes. (The weekly sync's drift check runs exactly that: `fetch-lt` alone.)
+        ensure_pos_dict(cfg)
+            .with_context(|| format!("provisioning {code} POS dict before the drift check"))?;
+
         for (key, path, _feeds, optional) in manifest_inputs(cfg) {
             let current = sha256_file(&path).map(|(s, _)| s);
             let recorded = manifest.inputs.get(key).and_then(|i| i.sha256.clone());
