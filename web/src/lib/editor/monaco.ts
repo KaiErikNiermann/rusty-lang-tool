@@ -22,13 +22,16 @@ export const RLT_THEME = "rlt-dark";
 export async function loadMonaco(): Promise<typeof Monaco> {
   monacoPromise ??= (async () => {
     const monaco = await import("monaco-editor");
-    const { default: EditorWorker } = await import(
-      "monaco-editor/esm/vs/editor/editor.worker?worker"
+    const editorWorkerUrl = new URL(
+      "monaco-editor/esm/vs/editor/editor.worker",
+      import.meta.url
     );
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (self as unknown as { MonacoEnvironment: Monaco.Environment }).MonacoEnvironment = {
-      getWorker: () => new EditorWorker(),
+      getWorker: () => new Worker(editorWorkerUrl, { type: "module" }),
     };
+
     monaco.editor.defineTheme(RLT_THEME, {
       base: "vs-dark",
       inherit: true,
