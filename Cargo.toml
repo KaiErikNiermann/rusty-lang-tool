@@ -65,7 +65,7 @@ arbitrary = { version = "1", features = ["derive"] }
 # L4 neural tagger (rlt-tagger): pure-Rust ONNX inference + RoBERTa tokenization. Both compile to
 # native AND wasm32 (one feature set). `tokenizers` default features pull C++ (esaxx); unstable_wasm
 # keeps it pure-Rust.
-rten = "0.24"
+rten = "0.25"
 rten-tensor = "0.24"
 tokenizers = { version = "0.23", default-features = false, features = ["unstable_wasm"] }
 serde_json = "1"
