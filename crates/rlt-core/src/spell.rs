@@ -209,7 +209,8 @@ mod tests {
         let analysis = Analysis {
             tokens: vec![token("the"), token("message")],
         };
-        assert!(spelling_diagnostics(&engine, &analysis, ASCII_ALPHABET, "misspelled").is_empty());
+        let diags = spelling_diagnostics(&engine, &analysis, ASCII_ALPHABET, "misspelled");
+        assert_eq!(diags, [], "expected no diagnostics, got {diags:?}");
     }
 
     #[test]
@@ -220,7 +221,8 @@ mod tests {
         let analysis = Analysis {
             tokens: vec![token("42"), token("a"), token("x1y")],
         };
-        assert!(spelling_diagnostics(&engine, &analysis, ASCII_ALPHABET, "misspelled").is_empty());
+        let diags = spelling_diagnostics(&engine, &analysis, ASCII_ALPHABET, "misspelled");
+        assert_eq!(diags, [], "expected no diagnostics, got {diags:?}");
     }
 
     #[test]
@@ -292,17 +294,15 @@ mod tests {
             lexicon: &["привет", "мир"],
         };
         // Known word is left alone; a capitalized misspelling round-trips the leading capital.
-        assert!(
-            spelling_diagnostics(
-                &engine,
-                &Analysis {
-                    tokens: vec![token("Мир")]
-                },
-                RU_ALPHABET,
-                "misspelled",
-            )
-            .is_empty()
+        let diags = spelling_diagnostics(
+            &engine,
+            &Analysis {
+                tokens: vec![token("Мир")],
+            },
+            RU_ALPHABET,
+            "misspelled",
         );
+        assert_eq!(diags, [], "expected no diagnostics, got {diags:?}");
         let diags = spelling_diagnostics(
             &engine,
             &Analysis {

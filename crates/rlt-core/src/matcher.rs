@@ -1393,11 +1393,8 @@ mod tests {
                 .len(),
             1
         );
-        assert!(
-            matcher
-                .grammar_diagnostics("fish", &analyze("fish", &[("fish", &[], &[])]))
-                .is_empty()
-        );
+        let diags = matcher.grammar_diagnostics("fish", &analyze("fish", &[("fish", &[], &[])]));
+        assert_eq!(diags, [], "expected no diagnostics, got {diags:?}");
     }
 
     #[test]
@@ -1492,10 +1489,7 @@ mod tests {
                 .len(),
             1
         );
-        assert!(
-            matcher
-                .grammar_diagnostics("run", &analyze("run", &[("run", &["NN"], &[])]))
-                .is_empty()
-        );
+        let diags = matcher.grammar_diagnostics("run", &analyze("run", &[("run", &["NN"], &[])]));
+        assert_eq!(diags, [], "expected no diagnostics, got {diags:?}");
     }
 }

@@ -327,21 +327,15 @@ mod tests {
     fn leaves_contextually_correct_word() {
         let checker = ConfusionChecker::new(&model());
         // "their car" is attested; no suggestion.
-        assert!(
-            checker
-                .grammar_diagnostics("", &analysis(&["their", "car"]))
-                .is_empty()
-        );
+        let diags = checker.grammar_diagnostics("", &analysis(&["their", "car"]));
+        assert_eq!(diags, [], "expected no diagnostics, got {diags:?}");
     }
 
     #[test]
     fn no_evidence_no_flag() {
         let checker = ConfusionChecker::new(&model());
         // Neither "blorp their" nor "blorp there" is attested → no decision.
-        assert!(
-            checker
-                .grammar_diagnostics("", &analysis(&["blorp", "their"]))
-                .is_empty()
-        );
+        let diags = checker.grammar_diagnostics("", &analysis(&["blorp", "their"]));
+        assert_eq!(diags, [], "expected no diagnostics, got {diags:?}");
     }
 }

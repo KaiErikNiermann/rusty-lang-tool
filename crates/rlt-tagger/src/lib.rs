@@ -647,7 +647,8 @@ mod tests {
             keep_confidence: 0.3,
             ..TaggerConfig::default()
         };
-        assert!(run("I beleive it", vec![keep(), pred, keep()], cfg).is_empty());
+        let diags = run("I beleive it", vec![keep(), pred, keep()], cfg);
+        assert_eq!(diags, [], "expected no diagnostics, got {diags:?}");
     }
 
     #[test]
@@ -659,13 +660,11 @@ mod tests {
             keep_prob: 0.05,
             error_prob: 0.1, // below min_error_probability
         };
-        assert!(
-            run(
-                "I beleive it",
-                vec![keep(), pred, keep()],
-                TaggerConfig::default()
-            )
-            .is_empty()
+        let diags = run(
+            "I beleive it",
+            vec![keep(), pred, keep()],
+            TaggerConfig::default(),
         );
+        assert_eq!(diags, [], "expected no diagnostics, got {diags:?}");
     }
 }
