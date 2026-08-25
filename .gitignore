@@ -64,3 +64,9 @@ node_modules/
 # Staged by `pnpm run stage` (predev/prebuild): the gzipped language artifacts + integrity manifest.
 /web/static/artifacts/
 /web/static/web-artifacts.json
+
+# --- Python lint tooling (semgrep, pinned in pyproject.toml) ---
+# The venv itself lives in Poetry's cache, but honour an in-project one too.
+.venv/
+__pycache__/
+.semgrep_logs/

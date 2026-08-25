@@ -1,0 +1,25 @@
+# Python tooling for this Rust workspace: semgrep only.
+#
+# semgrep enforces the repo-specific rules under `.semgrep/` (see that directory's headers) —
+# the conventions and reuse facts clippy has no way to know. It is pinned here rather than
+# installed globally so CI, the pre-push hook and every developer run the same version:
+# rule syntax and default behaviour do drift between semgrep releases.
+#
+# `package-mode = false` — there is no Python package here, this is a dependency lockfile.
+# Python 3.12 is pinned deliberately: semgrep's opentelemetry dependency does not resolve its
+# namespace packages under the system 3.14.
+[tool.poetry]
+package-mode = false
+
+[project]
+name = "rusty-lang-tool-tooling"
+version = "0.0.0"
+description = "Lint tooling (semgrep) for the rusty-lang-tool Rust workspace."
+requires-python = ">=3.12,<3.13"
+
+[tool.poetry.group.dev.dependencies]
+semgrep = "^1.0"
+
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"

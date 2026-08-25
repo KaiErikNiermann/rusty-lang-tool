@@ -1,0 +1,25 @@
+# Semgrep's built-in ignore list excludes `tests/` wholesale. This repo's `crates/rlt-cli/tests/`
+# is the differential ORACLE — it reconstructs LanguageTool's own examples and replays them through
+# every engine, so it handles engine byte offsets exactly like production does and is precisely
+# where a char-boundary bug hides. It must be scanned.
+#
+# `:include` pulls in the defaults; the un-ignores below then re-admit what we do want.
+:include .gitignore
+
+# --- Re-admit test code the built-in list would drop -------------------------------------------
+!tests/
+!crates/rlt-cli/tests/
+
+# --- Never scan ---------------------------------------------------------------------------------
+node_modules/
+target/
+web/build/
+web/node_modules/
+dist/
+# Fetched upstream LanguageTool checkout + built artifacts: vendored, not ours to lint.
+resources/
+data/
+.remember/
+# 16k lines of xsd-parser codegen — `cargo xtask codegen` regenerates it; editing it is a mistake
+# the rules cannot usefully comment on.
+crates/rlt-convert/src/lt_schema.rs
