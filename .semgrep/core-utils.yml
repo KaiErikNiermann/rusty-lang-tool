@@ -1,0 +1,140 @@
+# Reuse the helpers this repo already has, instead of growing another private copy.
+#
+# Every rule here was written against duplication that EXISTED in the tree when it was added, and
+# the count is recorded in the rule's message along with what happened to it. That matters: a
+# pattern rule matching nothing is indistinguishable from a clean codebase, so each rule has a
+# documented answer it must have found. Where the answer has since been fixed, the message says so
+# — "0 hits, and here is the commit that made it 0" is a validated rule; "0 hits, unknown why" is
+# not.
+#
+# Scope note: clippy runs pedantic over this workspace already, and `web/` runs ESLint
+# (sonarjs/unicorn/security) plus svelte-check. Nothing here duplicates them — these are
+# repo-specific reuse facts no general linter can know, because they are about which helper in THIS
+# tree already generalizes the shape.
+#
+# Semgrep cannot parse `.svelte` at all (it scans zero files), so the TypeScript rules below see
+# only `.ts`. See README.md.
+rules:
+  - id: use-rlt-core-push-unique
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      `rlt_core::push_unique` already is "append to a `Vec<String>` iff absent, order-preserving".
+      FOUND 2 private copies, both now removed: `push_unique_str` in `rlt-core/src/matcher.rs` (same
+      crate as the original, ~900 lines apart) and `push_tag` in `rlt-native/src/lib.rs` — which sat
+      alongside `rlt-native/src/tagger.rs`, already calling the shared helper for the same tags and
+      lemmas.
+      The public helper additionally skips empty values, which is what its callers want: a tagger
+      that yields an empty lemma should not put `""` in the lemma list. Neither copy did, so both
+      silently admitted that value. Call `rlt_core::push_unique`; every crate that needs it already
+      depends on `rlt-core`.
+    paths:
+      exclude:
+        - "**/tests/"
+    patterns:
+      - pattern: |
+          fn $NAME($OUT: &mut Vec<String>, $VAL: &str) {
+              if !$OUT.iter().any(|$V| $V == $VAL) {
+                  $OUT.push($VAL.to_owned());
+              }
+          }
+      # The definition in rlt-core/src/lib.rs guards on `!value.is_empty()` first, so it does not
+      # match this body — no need to exclude the file and lose the guard inside it.
+
+  - id: use-langconfig-lt-paths
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      The LanguageTool checkout layout belongs to `rlt-lang` — `lt_resource_dir(lt_module)` /
+      `lt_rules_dir(lt_module)` (free functions, for callers that have only a module string), the
+      matching `LangConfig` methods, and the `lt_resource_path!` / `lt_rules_path!` macros for
+      `const` position.
+      FOUND 9 sites spelling the 100-character path out by hand, all now routed through those:
+      `xtask::lang_inspect` re-formatted `lt_resource_dir`/`lt_rules_dir` verbatim, `xtask`'s
+      `LT_EN_RESOURCE`, `rlt-convert`'s `DEFAULT_GRAMMAR` / `DEFAULT_CONFUSION_SETS` /
+      `DEFAULT_DISAMBIGUATION`, and three `mod tests` fixtures in `morfologik.rs` (ru/ar/it).
+      That path points into a VENDORED upstream repo whose layout moves between LT releases — the
+      `adapt-sweep` task exists precisely because it does. When it drifts, each site fails
+      independently with a `not found` in one task only, which reads as "fetch-lt is broken". The
+      test fixtures were the worst of them: each is guarded by
+      `let (Ok(dict), Ok(info)) = .. else { eprintln!("skip: .."); return; }`, so a drifted path did
+      not fail `reads_real_languagetool_russian_dict` — it made it pass while testing nothing.
+      Note the macros exist because `const`s (clap `default_value`, the `DEFAULT_*` exports) cannot
+      call a `String`-returning function; `concat!` over literals gives the same string in const
+      position. Reach for the function where you can and the macro where you must.
+    paths:
+      exclude:
+        - "/crates/rlt-lang/src/lib.rs"
+    pattern-regex: 'resources/lt/_repo/languagetool-language-modules/'
+
+  - id: use-langconfig-artifact-paths
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      `resources/<code>/…` artifact paths belong to `rlt_lang::LangConfig` — `tagger_path()`,
+      `disambig_path()`, `grammar_blob_path()`, `confusion_path()`, `l4_dir()`, `pos_dict_local()`,
+      or the `artifact_path!` macro in `const` position.
+      FOUND 2 hardcoded English ones, both now on the macro: `rlt-convert`'s `DEFAULT_OUT`
+      (`resources/en/grammar.rkyv`) and `DEFAULT_CONFUSION_OUT` (`resources/en/confusion.rkyv`).
+      A hardcoded path quietly makes an otherwise language-agnostic crate default to English —
+      every other entry point in `rlt-convert` takes a `&LangConfig`. This is the "adding a
+      language should be data, not code" invariant `rlt-lang`'s module doc states and
+      `cargo xtask lang-coherence` gates; a baked-in `en` path is a site that checker cannot see.
+    paths:
+      exclude:
+        - "/crates/rlt-lang/src/lib.rs"
+        - "**/tests/"
+        - "**/benches/"
+    pattern-regex: '"resources/(en|de|ru|fr|es|it|ar)/[a-z0-9_.-]+"'
+
+  - id: share-char-boundary-snapping
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      `rlt_core` owns what makes an engine byte offset usable — `floor_char_boundary`,
+      `ceil_char_boundary`, `safe_slice` (snap inward and tolerate) and `is_valid_span` (check and
+      reject). `str::floor_char_boundary`/`ceil_char_boundary` are still unstable, which is why
+      these exist at all.
+      FOUND 3 hand-rolled sites, each a different shape and each subtly incomplete, all now routed
+      through those: `xtask`'s `tail()` scanned forward with `.find(|i| s.is_char_boundary(*i))`,
+      and `rlt-cli/tests/oracle.rs` guarded with `is_char_boundary(start) && is_char_boundary(end)`
+      and DROPPED the example when it failed — silently shrinking the corpus every engine is scored
+      against rather than failing.
+      Pick by intent: `safe_slice` where a bad span should be tolerated, `is_valid_span` where it
+      must be caught. Do not re-derive either inline; the reasoning belongs in one module.
+    paths:
+      exclude:
+        - "/crates/rlt-core/src/lib.rs"
+    patterns:
+      - pattern-either:
+          - pattern: $S.is_char_boundary(...)
+          - pattern: $S.floor_char_boundary(...)
+          - pattern: $S.ceil_char_boundary(...)
+      # Calls to the shared helpers are the fix, not the problem. These are needed because
+      # semgrep normalizes `a::b(x, y)` and `x.b(y)` to the same Rust AST, so the patterns above
+      # match a path call to `rlt_core::ceil_char_boundary(s, i)` as well as a method call.
+      - pattern-not: rlt_core::floor_char_boundary(...)
+      - pattern-not: rlt_core::ceil_char_boundary(...)
+      - pattern-not: rlt_core::is_valid_span(...)
+      - pattern-not: rlt_core::safe_slice(...)
+      - pattern-not: crate::floor_char_boundary(...)
+      - pattern-not: crate::ceil_char_boundary(...)
+
+  - id: use-byte-span-to-utf16
+    languages: [typescript]
+    severity: WARNING
+    message: >-
+      `checker/spanmap.ts` exports `byteSpanToUtf16(b2u, span)` — "map both endpoints of a byte
+      span". FOUND it dead outside its own unit test, with both real consumers open-coding the same
+      two `b2u(...)` calls instead: `editor/fixes.ts`'s `byteSpanToRange` and
+      `editor/diagnostics.ts`'s `apply` — 2 sites, both now calling it.
+      So the one exported, unit-tested helper for the UTF-8-byte → UTF-16 conversion was dead code,
+      and the path everything actually used was untested. A tested helper with no callers is worse
+      than no helper: it reads as the sanctioned path while the real path is somewhere else.
+      This rule can only see `.ts`/`.js` — semgrep does not parse `.svelte` — so the component-side
+      equivalent is ESLint's job. See README.md.
+    paths:
+      include:
+        - "/web/src/lib/editor/"
+    pattern: |
+      $MODEL.getPositionAt($B2U($SPAN.start))

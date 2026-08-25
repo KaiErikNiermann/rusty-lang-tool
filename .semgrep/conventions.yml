@@ -1,0 +1,151 @@
+# Conventions this repo holds but no existing linter enforces.
+#
+# The workspace already runs clippy with `pedantic` warn-by-default (see `[workspace.lints.clippy]`
+# in Cargo.toml) and the pre-push hook gates on `-D warnings`, so anything clippy already catches is
+# deliberately absent here. What is left is repo-specific: facts about THIS codebase's boundaries
+# that a general linter has no way to know.
+#
+# `web/` has no ESLint at all — `pnpm check` is svelte-check (types only). So the TypeScript rule
+# below is not duplicating a linter, it is the only thing enforcing that invariant.
+#
+# Each rule records the count it found when written. A rule that has never matched anything is a
+# rule nobody has validated, so a forward-only guard says so in its own message rather than
+# pretending to a backlog it does not have.
+rules:
+  - id: fs-outside-native-loader
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      `std::fs` in a crate that must compile to `wasm32`. rlt-ir, rlt-core, rlt-lang, rlt-engine,
+      rlt-native and rlt-tagger are all reachable from `rlt-wasm` (which `web/` builds via
+      `wasm-pack --target web`), and on `wasm32-unknown-unknown` `std::fs` COMPILES and then fails
+      at runtime — so this is not caught by `cargo check --target wasm32`, only by a blank page in
+      the browser.
+      The established shape is a pair: a `from_bytes` constructor that holds all the real logic and
+      is the only thing wasm calls, plus a thin native-only `from_paths`/`from_dir` wrapper that
+      reads the files and immediately delegates. Both current sites are exactly that —
+      `NativeEngine::from_paths` (rlt-native) and `L4Tagger::from_dir` (rlt-tagger), 2 sites — and
+      the rule allowlists them by name.
+      Reading bytes anywhere else means wasm reaches it too. Take `&[u8]` and let the caller decide
+      where it came from; `rlt-wasm` already passes buffers straight from `fetch`.
+    paths:
+      include:
+        - "/crates/rlt-ir/src/"
+        - "/crates/rlt-core/src/"
+        - "/crates/rlt-lang/src/"
+        - "/crates/rlt-engine/src/"
+        - "/crates/rlt-native/src/"
+        - "/crates/rlt-tagger/src/"
+    patterns:
+      - pattern-either:
+          - pattern: std::fs::$F(...)
+          - pattern: std::fs::File::$F(...)
+      # The two sanctioned native wrappers. Anchored on the function NAME rather than on a
+      # `#[cfg(not(target_arch = "wasm32"))]` attribute, because there are no cfg gates in this
+      # tree — the wrappers are simply never called from the wasm entry points.
+      - pattern-not-inside: |
+          pub fn from_paths(...) -> $R { ... }
+      - pattern-not-inside: |
+          pub fn from_dir(...) -> $R { ... }
+      # Test modules read fixtures off disk on purpose; every test module in this workspace is
+      # `mod tests`, checked. Anchored on the module name, not `#[cfg(test)]`: semgrep's Rust
+      # grammar does not bind the attribute to the item for `pattern-not-inside`.
+      - pattern-not-inside: |
+          mod tests { ... }
+
+  - id: print-in-library-crate
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      Library code must report through `tracing` (`warn!`/`info!`/`debug!`), never `println!` /
+      `eprintln!`. Two of these crates are consumed as libraries with no console at all: `rlt-wasm`
+      runs in a browser Web Worker (`checker.worker.ts`), where `println!` goes to a wasm stdout
+      shim nobody reads, and the build-time crates are driven by `xtask`, whose own output is the
+      user-facing log. `rlt-cli` already routes 10 messages through `tracing::info!`/`warn!`,
+      so the precedent is set.
+      FORWARD GUARD, not a backlog: all 20 current `eprintln!` sites in these crates are inside
+      `mod tests` (checked, each one a "skip: fixture not fetched" notice), which is legitimate and
+      excluded below. `xtask/` and `crates/rlt-cli/` are excluded wholesale — a CLI printing its
+      own results to stdout is the point.
+    paths:
+      include:
+        - "/crates/"
+      exclude:
+        - "/crates/rlt-cli/"
+        - "**/tests/"
+        - "**/benches/"
+        # `examples/` are standalone `fn main` probes run by hand (`leak_probe.rs` prints an RSS
+        # table); printing is their entire output contract, same as a bin.
+        - "**/examples/"
+    patterns:
+      - pattern-either:
+          - pattern: println!(...)
+          - pattern: eprintln!(...)
+          - pattern: print!(...)
+          - pattern: eprint!(...)
+      - pattern-not-inside: |
+          mod tests { ... }
+
+  - id: raw-engine-byte-offset-in-js
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      Engine spans are **UTF-8 byte offsets**; JS strings and Monaco address text in **UTF-16 code
+      units**. Indexing a JS string with a raw `span.start`/`span.end` silently returns the wrong
+      substring for any non-ASCII input — and this is a grammar checker for German, Russian, French,
+      Spanish, Italian and Arabic, so non-ASCII is the normal case, not the edge case.
+      `checker/spanmap.ts` exists for exactly this and calls itself "the correctness crux of the
+      editor binding": build `makeByteToUtf16(text)` once per checked snapshot, then map every
+      endpoint through it (`byteSpanToUtf16`, or `editor/fixes.ts`'s `byteSpanToRange` for a Monaco
+      range).
+      FORWARD GUARD: the 5 production span sites all route through `spanmap` today. It exists
+      because `web/` has NO ESLint — `pnpm check` is svelte-check, which is types-only and cannot
+      see that two `number`s are in different units.
+    paths:
+      exclude:
+        - "**/spanmap.ts"
+        - "**/*.test.ts"
+    pattern-either:
+      - pattern: $TEXT.slice($SPAN.start, ...)
+      - pattern: $TEXT.substring($SPAN.start, ...)
+      - pattern: $TEXT.substr($SPAN.start, ...)
+      - pattern: $MODEL.getPositionAt($SPAN.start)
+      - pattern: $MODEL.getPositionAt($SPAN.end)
+
+  - id: langconfig-built-outside-rlt-lang
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      A `LangConfig` may only be constructed in `rlt-lang/src/lib.rs`. `LANGUAGES` is documented as
+      "the single source of truth every other site must agree with", and everything that answers
+      "which languages exist" derives from it — `config()`, `known()`, the CLI/xtask error strings,
+      the fuzz rotation, the nightly oracle matrix, and `cargo xtask coherence`. A `LangConfig`
+      built anywhere else is a language those all disagree about: it would tag, spell-check and
+      match without ever appearing in `--help`, in the coherence report, or in CI's matrix.
+      Every consumer already takes `&'static LangConfig` from `rlt_lang::config(code)`. Add the
+      language to `LANGUAGES` and look it up.
+      FORWARD GUARD: zero sites today (all 7 configs are statics in `rlt-lang`). See
+      `.semgrep/README.md` for why the *rest* of the partial-language problem is checked by
+      `cargo xtask coherence` and the compiler rather than by semgrep.
+    paths:
+      exclude:
+        - "/crates/rlt-lang/src/"
+    # Semgrep's Rust grammar cannot parse a struct-literal pattern (`LangConfig { ... }` is a
+    # hard parse error, in every expression context tried), so this is a regex. Requiring a
+    # preceding `=`/`(`/`,` keeps it in expression position — without it, `fn f() -> LangConfig {`
+    # matches the function's own opening brace.
+    pattern-regex: '[=(,]\s*(?:rlt_lang::)?LangConfig\s*\{'
+
+  # DELIBERATELY ABSENT: a rule banning `.unwrap()` / `.expect()` outside tests.
+  #
+  # The obvious convention rule, and it does not earn its place. Non-test `.unwrap()`/`.expect()`
+  # across the whole workspace scores 2 — both in `rlt-native/src/tagger.rs`, both
+  # `u32::try_from(v.len()).expect("< 4B lemmas")`, i.e. infallible short of a 4-billion-entry
+  # lexicon. clippy's `unwrap_used` is available if that position ever changes. A rule whose every
+  # current hit is correct code teaches people to skim the linter.
+  #
+  # DELIBERATELY ABSENT: a rule requiring `#![forbid(unsafe_code)]` per crate.
+  #
+  # 8 of 10 crates carry it; the two that do not (`rlt-cli/src/lib.rs`, `xtask/src/main.rs`) are
+  # already covered by `[workspace.lints.rust] unsafe_code = "warn"` plus the pre-push
+  # `-D warnings`. Enforcing the attribute too would be enforcing the same fact twice.
