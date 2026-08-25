@@ -40,8 +40,21 @@ fmt-check:
 coherence:
     cargo run -q -p xtask -- lang-coherence
 
-# The blocking gate mirrored from CI / pre-push (clippy + coherence + tests)
-check: clippy coherence test
+# Repo-specific semgrep rules — conventions + reuse (see .semgrep/README.md)
+semgrep:
+    # `--error` makes any finding a non-zero exit, so this can gate.
+    poetry run semgrep --config .semgrep/ --error --metrics=off .
+
+# Install the pinned semgrep (Poetry, py3.12) — run once after cloning
+semgrep-setup:
+    poetry install --no-interaction
+
+# ESLint over web/ — sonarjs + unicorn + security (semgrep cannot parse .svelte)
+web-lint:
+    cd web && pnpm install --frozen-lockfile && pnpm run lint
+
+# The blocking gate mirrored from CI / pre-push (clippy + semgrep + coherence + tests)
+check: clippy semgrep coherence test
 
 # --- LanguageTool data & artifacts ---
 

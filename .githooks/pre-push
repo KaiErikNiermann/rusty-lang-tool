@@ -9,6 +9,13 @@ cargo fmt --all --check
 echo "[pre-push] cargo clippy (warnings = errors)"
 cargo clippy --workspace --all-targets -- -D warnings
 
+echo "[pre-push] semgrep (.semgrep/ — repo conventions + reuse rules)"
+if poetry env info --path >/dev/null 2>&1; then
+    poetry run semgrep --config .semgrep/ --error --metrics=off --quiet .
+else
+    echo "  skipped: no poetry env — run \`just semgrep-setup\` to enable this gate"
+fi
+
 echo "[pre-push] cargo test"
 cargo test --workspace
 
