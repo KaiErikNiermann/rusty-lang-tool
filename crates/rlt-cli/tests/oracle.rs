@@ -436,7 +436,10 @@ fn correct_sentences(grammar: &Path) -> Vec<String> {
             }
             let (start, end) = e.marker?;
             let mut s = e.text;
-            if s.is_char_boundary(start) && s.is_char_boundary(end) && end <= s.len() {
+            // Reject rather than repair: splicing a correction at a mid-character offset would
+            // put a corrupt sentence into the oracle corpus, which every engine is then scored
+            // against. `rlt_core` owns what makes a byte span usable.
+            if rlt_core::is_valid_span(&s, start, end) {
                 s.replace_range(start..end, &e.corrections[0]);
                 Some(s)
             } else {

@@ -52,6 +52,53 @@ pub(crate) fn recase(source: &str, candidate: &str) -> String {
     }
 }
 
+/// Largest char-boundary offset `<= i` in `text` (`i` clamped to `text.len()` first).
+///
+/// `str::floor_char_boundary` is still unstable, so this is the stable stand-in.
+#[must_use]
+pub fn floor_char_boundary(text: &str, i: usize) -> usize {
+    let mut i = i.min(text.len());
+    while i > 0 && !text.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Smallest char-boundary offset `>= i` in `text` (`i` clamped to `text.len()` first).
+///
+/// `str::ceil_char_boundary` is still unstable, so this is the stable stand-in.
+#[must_use]
+pub fn ceil_char_boundary(text: &str, i: usize) -> usize {
+    let mut i = i.min(text.len());
+    while i < text.len() && !text.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
+/// Whether `[start, end)` addresses `text` exactly: both ends in bounds, on char boundaries, and
+/// ordered. Use this where a bad span must be **rejected** rather than repaired — the example
+/// oracle, which would silently corrupt its own corpus if it spliced at a mid-character offset.
+#[must_use]
+pub fn is_valid_span(text: &str, start: usize, end: usize) -> bool {
+    start <= end && end <= text.len() && text.is_char_boundary(start) && text.is_char_boundary(end)
+}
+
+/// `&text[start..end]`, with both ends snapped **inward** to char boundaries and clamped to
+/// `text.len()` — never panics, whatever offsets it is handed.
+///
+/// Byte offsets that reach this crate are ENGINE-REPORTED (an [`Engine`] tokenizer, an L4 tagger's
+/// word spans, a `Diagnostic` deserialized from wasm) and so are not trusted to land on a UTF-8 char
+/// boundary. Raw indexing panics on the first multi-byte document; since every non-English language
+/// this tool ships is full of those, that is a crash on ordinary input rather than an edge case.
+/// Use this where a bad span should be **tolerated**; use [`is_valid_span`] where it must be caught.
+#[must_use]
+pub fn safe_slice(text: &str, start: usize, end: usize) -> &str {
+    let end = floor_char_boundary(text, end);
+    let start = floor_char_boundary(text, start.min(end));
+    &text[start..end]
+}
+
 /// A half-open byte range `[start, end)` into the checked text.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
@@ -366,5 +413,47 @@ mod noop_guard_tests {
         let mut d = vec![diag(0, 5, &[])];
         strip_noop_suggestions(text, &mut d);
         assert_eq!(d.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    use super::*;
+
+    // "naïve" — the 'ï' occupies bytes 2..4, so 3 is a mid-character offset.
+    const S: &str = "naïve";
+
+    #[test]
+    fn floor_and_ceil_snap_off_a_mid_char_offset() {
+        assert!(!S.is_char_boundary(3));
+        assert_eq!(floor_char_boundary(S, 3), 2);
+        assert_eq!(ceil_char_boundary(S, 3), 4);
+    }
+
+    #[test]
+    fn boundaries_clamp_past_the_end() {
+        assert_eq!(floor_char_boundary(S, 999), S.len());
+        assert_eq!(ceil_char_boundary(S, 999), S.len());
+    }
+
+    #[test]
+    fn safe_slice_does_not_panic_on_a_mid_char_span() {
+        assert_eq!(safe_slice(S, 0, 3), "na");
+        assert_eq!(safe_slice(S, 3, 999), "ïve");
+        assert_eq!(safe_slice(S, 0, S.len()), S);
+    }
+
+    #[test]
+    fn safe_slice_tolerates_inverted_and_out_of_range_spans() {
+        assert_eq!(safe_slice(S, 4, 2), "");
+        assert_eq!(safe_slice(S, 900, 999), "");
+    }
+
+    #[test]
+    fn is_valid_span_rejects_what_safe_slice_repairs() {
+        assert!(is_valid_span(S, 0, 2));
+        assert!(!is_valid_span(S, 0, 3), "3 is mid-character");
+        assert!(!is_valid_span(S, 0, 999), "past the end");
+        assert!(!is_valid_span(S, 4, 2), "inverted");
     }
 }

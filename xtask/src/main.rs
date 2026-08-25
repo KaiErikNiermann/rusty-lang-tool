@@ -479,9 +479,7 @@ fn tail(s: &str, n: usize) -> String {
     if s.len() <= n {
         return s.to_owned();
     }
-    let start = (s.len() - n..s.len())
-        .find(|i| s.is_char_boundary(*i))
-        .unwrap_or(s.len());
+    let start = rlt_core::ceil_char_boundary(s, s.len() - n);
     format!("…{}", &s[start..])
 }
 
