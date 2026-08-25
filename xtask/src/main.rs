@@ -72,7 +72,7 @@ const AGID_POS_URL: &str =
     "https://raw.githubusercontent.com/en-wl/wordlist/master/pos/part-of-speech.txt";
 /// LT's English resource directory (the `remap.awk` build script + `added`/`removed` supplements live
 /// here after `fetch-lt`).
-const LT_EN_RESOURCE: &str = "resources/lt/_repo/languagetool-language-modules/en/src/main/resources/org/languagetool/resource/en";
+const LT_EN_RESOURCE: &str = rlt_lang::lt_resource_path!("en");
 /// Hand-authored closed-class supplement (committed; license-clean). Overrides the awk output for the
 /// high-frequency function words AGID lacks and `remap.awk` mistags (the, a, is, and, to, pronouns…).
 const CLOSED_CLASS: &str = "data/en-closed-class.tsv";
@@ -1149,12 +1149,10 @@ fn lang_inspect(
     use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
 
     let m = lt_module.unwrap_or(code);
-    let resource = format!(
-        "resources/lt/_repo/languagetool-language-modules/{m}/src/main/resources/org/languagetool/resource/{m}"
-    );
-    let rules = format!(
-        "resources/lt/_repo/languagetool-language-modules/{m}/src/main/resources/org/languagetool/rules/{m}"
-    );
+    // `lang_inspect` runs before the language has a `LangConfig` — that is what it exists to
+    // derive — so it takes the free functions rather than the `LangConfig` methods. Same strings.
+    let resource = rlt_lang::lt_resource_dir(m);
+    let rules = rlt_lang::lt_rules_dir(m);
     if !Path::new(&resource).exists() {
         bail!("{resource} not found — add {m:?} to SPARSE_PATHS and run `cargo xtask fetch-lt`");
     }

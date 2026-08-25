@@ -1588,6 +1588,7 @@ dependencies = [
  "regex",
  "rkyv",
  "rlt-ir",
+ "rlt-lang",
  "serde",
  "tracing",
  "tracing-subscriber",

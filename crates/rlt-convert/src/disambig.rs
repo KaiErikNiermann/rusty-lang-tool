@@ -18,7 +18,7 @@ use serde::Deserialize;
 use crate::expand_entities;
 
 /// Default location of LT's English `disambiguation.xml` after `cargo xtask fetch-lt`.
-pub const DEFAULT_DISAMBIGUATION: &str = "resources/lt/_repo/languagetool-language-modules/en/src/main/resources/org/languagetool/resource/en/disambiguation.xml";
+pub const DEFAULT_DISAMBIGUATION: &str = rlt_lang::lt_resource_path!("en", "disambiguation.xml");
 
 /// Summary of a disambiguation lowering run.
 #[derive(Debug, Clone)]

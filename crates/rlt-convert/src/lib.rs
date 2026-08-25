@@ -34,17 +34,17 @@ use xsd_parser_types::quick_xml::{DeserializeSync, SliceReader, XmlReader};
 use lt_schema::{pattern, rules};
 
 /// Default location of LT's English `grammar.xml` after `cargo xtask fetch-lt`.
-pub const DEFAULT_GRAMMAR: &str = "resources/lt/_repo/languagetool-language-modules/en/src/main/resources/org/languagetool/rules/en/grammar.xml";
+pub const DEFAULT_GRAMMAR: &str = rlt_lang::lt_rules_path!("en", "grammar.xml");
 /// Default output path for the compiled runtime artifact (English; see `rlt_lang` for per-language).
-pub const DEFAULT_OUT: &str = "resources/en/grammar.rkyv";
+pub const DEFAULT_OUT: &str = rlt_lang::artifact_path!("en", "grammar.rkyv");
 /// Default location of LanguageTool's English confusion sets after `cargo xtask fetch-lt`.
-pub const DEFAULT_CONFUSION_SETS: &str = "resources/lt/_repo/languagetool-language-modules/en/src/main/resources/org/languagetool/resource/en/confusion_sets.txt";
+pub const DEFAULT_CONFUSION_SETS: &str = rlt_lang::lt_resource_path!("en", "confusion_sets.txt");
 /// Default location of Norvig's unigram counts after `cargo xtask fetch-ngrams`.
 pub const DEFAULT_UNIGRAMS: &str = "resources/ngrams/count_1w.txt";
 /// Default location of Norvig's bigram counts after `cargo xtask fetch-ngrams`.
 pub const DEFAULT_BIGRAMS: &str = "resources/ngrams/count_2w.txt";
 /// Default output path for the compiled L3 confusion model (English).
-pub const DEFAULT_CONFUSION_OUT: &str = "resources/en/confusion.rkyv";
+pub const DEFAULT_CONFUSION_OUT: &str = rlt_lang::artifact_path!("en", "confusion.rkyv");
 
 /// Counts from building the L3 confusion model.
 #[derive(Debug, Clone, Copy, Default)]

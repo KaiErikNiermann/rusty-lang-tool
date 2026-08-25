@@ -162,6 +162,105 @@ pub struct Compounding {
     pub min_part_len: usize,
 }
 
+/// LT repo `…/resource/<module>` path, as a compile-time `&'static str`.
+///
+/// The macro exists because the [`lt_resource_dir`] function cannot serve every caller: clap's
+/// `default_value` and the `DEFAULT_*` consts in `rlt-convert` need a `const`, and a `String`
+/// returned at runtime is not one. `concat!` over literals gives the same string in const position,
+/// so the LT checkout layout still appears exactly once in this crate rather than being re-spelled
+/// at each const.
+///
+/// ```
+/// const DISAMBIG: &str = rlt_lang::lt_resource_path!("en", "disambiguation.xml");
+/// assert!(DISAMBIG.ends_with("/resource/en/disambiguation.xml"));
+/// ```
+#[macro_export]
+macro_rules! lt_resource_path {
+    ($module:literal) => {
+        concat!(
+            "resources/lt/_repo/languagetool-language-modules/",
+            $module,
+            "/src/main/resources/org/languagetool/resource/",
+            $module
+        )
+    };
+    ($module:literal, $file:literal) => {
+        concat!(
+            "resources/lt/_repo/languagetool-language-modules/",
+            $module,
+            "/src/main/resources/org/languagetool/resource/",
+            $module,
+            "/",
+            $file
+        )
+    };
+}
+
+/// LT repo `…/rules/<module>` path, as a compile-time `&'static str`.
+/// The const-position counterpart of [`lt_rules_dir`]; see [`lt_resource_path`] for why.
+///
+/// ```
+/// const GRAMMAR: &str = rlt_lang::lt_rules_path!("en", "grammar.xml");
+/// assert!(GRAMMAR.ends_with("/rules/en/grammar.xml"));
+/// ```
+#[macro_export]
+macro_rules! lt_rules_path {
+    ($module:literal) => {
+        concat!(
+            "resources/lt/_repo/languagetool-language-modules/",
+            $module,
+            "/src/main/resources/org/languagetool/rules/",
+            $module
+        )
+    };
+    ($module:literal, $file:literal) => {
+        concat!(
+            "resources/lt/_repo/languagetool-language-modules/",
+            $module,
+            "/src/main/resources/org/languagetool/rules/",
+            $module,
+            "/",
+            $file
+        )
+    };
+}
+
+/// A built artifact under `resources/<code>/`, as a compile-time `&'static str` — the const-position
+/// counterpart of [`LangConfig::tagger_path`] and friends.
+///
+/// ```
+/// const BLOB: &str = rlt_lang::artifact_path!("en", "grammar.rkyv");
+/// assert_eq!(BLOB, "resources/en/grammar.rkyv");
+/// ```
+#[macro_export]
+macro_rules! artifact_path {
+    ($code:literal, $file:literal) => {
+        concat!("resources/", $code, "/", $file)
+    };
+}
+
+/// LT repo `…/resource/<module>` directory, keyed by the raw `lt_module` segment.
+///
+/// Free-standing rather than only a [`LangConfig`] method because `cargo xtask lang-inspect` needs
+/// this path *before* the language has a `LangConfig` — deriving the config is what it is for. Both
+/// this and [`lt_rules_dir`] point into the vendored LT checkout, whose layout moves between
+/// releases, so the string lives here once and every caller follows it.
+#[must_use]
+pub fn lt_resource_dir(lt_module: &str) -> String {
+    format!(
+        "resources/lt/_repo/languagetool-language-modules/{lt_module}/src/main/resources/org/languagetool/resource/{lt_module}"
+    )
+}
+
+/// LT repo `…/rules/<module>` directory (grammar.xml), keyed by the raw `lt_module` segment.
+/// See [`lt_resource_dir`] for why this is free-standing.
+#[must_use]
+pub fn lt_rules_dir(lt_module: &str) -> String {
+    format!(
+        "resources/lt/_repo/languagetool-language-modules/{lt_module}/src/main/resources/org/languagetool/rules/{lt_module}"
+    )
+}
+
 impl LangConfig {
     /// `resources/<code>/` — the built-artifact directory for this language.
     #[must_use]
@@ -224,18 +323,12 @@ impl LangConfig {
     /// LT repo `…/resource/<lt_module>` directory (added/removed/multiwords/tagset/disambiguation).
     #[must_use]
     pub fn lt_resource_dir(&self) -> String {
-        format!(
-            "resources/lt/_repo/languagetool-language-modules/{m}/src/main/resources/org/languagetool/resource/{m}",
-            m = self.lt_module,
-        )
+        lt_resource_dir(self.lt_module)
     }
     /// LT repo `…/rules/<lt_module>` directory (grammar.xml).
     #[must_use]
     pub fn lt_rules_dir(&self) -> String {
-        format!(
-            "resources/lt/_repo/languagetool-language-modules/{m}/src/main/resources/org/languagetool/rules/{m}",
-            m = self.lt_module,
-        )
+        lt_rules_dir(self.lt_module)
     }
     /// Path of this language's `grammar.xml` in the LT checkout.
     #[must_use]

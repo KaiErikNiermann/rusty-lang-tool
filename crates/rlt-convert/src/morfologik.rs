@@ -472,6 +472,16 @@ impl Fsa for Fsa5<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    /// Resolve a repo-root-relative path (e.g. from `rlt_lang::lt_resource_path!`) against this
+    /// crate's manifest dir. These fixtures read the real LanguageTool checkout, and each guards on
+    /// the files being absent — so a path that drifts does not fail the test, it silently turns it
+    /// into a no-op. Going through `rlt_lang` keeps the layout in one place.
+    fn repo_path(rel: &str) -> PathBuf {
+        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join(rel)
+    }
+
     use std::collections::BTreeMap;
 
     use super::*;
@@ -607,10 +617,7 @@ mod tests {
         // Russian's russian.dict ships in the LT repo and is KOI8-R encoded (not UTF-8) — this proves
         // the `fsa.dict.encoding` path decodes Cyrillic correctly (every triple would be dropped if we
         // treated the bytes as UTF-8), and that SUFFIX trimming works in that single-byte encoding.
-        let base = std::path::Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../resources/lt/_repo/languagetool-language-modules/ru/src/main/resources/org/languagetool/resource/ru"
-        ));
+        let base = repo_path(rlt_lang::lt_resource_path!("ru"));
         let (Ok(dict), Ok(info)) = (
             std::fs::read(base.join("russian.dict")),
             std::fs::read_to_string(base.join("russian.info")),
@@ -681,10 +688,7 @@ mod tests {
         // Arabic's arabic.dict ships in the LT repo, CFSA2 + UTF-8 (unlike Russian's KOI8-R). This
         // pins the format and proves Arabic-script SUFFIX decoding produces clean UTF-8 — and that the
         // dict keys are UNvocalized (no tashkeel), which is what drives `Normalization::StripCombiningMarks`.
-        let base = std::path::Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../resources/lt/_repo/languagetool-language-modules/ar/src/main/resources/org/languagetool/resource/ar"
-        ));
+        let base = repo_path(rlt_lang::lt_resource_path!("ar"));
         let (Ok(dict), Ok(info)) = (
             std::fs::read(base.join("arabic.dict")),
             std::fs::read_to_string(base.join("arabic.info")),
@@ -898,10 +902,7 @@ mod tests {
         // Italian's italian.dict ships in the LT repo in the **FSA5** format (version 0x05, not CFSA2)
         // and is ISO-8859-15 encoded — this exercises both the FSA5 sibling reader and the `encoding`
         // seam at once. The dict is unvocalized Latin (no combining marks → `Normalization::None`).
-        let base = std::path::Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../resources/lt/_repo/languagetool-language-modules/it/src/main/resources/org/languagetool/resource/it"
-        ));
+        let base = repo_path(rlt_lang::lt_resource_path!("it"));
         let (Ok(dict), Ok(info)) = (
             std::fs::read(base.join("italian.dict")),
             std::fs::read_to_string(base.join("italian.info")),

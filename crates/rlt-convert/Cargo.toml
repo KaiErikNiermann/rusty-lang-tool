@@ -18,6 +18,8 @@ path = "src/main.rs"
 
 [dependencies]
 rlt-ir.workspace = true
+# For the LT-checkout / artifact path macros backing the `DEFAULT_*` consts below.
+rlt-lang.workspace = true
 # Generated bindings (src/lt_schema.rs) deserialize via these; quick-xml is referenced by the
 # generated deserializer impls. The heavy `xsd-parser` generator lives in xtask, not here.
 xsd-parser-types.workspace = true
