@@ -14,7 +14,7 @@
 
   // Lightest first — the snappy defaults lead.
   const langs = $derived(
-    Object.entries(manifest.languages).sort((a, b) => a[1].totalBytes - b[1].totalBytes),
+    Object.entries(manifest.languages).toSorted((a, b) => a[1].totalBytes - b[1].totalBytes),
   );
 </script>
 

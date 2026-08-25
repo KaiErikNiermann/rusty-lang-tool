@@ -28,7 +28,7 @@ export function registerRltCodeActions(monaco: typeof Monaco, index: DiagnosticI
         if (marker.source !== MARKER_OWNER) continue;
         const diag = index.forMarker(marker);
         if (!diag) continue;
-        diag.suggestions.forEach((s, i) => {
+        for (const [i, s] of diag.suggestions.entries()) {
           actions.push({
             // Just the word — "replace" is implied by the quick-fix menu, and Monaco truncates long
             // titles from the end with no tooltip, so the word is all that should occupy the space.
@@ -46,7 +46,7 @@ export function registerRltCodeActions(monaco: typeof Monaco, index: DiagnosticI
               ],
             },
           });
-        });
+        }
       }
 
       // Fix-all: every indexed diagnostic's first suggestion, in one edit. Ranges are recomputed from

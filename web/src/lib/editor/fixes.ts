@@ -1,5 +1,6 @@
 import type * as Monaco from "monaco-editor";
 
+import { byteSpanToUtf16 } from "../checker/spanmap";
 import type { Diagnostic, Span } from "../checker/types";
 
 /** UTF-16 editor range for a byte `span`, using a byte→UTF-16 mapper built for the matching snapshot. */
@@ -8,8 +9,9 @@ export function byteSpanToRange(
   b2u: (byteOffset: number) => number,
   span: Span,
 ): Monaco.IRange {
-  const start = model.getPositionAt(b2u(span.start));
-  const end = model.getPositionAt(b2u(span.end));
+  const { startU16, endU16 } = byteSpanToUtf16(b2u, span);
+  const start = model.getPositionAt(startU16);
+  const end = model.getPositionAt(endU16);
   return {
     startLineNumber: start.lineNumber,
     startColumn: start.column,
@@ -44,7 +46,7 @@ export function computeFixAllEdits(
       const first = d.suggestions[0];
       return first ? [{ range: byteSpanToRange(model, b2u, d.span), text: first.replacement }] : [];
     })
-    .sort(
+    .toSorted(
       (a, b) =>
         a.range.startLineNumber - b.range.startLineNumber ||
         a.range.startColumn - b.range.startColumn,

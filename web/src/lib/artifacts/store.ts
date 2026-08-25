@@ -112,6 +112,10 @@ export class ArtifactStore {
   }
 
   private url(asset: string): string {
+    // `baseUrl` is not attacker input: it comes from `static/web-artifacts.json`, which
+    // `cargo xtask web-manifest` generates. The backtracking sonarjs warns about here needs a long
+    // adversarial run of trailing slashes.
+    // eslint-disable-next-line sonarjs/super-linear-regex
     return `${this.baseUrl.replace(/\/+$/, "")}/${asset}`;
   }
 
@@ -138,6 +142,11 @@ export class ArtifactStore {
   }
 
   /** Download + verify + decompress + cache one artifact, with bounded retry. Returns raw `.rkyv` bytes. */
+  // Cognitive complexity 20 against a limit of 15. This is one linear pipeline (fetch → verify
+  // sha256 → decompress → cache) wrapped in a retry loop, and the branches are its error paths,
+  // each of which has to evict before retrying. Splitting it would spread that eviction invariant
+  // across functions. Worth revisiting if it grows further.
+  // eslint-disable-next-line sonarjs/cognitive-complexity
   private async fetchOne(
     ref: ArtifactRef,
     codec: Codec,
@@ -178,6 +187,9 @@ export class ArtifactStore {
         lastErr = err;
         await this.evict(variant.sha256); // never leave a partial/poisoned entry
         if (attempt < MAX_ATTEMPTS) {
+          // Decorrelation jitter on a retry backoff. Unpredictability is not the goal; spreading
+          // concurrent retries is, and `Math.random` is the right tool for that.
+          // eslint-disable-next-line sonarjs/pseudo-random
           await sleep(250 * 2 ** attempt + Math.floor(Math.random() * 200), signal);
         }
       }
@@ -204,7 +216,8 @@ export class ArtifactStore {
       for (const ref of Object.values(lang.files)) addRef(ref);
     }
     const cache = await caches.open(CACHE_NAME);
-    for (const req of await cache.keys()) {
+    const cached = await cache.keys();
+    for (const req of cached) {
       const hash = req.url.split("/").pop() ?? "";
       if (!live.has(hash)) await cache.delete(req);
     }

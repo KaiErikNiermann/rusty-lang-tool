@@ -171,7 +171,7 @@
     // makes them position:fixed; the explicit dom node guarantees they live outside the clipped frame.
     overflowWidgets = document.createElement("div");
     overflowWidgets.className = "monaco-editor rlt-overflow-widgets";
-    document.body.appendChild(overflowWidgets);
+    document.body.append(overflowWidgets);
 
     (async () => {
       monaco = await loadMonaco();

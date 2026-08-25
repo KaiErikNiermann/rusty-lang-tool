@@ -4,7 +4,8 @@
 // `with_native*`, and every `check()`. The UI thread only sends text and renders the diagnostics that
 // come back, so it never freezes on a 100 MB-language load or a large-input check.
 
-import { ArtifactStore, createArtifactStore } from "../artifacts/store";
+import type { ArtifactStore } from "../artifacts/store";
+import { createArtifactStore } from "../artifacts/store";
 import { CheckerManager } from "./manager";
 import { initWasm } from "./wasm";
 import type { FromWorker, ToWorker } from "./worker-protocol";
@@ -19,10 +20,12 @@ const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Brotli decode for the Fast track, backed by our wasm. `initWasm` is a cached singleton, so this
  * just awaits the module that the checker build needs anyway — no extra fetch. */
-const brotliDecode = async (bytes: Uint8Array): Promise<Uint8Array> =>
-  (await initWasm()).brotli_decompress(bytes);
+const brotliDecode = async (bytes: Uint8Array): Promise<Uint8Array> => {
+  const wasm = await initWasm();
+  return wasm.brotli_decompress(bytes);
+};
 
-self.onmessage = async (event: MessageEvent<ToWorker>) => {
+self.addEventListener("message", async (event: MessageEvent<ToWorker>) => {
   const msg = event.data;
   switch (msg.type) {
     case "init": {
@@ -60,4 +63,4 @@ self.onmessage = async (event: MessageEvent<ToWorker>) => {
       break;
     }
   }
-};
+});

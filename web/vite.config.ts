@@ -18,7 +18,7 @@ const ARTIFACTS_DIR = fileURLToPath(new URL("static/artifacts", import.meta.url)
 // already serves them verbatim).
 function rawArtifacts(): Plugin {
   const handler: Connect.NextHandleFunction = (req, res, next) => {
-    const path = (req.url ?? "").split("?")[0] ?? "";
+    const path = (req.url ?? "").split("?", 1)[0] ?? "";
     const marker = "/artifacts/";
     const at = path.indexOf(marker);
     if (at === -1 || !(path.endsWith(".gz") || path.endsWith(".br"))) return next();

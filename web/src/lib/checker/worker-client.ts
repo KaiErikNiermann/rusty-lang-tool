@@ -27,7 +27,7 @@ export class WorkerChecker {
 
   constructor() {
     this.worker = new Worker(new URL("./checker.worker.ts", import.meta.url), { type: "module" });
-    this.worker.onmessage = (e: MessageEvent<FromWorker>) => this.handle(e.data);
+    this.worker.addEventListener("message", (e: MessageEvent<FromWorker>) => this.handle(e.data));
   }
 
   private handle(msg: FromWorker): void {

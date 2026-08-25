@@ -27,8 +27,10 @@ export async function loadMonaco(): Promise<typeof Monaco> {
       import.meta.url
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (self as unknown as { MonacoEnvironment: Monaco.Environment }).MonacoEnvironment = {
+    // This global IS Monaco's configuration API: it reads `MonacoEnvironment` off the global to
+    // find its workers, so there is no non-global way to configure them.
+    // eslint-disable-next-line unicorn/no-global-object-property-assignment
+    (globalThis as unknown as { MonacoEnvironment: Monaco.Environment }).MonacoEnvironment = {
       getWorker: () => new Worker(editorWorkerUrl, { type: "module" }),
     };
 

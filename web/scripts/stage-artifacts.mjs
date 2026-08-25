@@ -21,20 +21,19 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, renameSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const webDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const repoRoot = resolve(webDir, "..");
-const artifactsDir = join(webDir, "static", "artifacts");
-const manifestPath = join(webDir, "static", "web-artifacts.json");
+const webDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = path.resolve(webDir, "..");
+const artifactsDir = path.join(webDir, "static", "artifacts");
+const manifestPath = path.join(webDir, "static", "web-artifacts.json");
 
 const langs = (process.argv[2] ?? process.env.RLT_WEB_LANGS ?? "en").trim();
-const langArgs = langs === "all" || langs === "" ? [] : ["--langs", langs];
 
 // `resources/segment.srx` is the shared input every language build produces; its presence is the proxy
 // for "the artifacts are built locally and we can (re)stage them".
-if (!existsSync(join(repoRoot, "resources", "segment.srx"))) {
+if (!existsSync(path.join(repoRoot, "resources", "segment.srx"))) {
   if (existsSync(manifestPath)) {
     console.log("[stage-artifacts] no local artifacts; keeping the existing manifest (CI / Release flow)");
     process.exit(0);
@@ -50,6 +49,8 @@ if (!existsSync(join(repoRoot, "resources", "segment.srx"))) {
 
 mkdirSync(artifactsDir, { recursive: true });
 
+const langArgs = langs === "all" || langs === "" ? [] : ["--langs", langs];
+
 console.log(`[stage-artifacts] web-manifest (${langs}) -> static/artifacts/`);
 const run = spawnSync(
   "cargo",
@@ -63,5 +64,5 @@ if (run.status !== 0) {
 }
 
 // The app loads the manifest from `${base}/web-artifacts.json` (static root), not from /artifacts.
-renameSync(join(artifactsDir, "web-artifacts.json"), manifestPath);
+renameSync(path.join(artifactsDir, "web-artifacts.json"), manifestPath);
 console.log("[stage-artifacts] wrote static/web-artifacts.json");

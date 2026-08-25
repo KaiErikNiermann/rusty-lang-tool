@@ -1,6 +1,6 @@
 import type * as Monaco from "monaco-editor";
 
-import { makeByteToUtf16 } from "../checker/spanmap";
+import { byteSpanToUtf16, makeByteToUtf16 } from "../checker/spanmap";
 import type { Diagnostic, DiagnosticSource } from "../checker/types";
 
 /** Owner string for our markers, so a re-check fully replaces the previous set. */
@@ -37,8 +37,9 @@ export class DiagnosticIndex {
     const b2u = makeByteToUtf16(text);
     this.byRange.clear();
     const markers: Monaco.editor.IMarkerData[] = diagnostics.map((d) => {
-      const start = model.getPositionAt(b2u(d.span.start));
-      const end = model.getPositionAt(b2u(d.span.end));
+      const { startU16, endU16 } = byteSpanToUtf16(b2u, d.span);
+      const start = model.getPositionAt(startU16);
+      const end = model.getPositionAt(endU16);
       const marker: Monaco.editor.IMarkerData = {
         startLineNumber: start.lineNumber,
         startColumn: start.column,
