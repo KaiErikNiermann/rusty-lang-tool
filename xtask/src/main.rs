@@ -2016,6 +2016,44 @@ impl Check {
     }
 }
 
+/// Report `LangConfig` statics declared in rlt-lang but never appended to `LANGUAGES`;
+/// returns how many were found (each counts as a required coherence failure).
+///
+/// This is the one partial-language failure nothing else can see. [`lang_coherence`]'s per-language
+/// loop iterates `LANGUAGES`, so a config missing from it is invisible there; `config()`/`known()`
+/// derive from the same list, so the language simply does not exist at runtime; and the compiler
+/// says nothing, because a `pub static` in a library crate is reachable API and so is never
+/// `dead_code`. The result would be a fully-written language config, a green build, and a checker
+/// that has never heard of the language.
+///
+/// Checked by source text rather than by a test inside rlt-lang: Rust has no reflection, so no test
+/// in that crate can enumerate statics that nothing references.
+fn report_orphan_lang_configs() -> Result<usize> {
+    let src = std::fs::read_to_string("crates/rlt-lang/src/lib.rs")
+        .context("reading crates/rlt-lang/src/lib.rs")?;
+    let listed = src
+        .split_once("pub static LANGUAGES:")
+        .and_then(|(_, rest)| rest.split_once(';'))
+        .map(|(list, _)| list.to_owned())
+        .unwrap_or_default();
+    let orphans: Vec<&str> = src
+        .lines()
+        .filter_map(|l| {
+            let name = l.strip_prefix("pub static ")?.split_once(": LangConfig")?.0;
+            (!listed.contains(&format!("&{name}"))).then_some(name)
+        })
+        .collect();
+    if let Some(first) = orphans.first() {
+        println!(
+            "\u{2717} LangConfig static(s) not in LANGUAGES: {} — append `&{first}` to `pub static LANGUAGES` in crates/rlt-lang/src/lib.rs\n",
+            orphans.join(", "),
+        );
+    } else {
+        println!("\u{2713} no orphan LangConfig statics\n");
+    }
+    Ok(orphans.len())
+}
+
 /// Verify every configured language is wired into the non-Rust / cross-file sites that can't derive
 /// from [`rlt_lang::LANGUAGES`]. Required failures gate CI; recommended ones only warn. (Sites that
 /// *can* derive — the CLI/xtask error strings, the fuzz rotation, the nightly oracle matrix — aren't
@@ -2033,6 +2071,9 @@ fn lang_coherence() -> Result<()> {
     );
 
     let mut failures = 0usize;
+
+    failures += report_orphan_lang_configs()?;
+
     for cfg in rlt_lang::LANGUAGES {
         let code = cfg.code;
         let mut checks = vec![
