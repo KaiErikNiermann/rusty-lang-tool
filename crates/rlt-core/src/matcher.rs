@@ -901,7 +901,7 @@ fn apply_action(action: &CompiledAction, token: &mut Token) {
                     token.tags.retain(|t| postags.contains(t));
                 } else {
                     for p in postags {
-                        push_unique_str(&mut token.tags, p);
+                        crate::push_unique(&mut token.tags, p);
                     }
                 }
             }
@@ -910,17 +910,17 @@ fn apply_action(action: &CompiledAction, token: &mut Token) {
                     token.lemmas.retain(|l| lemmas.contains(l));
                 } else {
                     for l in lemmas {
-                        push_unique_str(&mut token.lemmas, l);
+                        crate::push_unique(&mut token.lemmas, l);
                     }
                 }
             }
         }
         CompiledAction::Add { postags, lemmas } => {
             for p in postags {
-                push_unique_str(&mut token.tags, p);
+                crate::push_unique(&mut token.tags, p);
             }
             for l in lemmas {
-                push_unique_str(&mut token.lemmas, l);
+                crate::push_unique(&mut token.lemmas, l);
             }
         }
         CompiledAction::Remove { tags, lemmas } => {
@@ -934,13 +934,6 @@ fn apply_action(action: &CompiledAction, token: &mut Token) {
                 token.tags.retain(|t| tags.iter().any(|m| m.matches(t)));
             }
         }
-    }
-}
-
-/// Append `value` to `out` if absent (order-preserving unique).
-fn push_unique_str(out: &mut Vec<String>, value: &str) {
-    if !out.iter().any(|v| v == value) {
-        out.push(value.to_owned());
     }
 }
 

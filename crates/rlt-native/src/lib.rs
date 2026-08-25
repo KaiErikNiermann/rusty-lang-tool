@@ -19,7 +19,7 @@ use std::borrow::Cow;
 use std::ops::Range;
 use std::path::Path;
 
-use rlt_core::{Analysis, Disambiguator, Engine, Span, Token};
+use rlt_core::{Analysis, Disambiguator, Engine, Span, Token, push_unique};
 use rlt_lang::{Compounding, LangConfig, Normalization, TagSet};
 use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
 
@@ -95,7 +95,7 @@ impl NativeEngine {
         let mut tags = Vec::new();
         if let Some(analyses) = self.tagger.analyses(word) {
             for wd in analyses {
-                push_tag(&mut tags, &wd.tag);
+                push_unique(&mut tags, &wd.tag);
             }
         }
         tags
@@ -186,8 +186,8 @@ impl Engine for NativeEngine {
                             compound::analyze_compound(&token.text, &self.tagger, rules)
                         {
                             for wd in &analyses {
-                                push_tag(&mut token.tags, &wd.tag);
-                                push_tag(&mut token.lemmas, &wd.lemma);
+                                push_unique(&mut token.tags, &wd.tag);
+                                push_unique(&mut token.lemmas, &wd.lemma);
                             }
                         }
                     }
@@ -196,7 +196,7 @@ impl Engine for NativeEngine {
             }
             // SENT_END marks the sentence's final token — 331 grammar rules anchor on it.
             if let Some(last) = sentence.last_mut() {
-                push_tag(&mut last.tags, self.tagset.sent_end);
+                push_unique(&mut last.tags, self.tagset.sent_end);
             }
             // Disambiguation runs per sentence (LT's rules don't cross boundaries; the sentinels
             // bound them), narrowing/fixing tags before the L2 matcher sees them.
@@ -274,19 +274,19 @@ fn push_structural_tags(token: &mut Token, tagset: &TagSet) {
         return;
     }
     if !text.is_empty() && text.chars().all(|c| tagset.punctuation_chars.contains(&c)) {
-        push_tag(&mut token.tags, tagset.punctuation_tag);
+        push_unique(&mut token.tags, tagset.punctuation_tag);
         if let Some((_, class)) = tagset
             .punctuation_classes
             .iter()
             .find(|(ch, _)| *ch == text)
         {
-            push_tag(&mut token.tags, class);
+            push_unique(&mut token.tags, class);
         }
         return;
     }
     if token.tags.is_empty() {
         let capitalized = text.chars().next().is_some_and(char::is_uppercase);
-        push_tag(
+        push_unique(
             &mut token.tags,
             if capitalized {
                 tagset.proper_noun_tag
@@ -294,13 +294,6 @@ fn push_structural_tags(token: &mut Token, tagset: &TagSet) {
                 tagset.oov_tag
             },
         );
-    }
-}
-
-/// Append `tag` to `tags` if not already present (order-preserving unique).
-fn push_tag(tags: &mut Vec<String>, tag: &str) {
-    if !tags.iter().any(|t| t == tag) {
-        tags.push(tag.to_owned());
     }
 }
 
