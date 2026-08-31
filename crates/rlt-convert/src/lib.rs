@@ -1016,16 +1016,16 @@ fn is_yes(v: &pattern::BinaryYesNoType) -> bool {
 /// (unsupported), and `default="off"`/`"temp_off"` `<rule>`/`<rulegroup>`s (disabled — see
 /// [`rule_enabled`]/[`group_enabled`]). Mirroring this is what keeps the fidelity audit free of
 /// spurious "missing" literals.
-fn opens_skip_region(name: &[u8], e: &quick_xml::events::BytesStart) -> Result<bool> {
-    if matches!(name, b"phrases" | b"unify") {
+fn opens_skip_region(name: &str, e: &quick_xml::events::BytesStart) -> Result<bool> {
+    if matches!(name, "phrases" | "unify") {
         return Ok(true);
     }
-    if matches!(name, b"rule" | b"rulegroup") {
+    if matches!(name, "rule" | "rulegroup") {
         if let Some(attr) = e
             .try_get_attribute("default")
             .map_err(|err| anyhow!("reading default attr: {err}"))?
         {
-            return Ok(matches!(attr.value.as_ref(), b"off" | b"temp_off"));
+            return Ok(matches!(attr.value.as_ref(), "off" | "temp_off"));
         }
     }
     Ok(false)
@@ -1041,7 +1041,7 @@ fn raw_token_literals(xml: &str) -> Result<std::collections::HashSet<String>> {
     use quick_xml::reader::Reader;
 
     let mut reader = Reader::from_str(xml);
-    let mut stack: Vec<(Box<[u8]>, bool)> = Vec::new(); // (element name, opened a skip region)
+    let mut stack: Vec<(Box<str>, bool)> = Vec::new(); // (element name, opened a skip region)
     let mut skip_depth = 0u32;
     let mut literal: Option<String> = None; // text being accumulated for the open <token>
     let mut out = std::collections::HashSet::new();
@@ -1051,19 +1051,19 @@ fn raw_token_literals(xml: &str) -> Result<std::collections::HashSet<String>> {
             .map_err(|e| anyhow!("scanning token literals: {e}"))?
         {
             Event::Start(e) => {
-                let name: Box<[u8]> = e.name().as_ref().into();
+                let name: Box<str> = e.name().as_ref().into();
                 let skip = opens_skip_region(&name, &e)?;
                 if skip {
                     skip_depth += 1;
                 }
-                if &*name == b"token" && skip_depth == 0 {
+                if &*name == "token" && skip_depth == 0 {
                     literal = Some(String::new());
                 }
                 stack.push((name, skip));
             }
             Event::End(_) => {
                 if let Some((name, skip)) = stack.pop() {
-                    if &*name == b"token" {
+                    if &*name == "token" {
                         if let Some(s) = literal.take() {
                             let s = s.trim();
                             if !s.is_empty() {
@@ -1079,11 +1079,9 @@ fn raw_token_literals(xml: &str) -> Result<std::collections::HashSet<String>> {
             Event::Text(t) => {
                 // Only text whose immediate parent is the <token> itself is the token's literal.
                 if let Some(acc) = literal.as_mut() {
-                    if stack.last().is_some_and(|(n, _)| n.as_ref() == b"token") {
-                        let s =
-                            std::str::from_utf8(&t).map_err(|e| anyhow!("token text utf8: {e}"))?;
+                    if stack.last().is_some_and(|(n, _)| n.as_ref() == "token") {
                         acc.push_str(
-                            &quick_xml::escape::unescape(s)
+                            &quick_xml::escape::unescape(&t)
                                 .map_err(|e| anyhow!("unescape: {e}"))?,
                         );
                     }
@@ -1093,14 +1091,13 @@ fn raw_token_literals(xml: &str) -> Result<std::collections::HashSet<String>> {
             // (else `,|and|or|&amp;` would read as `,|and|or|`, a spurious mismatch with the IR).
             Event::GeneralRef(r) => {
                 if let Some(acc) = literal.as_mut() {
-                    if stack.last().is_some_and(|(n, _)| n.as_ref() == b"token") {
+                    if stack.last().is_some_and(|(n, _)| n.as_ref() == "token") {
                         if let Some(c) =
                             r.resolve_char_ref().map_err(|e| anyhow!("char ref: {e}"))?
                         {
                             acc.push(c);
                         } else {
-                            let name = r.decode().map_err(|e| anyhow!("ref decode: {e}"))?;
-                            acc.push_str(match name.as_ref() {
+                            acc.push_str(match &*r {
                                 "amp" => "&",
                                 "lt" => "<",
                                 "gt" => ">",
