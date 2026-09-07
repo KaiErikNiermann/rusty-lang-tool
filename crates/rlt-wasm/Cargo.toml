@@ -35,7 +35,7 @@ serde-wasm-bindgen.workspace = true
 console_error_panic_hook.workspace = true
 # Decompress-only (no encoder) + `std` for the Read/Write-based `BrotliDecompress`; no `unsafe`
 # feature, keeping the dep all-safe. Powers `brotli_decompress` for the web Fast (beta) track.
-brotli-decompressor = { version = "5.0.3", default-features = false, features = ["std"] }
+brotli-decompressor = { version = "6.0.0", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true
