@@ -26,6 +26,16 @@ updates:
 
   - package-ecosystem: pip
     directory: "/pipeline" # uv project (pyproject.toml) — the offline L4 train/quantize pipeline
+    # GHSA-4j2p-28q2-5m79 (accelerate path traversal) is dismissed as not-used, not fixed: no
+    # patched release exists — 1.15.0, the latest, still does the unsanitized
+    # `os.path.join(checkpoint_folder, f)` over weight_map entries, so the advisory's "<= 1.14.0"
+    # range is stale rather than resolved. It does not reach us: accelerate is transitive via
+    # `gector`, and the vulnerable entrypoints (load_checkpoint_in_model /
+    # load_checkpoint_and_dispatch) are only taken through the big-model loader, which needs
+    # device_map / offload / low_cpu_mem_usage — none of which this pipeline ever sets. The only
+    # checkpoint it loads is the hardcoded $RLT_MODEL_ID default, and the pipeline is offline and
+    # developer-run: not in CI, not a dependency of any shipped crate, absent from the wasm/web
+    # build. Revisit if a release lands that sanitizes those entries, or if device_map is adopted.
     schedule:
       interval: weekly
       day: monday
