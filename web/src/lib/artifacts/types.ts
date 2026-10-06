@@ -75,8 +75,9 @@ function isV2Ref(ref: ArtifactRef | V1ArtifactRef): ref is ArtifactRef {
 
 /** Lift one entry to v2: a v1 (flat, gzip-only) entry becomes a v2 entry with just the `gzip` variant. */
 function liftRef(ref: ArtifactRef | V1ArtifactRef): ArtifactRef {
-  if (isV2Ref(ref)) return ref;
-  return { gzip: { asset: ref.asset, sha256: ref.sha256, bytes: ref.bytes }, rawBytes: ref.rawBytes };
+  return isV2Ref(ref)
+    ? ref
+    : { gzip: { asset: ref.asset, sha256: ref.sha256, bytes: ref.bytes }, rawBytes: ref.rawBytes };
 }
 
 /**

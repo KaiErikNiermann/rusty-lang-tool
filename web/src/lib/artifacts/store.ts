@@ -35,9 +35,9 @@ async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
 async function download(
   url: string,
   onChunk: (delta: number) => void,
-  signal?: AbortSignal,
+  signal: AbortSignal | null = null,
 ): Promise<Uint8Array> {
-  const res = await fetch(url, { signal: signal ?? null, cache: "no-store" });
+  const res = await fetch(url, { signal, cache: "no-store" });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
   const reader = res.body?.getReader();
   if (!reader) throw new Error(`no response body for ${url}`);
@@ -46,11 +46,10 @@ async function download(
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    if (value) {
-      chunks.push(value);
-      total += value.length;
-      onChunk(value.length);
-    }
+    if (!value) continue;
+    chunks.push(value);
+    total += value.length;
+    onChunk(value.length);
   }
   const out = new Uint8Array(total);
   let off = 0;
@@ -128,10 +127,9 @@ export class ArtifactStore {
    * gzip when brotli is requested but the variant or its decoder is missing — gzip always exists.
    */
   private variantFor(ref: ArtifactRef, codec: Codec): { variant: VariantRef; decode: Decoder } {
-    if (codec === "brotli" && ref.brotli && this.decoders.brotli) {
-      return { variant: ref.brotli, decode: this.decoders.brotli };
-    }
-    return { variant: ref.gzip, decode: gunzip };
+    return codec === "brotli" && ref.brotli && this.decoders.brotli
+      ? { variant: ref.brotli, decode: this.decoders.brotli }
+      : { variant: ref.gzip, decode: gunzip };
   }
 
   /** Cached decompressed bytes for a verified variant, or `null`. */
