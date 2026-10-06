@@ -64,6 +64,9 @@ export default [
       "unicorn/consistent-boolean-name": "off",
       // `//` comments are the house style across the Rust workspace and `web/` alike.
       "unicorn/single-line-block-comment-style": "off",
+      // New in unicorn 77: strips the ` * ` gutter from every `/** ... */` block. The gutter is the
+      // JSDoc/TSDoc convention the doc comments here are written in; 29 findings, all reformatting.
+      "unicorn/no-asterisk-prefix-in-documentation-comments": "off",
       "unicorn/switch-case-braces": "off",
       "unicorn/numeric-separators-style": "off",
       "unicorn/number-literal-case": "off",
@@ -135,5 +138,12 @@ export default [
       "sonarjs/no-os-command-from-path": "off",
       "security/detect-non-literal-fs-filename": "off",
     },
+  },
+
+  // Tool configs: `export default defineConfig(...)` is a top-level call by definition, and the
+  // tool imports the module precisely to run it.
+  {
+    files: ["*.config.ts", "*.config.js"],
+    rules: { "unicorn/no-top-level-side-effects": "off" },
   },
 ];
