@@ -44,7 +44,7 @@ export function computeFixAllEdits(
   const ranked = diagnostics
     .flatMap((d) => {
       const first = d.suggestions[0];
-      return first ? [{ range: byteSpanToRange(model, b2u, d.span), text: first.replacement }] : [];
+      return first ? { range: byteSpanToRange(model, b2u, d.span), text: first.replacement } : [];
     })
     .toSorted(
       (a, b) =>
