@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { WebManifest } from "$lib/artifacts/types";
+  import type { WebManifest } from "#lib/artifacts/types.js";
 
   interface Props {
     manifest: WebManifest;

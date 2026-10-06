@@ -1,3 +1,5 @@
+import adapter from "@sveltejs/adapter-static";
+import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
@@ -40,11 +42,30 @@ function rawArtifacts(): Plugin {
   };
 }
 
-// `$wasm` (the wasm-pack --target web bundle) is aliased via kit.alias in svelte.config.js, which feeds
+// GitHub Pages serves a project site under /<repo>/. The deploy workflow passes BASE_PATH; locally
+// it's empty (root). All asset/fetch URLs route through `resolve` from "$app/paths".
+const base: "" | `/${string}` = process.env.BASE_PATH
+  ? `/${process.env.BASE_PATH.replace(/^\/+/, "")}`
+  : "";
+
+// `$wasm` (the wasm-pack --target web bundle) is aliased via the sveltekit() `alias` option, which feeds
 // both Vite and TS. It's imported dynamically (client-only) so it never enters the SSR/prerender graph,
 // and excluded from dep-optimization so Vite serves the .wasm with the right MIME type.
 export default defineConfig({
-  plugins: [rawArtifacts(), sveltekit()],
+  plugins: [
+    rawArtifacts(),
+    sveltekit({
+      preprocess: vitePreprocess(),
+      // Fully static (no server). 404 fallback so the SPA route resolves under any path.
+      adapter: adapter({ fallback: "404.html" }),
+      paths: { base },
+      // `$wasm` → the wasm-pack (--target web) bundle. `alias` feeds both Vite and the generated
+      // tsconfig paths, so TS resolves the .js import to its sibling rlt_wasm.d.ts.
+      alias: { $wasm: "../crates/rlt-wasm/pkg/rlt_wasm.js" },
+      // The whole app is client-only (WASM + Monaco are browser-only); see +layout.ts.
+      prerender: { entries: ["*"] },
+    }),
+  ],
   optimizeDeps: { exclude: ["$wasm"] },
   // The wasm-pack bundle (`$wasm`) + its `rlt_wasm_bg.wasm` live in ../crates/rlt-wasm/pkg, outside the
   // web root, so the dev server must be allowed to serve from the repo root (the `?url` asset import in

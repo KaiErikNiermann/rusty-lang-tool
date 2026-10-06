@@ -1,9 +1,13 @@
-import { base } from "$app/paths";
+import { resolve } from "$app/paths";
 
 import type { LoadPlan } from "./artifacts/types";
 
+// The site root under the base path (`/<repo>/` on Pages, `/` locally). Not `asset(...)`: that is typed
+// against the files in static/, and the manifest + artifacts are only staged there at build time.
+const ROOT = resolve("/");
+
 /** The integrity manifest baked into the deployed site (root of trust). */
-export const MANIFEST_URL = `${base}/web-artifacts.json`;
+export const MANIFEST_URL = `${ROOT}web-artifacts.json`;
 
 /** The named download tracks the UI toggle picks between. */
 export type TrackId = "reliable" | "fast";
@@ -29,7 +33,7 @@ export const TRACK_STORAGE_KEY = "rlt-download-track";
  * (passed at build via `VITE_ARTIFACT_BASE_URL`); locally it falls back to a static server you point
  * at `dist/web-artifacts/` (see README), or the site's own `/artifacts` dir.
  */
-export const ARTIFACT_BASE_URL = import.meta.env.VITE_ARTIFACT_BASE_URL ?? `${base}/artifacts`;
+export const ARTIFACT_BASE_URL = import.meta.env.VITE_ARTIFACT_BASE_URL ?? `${ROOT}artifacts`;
 
 /** The language selected on first load (lightest meaningful default). */
 export const DEFAULT_LANG = "en";

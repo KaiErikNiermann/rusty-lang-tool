@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { TrackId } from "$lib/config";
+  import type { TrackId } from "#lib/config.js";
 
   interface Props {
     current: TrackId;
