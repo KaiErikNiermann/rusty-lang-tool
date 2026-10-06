@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Diagnostic, DiagnosticSource } from "$lib/checker/types";
+  import type { Diagnostic, DiagnosticSource } from "#lib/checker/types.js";
 
   interface Props {
     /** Current check's diagnostics (best-first suggestions per item). */

@@ -2,10 +2,10 @@
   import { onMount } from "svelte";
   import type * as Monaco from "monaco-editor";
 
-  import type { FetchState, WebManifest } from "$lib/artifacts/types";
-  import { makeByteToUtf16 } from "$lib/checker/spanmap";
-  import type { Diagnostic } from "$lib/checker/types";
-  import { WorkerChecker } from "$lib/checker/worker-client";
+  import type { FetchState, WebManifest } from "#lib/artifacts/types.js";
+  import { makeByteToUtf16 } from "#lib/checker/spanmap.js";
+  import type { Diagnostic } from "#lib/checker/types.js";
+  import { WorkerChecker } from "#lib/checker/worker-client.js";
   import {
     ARTIFACT_BASE_URL,
     DEFAULT_LANG,
@@ -15,16 +15,16 @@
     SAMPLE_TEXT,
     TRACK_STORAGE_KEY,
     type TrackId,
-  } from "$lib/config";
-  import { registerRltCodeActions } from "$lib/editor/codeactions";
-  import { DiagnosticIndex } from "$lib/editor/diagnostics";
-  import { applyFixAll, applyReplacement, byteSpanToRange } from "$lib/editor/fixes";
-  import { loadMonaco, RLT_THEME } from "$lib/editor/monaco";
-  import DownloadProgress from "$lib/ui/DownloadProgress.svelte";
-  import DownloadTrackToggle from "$lib/ui/DownloadTrackToggle.svelte";
-  import ErrorBanner from "$lib/ui/ErrorBanner.svelte";
-  import FindingsPanel from "$lib/ui/FindingsPanel.svelte";
-  import LanguagePicker from "$lib/ui/LanguagePicker.svelte";
+  } from "#lib/config.js";
+  import { registerRltCodeActions } from "#lib/editor/codeactions.js";
+  import { DiagnosticIndex } from "#lib/editor/diagnostics.js";
+  import { applyFixAll, applyReplacement, byteSpanToRange } from "#lib/editor/fixes.js";
+  import { loadMonaco, RLT_THEME } from "#lib/editor/monaco.js";
+  import DownloadProgress from "#lib/ui/DownloadProgress.svelte";
+  import DownloadTrackToggle from "#lib/ui/DownloadTrackToggle.svelte";
+  import ErrorBanner from "#lib/ui/ErrorBanner.svelte";
+  import FindingsPanel from "#lib/ui/FindingsPanel.svelte";
+  import LanguagePicker from "#lib/ui/LanguagePicker.svelte";
 
   let editorEl: HTMLDivElement;
 

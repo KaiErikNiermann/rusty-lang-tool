@@ -43,5 +43,8 @@
   },
   "dependencies": {
     "monaco-editor": "^0.57.0"
+  },
+  "imports": {
+    "#lib/*": "./src/lib/*"
   }
 }

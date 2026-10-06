@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { FetchState } from "$lib/artifacts/types";
+  import type { FetchState } from "#lib/artifacts/types.js";
 
   interface Props {
     state: FetchState;
