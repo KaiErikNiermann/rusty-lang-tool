@@ -43,16 +43,5 @@
   },
   "dependencies": {
     "monaco-editor": "^0.57.0"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ],
-    "overrides": {
-      "dompurify": "^3.4.11",
-      "cookie": "^0.7.0",
-      "browserslist": "^4.28.7",
-      "baseline-browser-mapping": "^2.11.0"
-    }
   }
 }

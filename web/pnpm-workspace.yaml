@@ -1,0 +1,11 @@
+# pnpm settings live here, not in package.json's "pnpm" field: pnpm 11 (which Dependabot runs)
+# reads them only from this file, so with the field it regenerated the lockfile without the
+# overrides block and every web bump failed `pnpm install --frozen-lockfile` in CI.
+onlyBuiltDependencies:
+  - esbuild
+
+overrides:
+  dompurify: ^3.4.11
+  cookie: ^0.7.0
+  browserslist: ^4.28.7
+  baseline-browser-mapping: ^2.11.0

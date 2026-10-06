@@ -10,6 +10,10 @@ updates:
       day: monday
     open-pull-requests-limit: 10
     groups:
+      # rten and rten-tensor share types across their API, so bumping one without the other does
+      # not compile (#85/#86 for 0.27, #44/#45 for 0.25). Listed before rust-minor-patch so it wins.
+      rten:
+        patterns: [rten, rten-tensor]
       rust-minor-patch:
         update-types: [minor, patch]
     labels: [dependencies, rust]
