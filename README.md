@@ -7,7 +7,7 @@
 
 A **fully local, web-native grammar and spell checker** that reuses
 [LanguageTool](https://github.com/languagetool-org/languagetool)'s open rule corpus but runs
-entirely client-side (native or WebAssembly) — no server, no subscription, no telemetry.
+entirely client-side (native or WebAssembly).
 
 The bet: the value in this domain is LanguageTool's ~20 years of hand-authored multilingual rule
 data, *not* engine code. Every prior Rust reuse of it (notably
