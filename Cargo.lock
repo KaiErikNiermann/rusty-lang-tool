@@ -1488,16 +1488,6 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.38.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
-dependencies = [
- "encoding_rs",
- "memchr",
-]
-
-[[package]]
-name = "quick-xml"
 version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41b1177fdf999d2321d3fb46ff47159d9c1fb9ad66a4879f8c50a0b504615e9b"
@@ -1735,7 +1725,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "encoding_rs",
- "quick-xml 0.42.0",
+ "quick-xml",
  "regex",
  "rkyv",
  "rlt-ir",
@@ -1743,7 +1733,7 @@ dependencies = [
  "serde",
  "tracing",
  "tracing-subscriber",
- "xsd-parser-types 0.2.1",
+ "xsd-parser-types",
 ]
 
 [[package]]
@@ -2657,7 +2647,7 @@ dependencies = [
  "indexmap",
  "parking_lot",
  "proc-macro2",
- "quick-xml 0.42.0",
+ "quick-xml",
  "quote",
  "regex",
  "smallvec",
@@ -2665,20 +2655,7 @@ dependencies = [
  "tracing",
  "unindent",
  "url",
- "xsd-parser-types 0.3.0",
-]
-
-[[package]]
-name = "xsd-parser-types"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "982977ebb49137e23fa29c8754c66d191b74c1221ae71bc71059704fc6d62ff5"
-dependencies = [
- "encoding_rs",
- "indexmap",
- "quick-xml 0.38.4",
- "regex",
- "thiserror 2.0.21",
+ "xsd-parser-types",
 ]
 
 [[package]]
@@ -2691,7 +2668,7 @@ dependencies = [
  "const-hex",
  "encoding_rs",
  "indexmap",
- "quick-xml 0.42.0",
+ "quick-xml",
  "regex",
  "thiserror 2.0.21",
 ]
