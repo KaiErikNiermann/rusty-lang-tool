@@ -803,7 +803,7 @@ fn gen_schema() -> Result<()> {
         .canonicalize()
         .with_context(|| format!("{RULES_XSD} not found — run `cargo xtask fetch-lt` first"))?;
 
-    let mut config = Config::default().with_quick_xml_deserialize_config(true);
+    let mut config = Config::default().with_quick_xml_deserialize_config(true, false);
     config.parser.resolver = vec![Resolver::File];
     config.parser.flags = ParserFlags::all();
     config.parser.schemas = vec![Schema::File(input)];

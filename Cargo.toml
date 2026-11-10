@@ -28,7 +28,7 @@ rkyv = "0.8"
 zerocopy = "0.8"
 # XML + schema codegen (converter)
 quick-xml = "0.42"
-xsd-parser = "1.5"
+xsd-parser = "1.6"
 # `quick-xml` feature enables the quick_xml + xml modules the generated deserializers use.
 xsd-parser-types = { version = "0.3", features = ["quick-xml"] }
 regex = "1"

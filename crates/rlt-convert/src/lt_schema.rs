@@ -490,6 +490,7 @@ pub mod pattern {
         ContainsTypographicApostrophe,
         Gv,
         PTime,
+        IncorrectVerb,
         MayMissingYo,
     }
     impl ::xsd_parser_types::quick_xml::DeserializeBytes for TokenChunkType {
@@ -522,6 +523,7 @@ pub mod pattern {
                 b"containsTypographicApostrophe" => Ok(Self::ContainsTypographicApostrophe),
                 b"GV" => Ok(Self::Gv),
                 b"PTime" => Ok(Self::PTime),
+                b"_incorrect_verb_" => Ok(Self::IncorrectVerb),
                 b"MayMissingYO" => Ok(Self::MayMissingYo),
                 x => Err(::xsd_parser_types::quick_xml::Error::from(
                     ::xsd_parser_types::quick_xml::ErrorKind::UnknownOrInvalidValue(
@@ -564,8 +566,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<AndElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum AndElementTypeDeserializerState {
-            Init__ , Next__ , Content__ (< super :: AndElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
+        enum AndElementTypeDeserializerState { Init__ , Next__ , Content__ (< super :: AndElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
         impl AndElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -747,8 +748,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<AndElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        pub enum AndElementTypeContentDeserializerState {
-            Init__ , Token (:: core :: option :: Option < super :: TokenElementType > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Marker (:: core :: option :: Option < super :: MarkerElementType > , :: core :: option :: Option << super :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: AndElementTypeContent) , Unknown__ , }
+        pub enum AndElementTypeContentDeserializerState { Init__ , Token (:: core :: option :: Option < super :: TokenElementType > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Marker (:: core :: option :: Option < super :: MarkerElementType > , :: core :: option :: Option << super :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: AndElementTypeContent) , Unknown__ , }
         impl AndElementTypeContentDeserializer {
             fn find_suitable<'de>(
                 &mut self,
@@ -761,7 +761,7 @@ pub mod pattern {
                 if let ::xsd_parser_types::quick_xml::Event::Start(x)
                 | ::xsd_parser_types::quick_xml::Event::Empty(x) = &event
                 {
-                    if x.name().local_name().as_ref() == b"token" {
+                    if x.name().local_name().into_inner().as_bytes() == b"token" {
                         let output = < super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_token(
                             helper,
@@ -770,7 +770,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"marker" {
+                    if x.name().local_name().into_inner().as_bytes() == b"marker" {
                         let output = < super :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_marker(
                             helper,
@@ -1116,8 +1116,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<EquivalenceElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum EquivalenceElementTypeDeserializerState {
-            Init__ , Token (:: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
+        enum EquivalenceElementTypeDeserializerState { Init__ , Token (:: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
         impl EquivalenceElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -1127,7 +1126,7 @@ pub mod pattern {
                 let mut type_: ::core::option::Option<::std::string::String> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"type" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"type" {
                         helper.read_attrib(&mut type_, b"type", &attrib.value)?;
                     } else {
                         helper.raise_unexpected_attrib_checked(&attrib)?;
@@ -1370,8 +1369,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<ExceptionElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum ExceptionElementTypeDeserializerState {
-            Init__ , Text (:: core :: option :: Option << :: xsd_parser_types :: xml :: Text as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
+        enum ExceptionElementTypeDeserializerState { Init__ , Text (:: core :: option :: Option << :: xsd_parser_types :: xml :: Text as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
         impl ExceptionElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -1389,23 +1387,23 @@ pub mod pattern {
                 let mut case_sensitive: ::core::option::Option<super::BinaryYesNoType> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"postag_regexp" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"postag_regexp" {
                         helper.read_attrib(&mut postag_regexp, b"postag_regexp", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"negate_pos" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"negate_pos" {
                         helper.read_attrib(&mut negate_pos, b"negate_pos", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"postag" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"postag" {
                         helper.read_attrib(&mut postag, b"postag", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"spacebefore" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"spacebefore" {
                         helper.read_attrib(&mut spacebefore, b"spacebefore", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"inflected" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"inflected" {
                         helper.read_attrib(&mut inflected, b"inflected", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"scope" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"scope" {
                         helper.read_attrib(&mut scope, b"scope", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"regexp" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"regexp" {
                         helper.read_attrib(&mut regexp, b"regexp", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"negate" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"negate" {
                         helper.read_attrib(&mut negate, b"negate", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"case_sensitive" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"case_sensitive" {
                         helper.read_attrib(
                             &mut case_sensitive,
                             b"case_sensitive",
@@ -1640,8 +1638,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<FeatureElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum FeatureElementTypeDeserializerState {
-            Init__ , Next__ , Content__ (< super :: FeatureElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
+        enum FeatureElementTypeDeserializerState { Init__ , Next__ , Content__ (< super :: FeatureElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
         impl FeatureElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -1651,7 +1648,7 @@ pub mod pattern {
                 let mut id: ::core::option::Option<::std::string::String> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"id" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"id" {
                         helper.read_attrib(&mut id, b"id", &attrib.value)?;
                     } else {
                         helper.raise_unexpected_attrib_checked(&attrib)?;
@@ -1834,8 +1831,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<FeatureElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        pub enum FeatureElementTypeContentDeserializerState {
-            Init__ , Type (:: core :: option :: Option < super :: TypeElementType > , :: core :: option :: Option << super :: TypeElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: TypeElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: FeatureElementTypeContent) , Unknown__ , }
+        pub enum FeatureElementTypeContentDeserializerState { Init__ , Type (:: core :: option :: Option < super :: TypeElementType > , :: core :: option :: Option << super :: TypeElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: TypeElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: FeatureElementTypeContent) , Unknown__ , }
         impl FeatureElementTypeContentDeserializer {
             fn find_suitable<'de>(
                 &mut self,
@@ -1848,7 +1844,7 @@ pub mod pattern {
                 if let ::xsd_parser_types::quick_xml::Event::Start(x)
                 | ::xsd_parser_types::quick_xml::Event::Empty(x) = &event
                 {
-                    if x.name().local_name().as_ref() == b"type" {
+                    if x.name().local_name().into_inner().as_bytes() == b"type" {
                         let output = < super :: TypeElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_type_(
                             helper,
@@ -2096,8 +2092,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<IncludephrasesElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum IncludephrasesElementTypeDeserializerState {
-            Init__ , Phraseref (:: core :: option :: Option << super :: PhraserefElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
+        enum IncludephrasesElementTypeDeserializerState { Init__ , Phraseref (:: core :: option :: Option << super :: PhraserefElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
         impl IncludephrasesElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -2346,8 +2341,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<MarkerElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum MarkerElementTypeDeserializerState {
-            Init__ , Next__ , Content__ (< super :: MarkerElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
+        enum MarkerElementTypeDeserializerState { Init__ , Next__ , Content__ (< super :: MarkerElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
         impl MarkerElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -2531,8 +2525,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<MarkerElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        pub enum MarkerElementTypeContentDeserializerState {
-            Init__ , Or (:: core :: option :: Option < super :: OrElementType > , :: core :: option :: Option << super :: OrElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: OrElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Token (:: core :: option :: Option < super :: TokenElementType > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Unify (:: core :: option :: Option < super :: UnifyElementType > , :: core :: option :: Option << super :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , And (:: core :: option :: Option < super :: AndElementType > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Phraseref (:: core :: option :: Option < super :: PhraserefElementType > , :: core :: option :: Option << super :: PhraserefElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: PhraserefElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , UnifyIgnore (:: core :: option :: Option < super :: UnifyIgnoreElementType > , :: core :: option :: Option << super :: UnifyIgnoreElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: UnifyIgnoreElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: MarkerElementTypeContent) , Unknown__ , }
+        pub enum MarkerElementTypeContentDeserializerState { Init__ , Or (:: core :: option :: Option < super :: OrElementType > , :: core :: option :: Option << super :: OrElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: OrElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Token (:: core :: option :: Option < super :: TokenElementType > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Unify (:: core :: option :: Option < super :: UnifyElementType > , :: core :: option :: Option << super :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , And (:: core :: option :: Option < super :: AndElementType > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Phraseref (:: core :: option :: Option < super :: PhraserefElementType > , :: core :: option :: Option << super :: PhraserefElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: PhraserefElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , UnifyIgnore (:: core :: option :: Option < super :: UnifyIgnoreElementType > , :: core :: option :: Option << super :: UnifyIgnoreElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: UnifyIgnoreElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: MarkerElementTypeContent) , Unknown__ , }
         impl MarkerElementTypeContentDeserializer {
             fn find_suitable<'de>(
                 &mut self,
@@ -2545,7 +2538,7 @@ pub mod pattern {
                 if let ::xsd_parser_types::quick_xml::Event::Start(x)
                 | ::xsd_parser_types::quick_xml::Event::Empty(x) = &event
                 {
-                    if x.name().local_name().as_ref() == b"or" {
+                    if x.name().local_name().into_inner().as_bytes() == b"or" {
                         let output = < super :: OrElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_or(
                             helper,
@@ -2554,7 +2547,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"token" {
+                    if x.name().local_name().into_inner().as_bytes() == b"token" {
                         let output = < super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_token(
                             helper,
@@ -2563,7 +2556,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"unify" {
+                    if x.name().local_name().into_inner().as_bytes() == b"unify" {
                         let output = < super :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_unify(
                             helper,
@@ -2572,7 +2565,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"and" {
+                    if x.name().local_name().into_inner().as_bytes() == b"and" {
                         let output = < super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_and(
                             helper,
@@ -2581,7 +2574,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"phraseref" {
+                    if x.name().local_name().into_inner().as_bytes() == b"phraseref" {
                         let output = < super :: PhraserefElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_phraseref(
                             helper,
@@ -2590,7 +2583,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"unify-ignore" {
+                    if x.name().local_name().into_inner().as_bytes() == b"unify-ignore" {
                         let output = < super :: UnifyIgnoreElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_unify_ignore(
                             helper,
@@ -3389,8 +3382,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<MatchElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum MatchElementTypeDeserializerState {
-            Init__ , Text (:: core :: option :: Option << :: xsd_parser_types :: xml :: Text as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
+        enum MatchElementTypeDeserializerState { Init__ , Text (:: core :: option :: Option << :: xsd_parser_types :: xml :: Text as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
         impl MatchElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -3409,35 +3401,37 @@ pub mod pattern {
                 let mut include_skipped: ::core::option::Option<super::IncludeSelectorType> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"no" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"no" {
                         helper.read_attrib(&mut no, b"no", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"regexp_match" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"regexp_match" {
                         helper.read_attrib(&mut regexp_match, b"regexp_match", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"regexp_replace" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"regexp_replace" {
                         helper.read_attrib(
                             &mut regexp_replace,
                             b"regexp_replace",
                             &attrib.value,
                         )?;
-                    } else if attrib.key.local_name().as_ref() == b"postag_regexp" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"postag_regexp" {
                         helper.read_attrib(&mut postag_regexp, b"postag_regexp", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"postag" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"postag" {
                         helper.read_attrib(&mut postag, b"postag", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"postag_replace" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"postag_replace" {
                         helper.read_attrib(
                             &mut postag_replace,
                             b"postag_replace",
                             &attrib.value,
                         )?;
-                    } else if attrib.key.local_name().as_ref() == b"setpos" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"setpos" {
                         helper.read_attrib(&mut setpos, b"setpos", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"case_conversion" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"case_conversion"
+                    {
                         helper.read_attrib(
                             &mut case_conversion,
                             b"case_conversion",
                             &attrib.value,
                         )?;
-                    } else if attrib.key.local_name().as_ref() == b"include_skipped" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"include_skipped"
+                    {
                         helper.read_attrib(
                             &mut include_skipped,
                             b"include_skipped",
@@ -3669,8 +3663,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<OrElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum OrElementTypeDeserializerState {
-            Init__ , Next__ , Content__ (< super :: OrElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
+        enum OrElementTypeDeserializerState { Init__ , Next__ , Content__ (< super :: OrElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
         impl OrElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -3852,8 +3845,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<OrElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        pub enum OrElementTypeContentDeserializerState {
-            Init__ , Token (:: core :: option :: Option < super :: TokenElementType > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: OrElementTypeContent) , Unknown__ , }
+        pub enum OrElementTypeContentDeserializerState { Init__ , Token (:: core :: option :: Option < super :: TokenElementType > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: OrElementTypeContent) , Unknown__ , }
         impl OrElementTypeContentDeserializer {
             fn find_suitable<'de>(
                 &mut self,
@@ -3866,7 +3858,7 @@ pub mod pattern {
                 if let ::xsd_parser_types::quick_xml::Event::Start(x)
                 | ::xsd_parser_types::quick_xml::Event::Empty(x) = &event
                 {
-                    if x.name().local_name().as_ref() == b"token" {
+                    if x.name().local_name().into_inner().as_bytes() == b"token" {
                         let output = < super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_token(
                             helper,
@@ -4104,8 +4096,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<PhraseElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum PhraseElementTypeDeserializerState {
-            Init__ , Next__ , Content__ (< super :: PhraseElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
+        enum PhraseElementTypeDeserializerState { Init__ , Next__ , Content__ (< super :: PhraseElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
         impl PhraseElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -4115,7 +4106,7 @@ pub mod pattern {
                 let mut id: ::core::option::Option<::std::string::String> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"id" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"id" {
                         helper.read_attrib(&mut id, b"id", &attrib.value)?;
                     } else {
                         helper.raise_unexpected_attrib_checked(&attrib)?;
@@ -4298,8 +4289,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<PhraseElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        pub enum PhraseElementTypeContentDeserializerState {
-            Init__ , Unify (:: core :: option :: Option < super :: UnifyElementType > , :: core :: option :: Option << super :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , And (:: core :: option :: Option < super :: AndElementType > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Token (:: core :: option :: Option < super :: TokenElementType > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Includephrases (:: core :: option :: Option < super :: IncludephrasesElementType > , :: core :: option :: Option << super :: IncludephrasesElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: IncludephrasesElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: PhraseElementTypeContent) , Unknown__ , }
+        pub enum PhraseElementTypeContentDeserializerState { Init__ , Unify (:: core :: option :: Option < super :: UnifyElementType > , :: core :: option :: Option << super :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , And (:: core :: option :: Option < super :: AndElementType > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Token (:: core :: option :: Option < super :: TokenElementType > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Includephrases (:: core :: option :: Option < super :: IncludephrasesElementType > , :: core :: option :: Option << super :: IncludephrasesElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: IncludephrasesElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: PhraseElementTypeContent) , Unknown__ , }
         impl PhraseElementTypeContentDeserializer {
             fn find_suitable<'de>(
                 &mut self,
@@ -4312,7 +4302,7 @@ pub mod pattern {
                 if let ::xsd_parser_types::quick_xml::Event::Start(x)
                 | ::xsd_parser_types::quick_xml::Event::Empty(x) = &event
                 {
-                    if x.name().local_name().as_ref() == b"unify" {
+                    if x.name().local_name().into_inner().as_bytes() == b"unify" {
                         let output = < super :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_unify(
                             helper,
@@ -4321,7 +4311,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"and" {
+                    if x.name().local_name().into_inner().as_bytes() == b"and" {
                         let output = < super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_and(
                             helper,
@@ -4330,7 +4320,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"token" {
+                    if x.name().local_name().into_inner().as_bytes() == b"token" {
                         let output = < super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_token(
                             helper,
@@ -4339,7 +4329,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"includephrases" {
+                    if x.name().local_name().into_inner().as_bytes() == b"includephrases" {
                         let output = < super :: IncludephrasesElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_includephrases(
                             helper,
@@ -4925,7 +4915,7 @@ pub mod pattern {
                 let mut idref: ::core::option::Option<::std::string::String> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"idref" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"idref" {
                         helper.read_attrib(&mut idref, b"idref", &attrib.value)?;
                     } else {
                         helper.raise_unexpected_attrib_checked(&attrib)?;
@@ -5004,8 +4994,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<PhrasesElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum PhrasesElementTypeDeserializerState {
-            Init__ , Phrase (:: core :: option :: Option << super :: PhraseElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
+        enum PhrasesElementTypeDeserializerState { Init__ , Phrase (:: core :: option :: Option << super :: PhraseElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
         impl PhrasesElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -5258,8 +5247,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<TokenElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum TokenElementTypeDeserializerState {
-            Init__ , TextBefore (:: core :: option :: Option << :: xsd_parser_types :: xml :: Text as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Content (:: core :: option :: Option << super :: TokenElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
+        enum TokenElementTypeDeserializerState { Init__ , TextBefore (:: core :: option :: Option << :: xsd_parser_types :: xml :: Text as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Content (:: core :: option :: Option << super :: TokenElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
         impl TokenElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -5281,31 +5269,31 @@ pub mod pattern {
                 let mut case_sensitive: ::core::option::Option<super::BinaryYesNoType> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"postag_regexp" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"postag_regexp" {
                         helper.read_attrib(&mut postag_regexp, b"postag_regexp", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"inflected" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"inflected" {
                         helper.read_attrib(&mut inflected, b"inflected", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"negate" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"negate" {
                         helper.read_attrib(&mut negate, b"negate", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"regexp" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"regexp" {
                         helper.read_attrib(&mut regexp, b"regexp", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"chunk" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"chunk" {
                         helper.read_attrib(&mut chunk, b"chunk", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"chunk_re" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"chunk_re" {
                         helper.read_attrib(&mut chunk_re, b"chunk_re", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"spacebefore" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"spacebefore" {
                         helper.read_attrib(&mut spacebefore, b"spacebefore", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"postag" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"postag" {
                         helper.read_attrib(&mut postag, b"postag", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"skip" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"skip" {
                         helper.read_attrib(&mut skip, b"skip", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"min" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"min" {
                         helper.read_attrib(&mut min, b"min", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"max" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"max" {
                         helper.read_attrib(&mut max, b"max", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"negate_pos" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"negate_pos" {
                         helper.read_attrib(&mut negate_pos, b"negate_pos", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"case_sensitive" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"case_sensitive" {
                         helper.read_attrib(
                             &mut case_sensitive,
                             b"case_sensitive",
@@ -5664,8 +5652,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<TokenElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        pub enum TokenElementTypeContentDeserializerState {
-            Init__ , Exception (:: core :: option :: Option < :: xsd_parser_types :: xml :: Mixed < super :: ExceptionElementType > > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: ExceptionElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: ExceptionElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Match (:: core :: option :: Option < :: xsd_parser_types :: xml :: Mixed < super :: MatchElementType > > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: MatchElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: MatchElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: TokenElementTypeContent) , Unknown__ , }
+        pub enum TokenElementTypeContentDeserializerState { Init__ , Exception (:: core :: option :: Option < :: xsd_parser_types :: xml :: Mixed < super :: ExceptionElementType > > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: ExceptionElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: ExceptionElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Match (:: core :: option :: Option < :: xsd_parser_types :: xml :: Mixed < super :: MatchElementType > > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: MatchElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: MatchElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: TokenElementTypeContent) , Unknown__ , }
         impl TokenElementTypeContentDeserializer {
             fn find_suitable<'de>(
                 &mut self,
@@ -5678,7 +5665,7 @@ pub mod pattern {
                 if let ::xsd_parser_types::quick_xml::Event::Start(x)
                 | ::xsd_parser_types::quick_xml::Event::Empty(x) = &event
                 {
-                    if x.name().local_name().as_ref() == b"exception" {
+                    if x.name().local_name().into_inner().as_bytes() == b"exception" {
                         let output = < :: xsd_parser_types :: xml :: Mixed < super :: ExceptionElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_exception(
                             helper,
@@ -5687,7 +5674,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"match" {
+                    if x.name().local_name().into_inner().as_bytes() == b"match" {
                         let output = < :: xsd_parser_types :: xml :: Mixed < super :: MatchElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_match_(
                             helper,
@@ -5962,6 +5949,17 @@ pub mod pattern {
                                 allow_any: false,
                             });
                         }
+                        (
+                            state,
+                            ::xsd_parser_types::quick_xml::Event::Text(_)
+                            | ::xsd_parser_types::quick_xml::Event::CData(_),
+                        ) => {
+                            *self.state__ = state;
+                            break (
+                                ::xsd_parser_types::quick_xml::DeserializerEvent::None,
+                                false,
+                            );
+                        }
                         (S::Init__, event) => match self.find_suitable(helper, event)? {
                             ::xsd_parser_types::quick_xml::ElementHandlerOutput::Break {
                                 event,
@@ -6019,17 +6017,6 @@ pub mod pattern {
                                 false,
                             );
                         }
-                        (
-                            state,
-                            ::xsd_parser_types::quick_xml::Event::Text(_)
-                            | ::xsd_parser_types::quick_xml::Event::CData(_),
-                        ) => {
-                            *self.state__ = state;
-                            break (
-                                ::xsd_parser_types::quick_xml::DeserializerEvent::None,
-                                false,
-                            );
-                        }
                         (state, event) => {
                             *self.state__ = state;
                             break (
@@ -6079,7 +6066,7 @@ pub mod pattern {
                 let mut id: ::core::option::Option<::std::string::String> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"id" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"id" {
                         helper.read_attrib(&mut id, b"id", &attrib.value)?;
                     } else {
                         helper.raise_unexpected_attrib_checked(&attrib)?;
@@ -6155,8 +6142,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<UnificationElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum UnificationElementTypeDeserializerState {
-            Init__ , Equivalence (:: core :: option :: Option << super :: EquivalenceElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
+        enum UnificationElementTypeDeserializerState { Init__ , Equivalence (:: core :: option :: Option << super :: EquivalenceElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
         impl UnificationElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -6166,7 +6152,7 @@ pub mod pattern {
                 let mut feature: ::core::option::Option<::std::string::String> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"feature" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"feature" {
                         helper.read_attrib(&mut feature, b"feature", &attrib.value)?;
                     } else {
                         helper.raise_unexpected_attrib_checked(&attrib)?;
@@ -6411,8 +6397,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<UnifyElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum UnifyElementTypeDeserializerState {
-            Init__ , Next__ , Content__ (< super :: UnifyElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
+        enum UnifyElementTypeDeserializerState { Init__ , Next__ , Content__ (< super :: UnifyElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
         impl UnifyElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -6422,7 +6407,7 @@ pub mod pattern {
                 let mut negate: ::core::option::Option<super::BinaryYesNoType> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"negate" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"negate" {
                         helper.read_attrib(&mut negate, b"negate", &attrib.value)?;
                     } else {
                         helper.raise_unexpected_attrib_checked(&attrib)?;
@@ -6601,8 +6586,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<UnifyElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        pub enum UnifyElementTypeContentDeserializerState {
-            Init__ , Feature (:: core :: option :: Option < super :: FeatureElementType > , :: core :: option :: Option << super :: FeatureElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: FeatureElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , And (:: core :: option :: Option < super :: AndElementType > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Marker (:: core :: option :: Option < super :: MarkerElementType > , :: core :: option :: Option << super :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Token (:: core :: option :: Option < super :: TokenElementType > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , UnifyIgnore (:: core :: option :: Option < super :: UnifyIgnoreElementType > , :: core :: option :: Option << super :: UnifyIgnoreElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: UnifyIgnoreElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: UnifyElementTypeContent) , Unknown__ , }
+        pub enum UnifyElementTypeContentDeserializerState { Init__ , Feature (:: core :: option :: Option < super :: FeatureElementType > , :: core :: option :: Option << super :: FeatureElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: FeatureElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , And (:: core :: option :: Option < super :: AndElementType > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Marker (:: core :: option :: Option < super :: MarkerElementType > , :: core :: option :: Option << super :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Token (:: core :: option :: Option < super :: TokenElementType > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , UnifyIgnore (:: core :: option :: Option < super :: UnifyIgnoreElementType > , :: core :: option :: Option << super :: UnifyIgnoreElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: UnifyIgnoreElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: UnifyElementTypeContent) , Unknown__ , }
         impl UnifyElementTypeContentDeserializer {
             fn find_suitable<'de>(
                 &mut self,
@@ -6615,7 +6599,7 @@ pub mod pattern {
                 if let ::xsd_parser_types::quick_xml::Event::Start(x)
                 | ::xsd_parser_types::quick_xml::Event::Empty(x) = &event
                 {
-                    if x.name().local_name().as_ref() == b"feature" {
+                    if x.name().local_name().into_inner().as_bytes() == b"feature" {
                         let output = < super :: FeatureElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_feature(
                             helper,
@@ -6624,7 +6608,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"and" {
+                    if x.name().local_name().into_inner().as_bytes() == b"and" {
                         let output = < super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_and(
                             helper,
@@ -6633,7 +6617,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"marker" {
+                    if x.name().local_name().into_inner().as_bytes() == b"marker" {
                         let output = < super :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_marker(
                             helper,
@@ -6642,7 +6626,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"token" {
+                    if x.name().local_name().into_inner().as_bytes() == b"token" {
                         let output = < super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_token(
                             helper,
@@ -6651,7 +6635,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"unify-ignore" {
+                    if x.name().local_name().into_inner().as_bytes() == b"unify-ignore" {
                         let output = < super :: UnifyIgnoreElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_unify_ignore(
                             helper,
@@ -7326,8 +7310,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<UnifyIgnoreElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum UnifyIgnoreElementTypeDeserializerState {
-            Init__ , Next__ , Content__ (< super :: UnifyIgnoreElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
+        enum UnifyIgnoreElementTypeDeserializerState { Init__ , Next__ , Content__ (< super :: UnifyIgnoreElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
         impl UnifyIgnoreElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -7513,8 +7496,7 @@ pub mod pattern {
             state__: ::std::boxed::Box<UnifyIgnoreElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        pub enum UnifyIgnoreElementTypeContentDeserializerState {
-            Init__ , And (:: core :: option :: Option < super :: AndElementType > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Marker (:: core :: option :: Option < super :: MarkerElementType > , :: core :: option :: Option << super :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Token (:: core :: option :: Option < super :: TokenElementType > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: UnifyIgnoreElementTypeContent) , Unknown__ , }
+        pub enum UnifyIgnoreElementTypeContentDeserializerState { Init__ , And (:: core :: option :: Option < super :: AndElementType > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Marker (:: core :: option :: Option < super :: MarkerElementType > , :: core :: option :: Option << super :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Token (:: core :: option :: Option < super :: TokenElementType > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: UnifyIgnoreElementTypeContent) , Unknown__ , }
         impl UnifyIgnoreElementTypeContentDeserializer {
             fn find_suitable<'de>(
                 &mut self,
@@ -7527,7 +7509,7 @@ pub mod pattern {
                 if let ::xsd_parser_types::quick_xml::Event::Start(x)
                 | ::xsd_parser_types::quick_xml::Event::Empty(x) = &event
                 {
-                    if x.name().local_name().as_ref() == b"and" {
+                    if x.name().local_name().into_inner().as_bytes() == b"and" {
                         let output = < super :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_and(
                             helper,
@@ -7536,7 +7518,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"marker" {
+                    if x.name().local_name().into_inner().as_bytes() == b"marker" {
                         let output = < super :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_marker(
                             helper,
@@ -7545,7 +7527,7 @@ pub mod pattern {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"token" {
+                    if x.name().local_name().into_inner().as_bytes() == b"token" {
                         let output = < super :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_token(
                             helper,
@@ -8583,8 +8565,7 @@ pub mod rules {
             state__: ::std::boxed::Box<AntipatternElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum AntipatternElementTypeDeserializerState {
-            Init__ , Next__ , Content__ (< super :: AntipatternElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
+        enum AntipatternElementTypeDeserializerState { Init__ , Next__ , Content__ (< super :: AntipatternElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
         impl AntipatternElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -8596,7 +8577,7 @@ pub mod rules {
                 > = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"case_sensitive" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"case_sensitive" {
                         helper.read_attrib(
                             &mut case_sensitive,
                             b"case_sensitive",
@@ -8783,8 +8764,7 @@ pub mod rules {
             state__: ::std::boxed::Box<AntipatternElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        pub enum AntipatternElementTypeContentDeserializerState {
-            Init__ , Token (:: core :: option :: Option < super :: super :: pattern :: TokenElementType > , :: core :: option :: Option << super :: super :: pattern :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , And (:: core :: option :: Option < super :: super :: pattern :: AndElementType > , :: core :: option :: Option << super :: super :: pattern :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Unify (:: core :: option :: Option < super :: super :: pattern :: UnifyElementType > , :: core :: option :: Option << super :: super :: pattern :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Marker (:: core :: option :: Option < super :: super :: pattern :: MarkerElementType > , :: core :: option :: Option << super :: super :: pattern :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Example (:: core :: option :: Option < super :: ExampleElementType > , :: core :: option :: Option << super :: ExampleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: ExampleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: AntipatternElementTypeContent) , Unknown__ , }
+        pub enum AntipatternElementTypeContentDeserializerState { Init__ , Token (:: core :: option :: Option < super :: super :: pattern :: TokenElementType > , :: core :: option :: Option << super :: super :: pattern :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , And (:: core :: option :: Option < super :: super :: pattern :: AndElementType > , :: core :: option :: Option << super :: super :: pattern :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Unify (:: core :: option :: Option < super :: super :: pattern :: UnifyElementType > , :: core :: option :: Option << super :: super :: pattern :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Marker (:: core :: option :: Option < super :: super :: pattern :: MarkerElementType > , :: core :: option :: Option << super :: super :: pattern :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Example (:: core :: option :: Option < super :: ExampleElementType > , :: core :: option :: Option << super :: ExampleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: ExampleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: AntipatternElementTypeContent) , Unknown__ , }
         impl AntipatternElementTypeContentDeserializer {
             fn find_suitable<'de>(
                 &mut self,
@@ -8797,7 +8777,7 @@ pub mod rules {
                 if let ::xsd_parser_types::quick_xml::Event::Start(x)
                 | ::xsd_parser_types::quick_xml::Event::Empty(x) = &event
                 {
-                    if x.name().local_name().as_ref() == b"token" {
+                    if x.name().local_name().into_inner().as_bytes() == b"token" {
                         let output = < super :: super :: pattern :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_token(
                             helper,
@@ -8806,7 +8786,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"and" {
+                    if x.name().local_name().into_inner().as_bytes() == b"and" {
                         let output = < super :: super :: pattern :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_and(
                             helper,
@@ -8815,7 +8795,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"unify" {
+                    if x.name().local_name().into_inner().as_bytes() == b"unify" {
                         let output = < super :: super :: pattern :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_unify(
                             helper,
@@ -8824,7 +8804,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"marker" {
+                    if x.name().local_name().into_inner().as_bytes() == b"marker" {
                         let output = < super :: super :: pattern :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_marker(
                             helper,
@@ -8833,7 +8813,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"example" {
+                    if x.name().local_name().into_inner().as_bytes() == b"example" {
                         let output = < super :: ExampleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_example(
                             helper,
@@ -9532,8 +9512,7 @@ pub mod rules {
             state__: ::std::boxed::Box<CategoryElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum CategoryElementTypeDeserializerState {
-            Init__ , Next__ , Content__ (< super :: CategoryElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
+        enum CategoryElementTypeDeserializerState { Init__ , Next__ , Content__ (< super :: CategoryElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
         impl CategoryElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -9555,31 +9534,32 @@ pub mod rules {
                 let mut prio: ::core::option::Option<::core::primitive::i32> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"default" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"default" {
                         helper.read_attrib(&mut default, b"default", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"id" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"id" {
                         helper.read_attrib(&mut id, b"id", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"name" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"name" {
                         helper.read_attrib(&mut name, b"name", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"premium" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"premium" {
                         helper.read_attrib(&mut premium, b"premium", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"type" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"type" {
                         helper.read_attrib(&mut type_, b"type", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"external" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"external" {
                         helper.read_attrib(&mut external, b"external", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"tab" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"tab" {
                         helper.read_attrib(&mut tab, b"tab", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"tags" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"tags" {
                         helper.read_attrib(&mut tags, b"tags", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"tone_tags" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"tone_tags" {
                         helper.read_attrib(&mut tone_tags, b"tone_tags", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"is_goal_specific" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"is_goal_specific"
+                    {
                         helper.read_attrib(
                             &mut is_goal_specific,
                             b"is_goal_specific",
                             &attrib.value,
                         )?;
-                    } else if attrib.key.local_name().as_ref() == b"prio" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"prio" {
                         helper.read_attrib(&mut prio, b"prio", &attrib.value)?;
                     } else {
                         helper.raise_unexpected_attrib_checked(&attrib)?;
@@ -9784,8 +9764,7 @@ pub mod rules {
             state__: ::std::boxed::Box<CategoryElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        pub enum CategoryElementTypeContentDeserializerState {
-            Init__ , Rule (:: core :: option :: Option < super :: RuleElementType > , :: core :: option :: Option << super :: RuleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: RuleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Rulegroup (:: core :: option :: Option < super :: RulegroupElementType > , :: core :: option :: Option << super :: RulegroupElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: RulegroupElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: CategoryElementTypeContent) , Unknown__ , }
+        pub enum CategoryElementTypeContentDeserializerState { Init__ , Rule (:: core :: option :: Option < super :: RuleElementType > , :: core :: option :: Option << super :: RuleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: RuleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Rulegroup (:: core :: option :: Option < super :: RulegroupElementType > , :: core :: option :: Option << super :: RulegroupElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: RulegroupElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: CategoryElementTypeContent) , Unknown__ , }
         impl CategoryElementTypeContentDeserializer {
             fn find_suitable<'de>(
                 &mut self,
@@ -9798,7 +9777,7 @@ pub mod rules {
                 if let ::xsd_parser_types::quick_xml::Event::Start(x)
                 | ::xsd_parser_types::quick_xml::Event::Empty(x) = &event
                 {
-                    if x.name().local_name().as_ref() == b"rule" {
+                    if x.name().local_name().into_inner().as_bytes() == b"rule" {
                         let output = < super :: RuleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_rule(
                             helper,
@@ -9807,7 +9786,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"rulegroup" {
+                    if x.name().local_name().into_inner().as_bytes() == b"rulegroup" {
                         let output = < super :: RulegroupElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_rulegroup(
                             helper,
@@ -10172,8 +10151,7 @@ pub mod rules {
             state__: ::std::boxed::Box<ExampleElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum ExampleElementTypeDeserializerState {
-            Init__ , TextBefore (:: core :: option :: Option << :: xsd_parser_types :: xml :: Text as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Content (:: core :: option :: Option << super :: ExampleElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
+        enum ExampleElementTypeDeserializerState { Init__ , TextBefore (:: core :: option :: Option << :: xsd_parser_types :: xml :: Text as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Content (:: core :: option :: Option << super :: ExampleElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
         impl ExampleElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -10185,11 +10163,11 @@ pub mod rules {
                 let mut reason: ::core::option::Option<::std::string::String> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"correction" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"correction" {
                         helper.read_attrib(&mut correction, b"correction", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"type" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"type" {
                         helper.read_attrib(&mut type_, b"type", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"reason" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"reason" {
                         helper.read_attrib(&mut reason, b"reason", &attrib.value)?;
                     } else {
                         helper.raise_unexpected_attrib_checked(&attrib)?;
@@ -10523,8 +10501,7 @@ pub mod rules {
             state__: ::std::boxed::Box<ExampleElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        pub enum ExampleElementTypeContentDeserializerState {
-            Init__ , Marker (:: core :: option :: Option < :: xsd_parser_types :: xml :: Mixed < super :: ExampleMarkerElementType > > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: ExampleMarkerElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: ExampleMarkerElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: ExampleElementTypeContent) , Unknown__ , }
+        pub enum ExampleElementTypeContentDeserializerState { Init__ , Marker (:: core :: option :: Option < :: xsd_parser_types :: xml :: Mixed < super :: ExampleMarkerElementType > > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: ExampleMarkerElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: ExampleMarkerElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: ExampleElementTypeContent) , Unknown__ , }
         impl ExampleElementTypeContentDeserializer {
             fn find_suitable<'de>(
                 &mut self,
@@ -10537,7 +10514,7 @@ pub mod rules {
                 if let ::xsd_parser_types::quick_xml::Event::Start(x)
                 | ::xsd_parser_types::quick_xml::Event::Empty(x) = &event
                 {
-                    if x.name().local_name().as_ref() == b"marker" {
+                    if x.name().local_name().into_inner().as_bytes() == b"marker" {
                         let output = <::xsd_parser_types::xml::Mixed<
                             super::ExampleMarkerElementType,
                         > as ::xsd_parser_types::quick_xml::WithDeserializer>::init(
@@ -10725,6 +10702,17 @@ pub mod rules {
                                 allow_any: false,
                             });
                         }
+                        (
+                            state,
+                            ::xsd_parser_types::quick_xml::Event::Text(_)
+                            | ::xsd_parser_types::quick_xml::Event::CData(_),
+                        ) => {
+                            *self.state__ = state;
+                            break (
+                                ::xsd_parser_types::quick_xml::DeserializerEvent::None,
+                                false,
+                            );
+                        }
                         (S::Init__, event) => match self.find_suitable(helper, event)? {
                             ::xsd_parser_types::quick_xml::ElementHandlerOutput::Break {
                                 event,
@@ -10757,17 +10745,6 @@ pub mod rules {
                             *self.state__ = state;
                             break (
                                 ::xsd_parser_types::quick_xml::DeserializerEvent::Continue(event),
-                                false,
-                            );
-                        }
-                        (
-                            state,
-                            ::xsd_parser_types::quick_xml::Event::Text(_)
-                            | ::xsd_parser_types::quick_xml::Event::CData(_),
-                        ) => {
-                            *self.state__ = state;
-                            break (
-                                ::xsd_parser_types::quick_xml::DeserializerEvent::None,
                                 false,
                             );
                         }
@@ -10822,9 +10799,9 @@ pub mod rules {
                 let mut args: ::core::option::Option<::std::string::String> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"class" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"class" {
                         helper.read_attrib(&mut class, b"class", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"args" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"args" {
                         helper.read_attrib(&mut args, b"args", &attrib.value)?;
                     } else {
                         helper.raise_unexpected_attrib_checked(&attrib)?;
@@ -10911,8 +10888,7 @@ pub mod rules {
             state__: ::std::boxed::Box<MessageElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum MessageElementTypeDeserializerState {
-            Init__ , TextBefore (:: core :: option :: Option << :: xsd_parser_types :: xml :: Text as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Content (:: core :: option :: Option << super :: MessageElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
+        enum MessageElementTypeDeserializerState { Init__ , TextBefore (:: core :: option :: Option << :: xsd_parser_types :: xml :: Text as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Content (:: core :: option :: Option << super :: MessageElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
         impl MessageElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -10924,7 +10900,7 @@ pub mod rules {
                 > = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"suppress_misspelled" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"suppress_misspelled" {
                         helper.read_attrib(
                             &mut suppress_misspelled,
                             b"suppress_misspelled",
@@ -11258,8 +11234,7 @@ pub mod rules {
             state__: ::std::boxed::Box<MessageElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        pub enum MessageElementTypeContentDeserializerState {
-            Init__ , Suggestion (:: core :: option :: Option < :: xsd_parser_types :: xml :: Mixed < super :: SuggestionElementType > > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: SuggestionElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: SuggestionElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Match (:: core :: option :: Option < :: xsd_parser_types :: xml :: Mixed < super :: super :: pattern :: MatchElementType > > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: super :: pattern :: MatchElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: super :: pattern :: MatchElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: MessageElementTypeContent) , Unknown__ , }
+        pub enum MessageElementTypeContentDeserializerState { Init__ , Suggestion (:: core :: option :: Option < :: xsd_parser_types :: xml :: Mixed < super :: SuggestionElementType > > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: SuggestionElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: SuggestionElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Match (:: core :: option :: Option < :: xsd_parser_types :: xml :: Mixed < super :: super :: pattern :: MatchElementType > > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: super :: pattern :: MatchElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: super :: pattern :: MatchElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: MessageElementTypeContent) , Unknown__ , }
         impl MessageElementTypeContentDeserializer {
             fn find_suitable<'de>(
                 &mut self,
@@ -11272,7 +11247,7 @@ pub mod rules {
                 if let ::xsd_parser_types::quick_xml::Event::Start(x)
                 | ::xsd_parser_types::quick_xml::Event::Empty(x) = &event
                 {
-                    if x.name().local_name().as_ref() == b"suggestion" {
+                    if x.name().local_name().into_inner().as_bytes() == b"suggestion" {
                         let output = < :: xsd_parser_types :: xml :: Mixed < super :: SuggestionElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_suggestion(
                             helper,
@@ -11281,7 +11256,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"match" {
+                    if x.name().local_name().into_inner().as_bytes() == b"match" {
                         let output = <::xsd_parser_types::xml::Mixed<
                             super::super::pattern::MatchElementType,
                         > as ::xsd_parser_types::quick_xml::WithDeserializer>::init(
@@ -11563,6 +11538,17 @@ pub mod rules {
                                 allow_any: false,
                             });
                         }
+                        (
+                            state,
+                            ::xsd_parser_types::quick_xml::Event::Text(_)
+                            | ::xsd_parser_types::quick_xml::Event::CData(_),
+                        ) => {
+                            *self.state__ = state;
+                            break (
+                                ::xsd_parser_types::quick_xml::DeserializerEvent::None,
+                                false,
+                            );
+                        }
                         (S::Init__, event) => match self.find_suitable(helper, event)? {
                             ::xsd_parser_types::quick_xml::ElementHandlerOutput::Break {
                                 event,
@@ -11620,17 +11606,6 @@ pub mod rules {
                                 false,
                             );
                         }
-                        (
-                            state,
-                            ::xsd_parser_types::quick_xml::Event::Text(_)
-                            | ::xsd_parser_types::quick_xml::Event::CData(_),
-                        ) => {
-                            *self.state__ = state;
-                            break (
-                                ::xsd_parser_types::quick_xml::DeserializerEvent::None,
-                                false,
-                            );
-                        }
                         (state, event) => {
                             *self.state__ = state;
                             break (
@@ -11669,8 +11644,7 @@ pub mod rules {
             state__: ::std::boxed::Box<PatternElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum PatternElementTypeDeserializerState {
-            Init__ , Next__ , Content__ (< super :: PatternElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
+        enum PatternElementTypeDeserializerState { Init__ , Next__ , Content__ (< super :: PatternElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
         impl PatternElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -11684,13 +11658,13 @@ pub mod rules {
                     None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"case_sensitive" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"case_sensitive" {
                         helper.read_attrib(
                             &mut case_sensitive,
                             b"case_sensitive",
                             &attrib.value,
                         )?;
-                    } else if attrib.key.local_name().as_ref() == b"raw_pos" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"raw_pos" {
                         helper.read_attrib(&mut raw_pos, b"raw_pos", &attrib.value)?;
                     } else {
                         helper.raise_unexpected_attrib_checked(&attrib)?;
@@ -11873,8 +11847,7 @@ pub mod rules {
             state__: ::std::boxed::Box<PatternElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        pub enum PatternElementTypeContentDeserializerState {
-            Init__ , Token (:: core :: option :: Option < super :: super :: pattern :: TokenElementType > , :: core :: option :: Option << super :: super :: pattern :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Phraseref (:: core :: option :: Option < super :: super :: pattern :: PhraserefElementType > , :: core :: option :: Option << super :: super :: pattern :: PhraserefElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: PhraserefElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , And (:: core :: option :: Option < super :: super :: pattern :: AndElementType > , :: core :: option :: Option << super :: super :: pattern :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Or (:: core :: option :: Option < super :: super :: pattern :: OrElementType > , :: core :: option :: Option << super :: super :: pattern :: OrElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: OrElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Unify (:: core :: option :: Option < super :: super :: pattern :: UnifyElementType > , :: core :: option :: Option << super :: super :: pattern :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Marker (:: core :: option :: Option < super :: super :: pattern :: MarkerElementType > , :: core :: option :: Option << super :: super :: pattern :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: PatternElementTypeContent) , Unknown__ , }
+        pub enum PatternElementTypeContentDeserializerState { Init__ , Token (:: core :: option :: Option < super :: super :: pattern :: TokenElementType > , :: core :: option :: Option << super :: super :: pattern :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Phraseref (:: core :: option :: Option < super :: super :: pattern :: PhraserefElementType > , :: core :: option :: Option << super :: super :: pattern :: PhraserefElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: PhraserefElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , And (:: core :: option :: Option < super :: super :: pattern :: AndElementType > , :: core :: option :: Option << super :: super :: pattern :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Or (:: core :: option :: Option < super :: super :: pattern :: OrElementType > , :: core :: option :: Option << super :: super :: pattern :: OrElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: OrElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Unify (:: core :: option :: Option < super :: super :: pattern :: UnifyElementType > , :: core :: option :: Option << super :: super :: pattern :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Marker (:: core :: option :: Option < super :: super :: pattern :: MarkerElementType > , :: core :: option :: Option << super :: super :: pattern :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: PatternElementTypeContent) , Unknown__ , }
         impl PatternElementTypeContentDeserializer {
             fn find_suitable<'de>(
                 &mut self,
@@ -11887,7 +11860,7 @@ pub mod rules {
                 if let ::xsd_parser_types::quick_xml::Event::Start(x)
                 | ::xsd_parser_types::quick_xml::Event::Empty(x) = &event
                 {
-                    if x.name().local_name().as_ref() == b"token" {
+                    if x.name().local_name().into_inner().as_bytes() == b"token" {
                         let output = < super :: super :: pattern :: TokenElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_token(
                             helper,
@@ -11896,7 +11869,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"phraseref" {
+                    if x.name().local_name().into_inner().as_bytes() == b"phraseref" {
                         let output = < super :: super :: pattern :: PhraserefElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_phraseref(
                             helper,
@@ -11905,7 +11878,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"and" {
+                    if x.name().local_name().into_inner().as_bytes() == b"and" {
                         let output = < super :: super :: pattern :: AndElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_and(
                             helper,
@@ -11914,7 +11887,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"or" {
+                    if x.name().local_name().into_inner().as_bytes() == b"or" {
                         let output = < super :: super :: pattern :: OrElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_or(
                             helper,
@@ -11923,7 +11896,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"unify" {
+                    if x.name().local_name().into_inner().as_bytes() == b"unify" {
                         let output = < super :: super :: pattern :: UnifyElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_unify(
                             helper,
@@ -11932,7 +11905,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"marker" {
+                    if x.name().local_name().into_inner().as_bytes() == b"marker" {
                         let output = < super :: super :: pattern :: MarkerElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_marker(
                             helper,
@@ -12718,8 +12691,7 @@ pub mod rules {
             state__: ::std::boxed::Box<RegexpElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum RegexpElementTypeDeserializerState {
-            Init__ , Content__ (< :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
+        enum RegexpElementTypeDeserializerState { Init__ , Content__ (< :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
         impl RegexpElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -12733,15 +12705,15 @@ pub mod rules {
                 let mut mark: ::core::option::Option<::core::primitive::i32> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"case_sensitive" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"case_sensitive" {
                         helper.read_attrib(
                             &mut case_sensitive,
                             b"case_sensitive",
                             &attrib.value,
                         )?;
-                    } else if attrib.key.local_name().as_ref() == b"type" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"type" {
                         helper.read_attrib(&mut type_, b"type", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"mark" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"mark" {
                         helper.read_attrib(&mut mark, b"mark", &attrib.value)?;
                     } else {
                         helper.raise_unexpected_attrib_checked(&attrib)?;
@@ -12902,8 +12874,7 @@ pub mod rules {
             state__: ::std::boxed::Box<RuleElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum RuleElementTypeDeserializerState {
-            Init__ , Next__ , Content__ (< super :: RuleElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
+        enum RuleElementTypeDeserializerState { Init__ , Next__ , Content__ (< super :: RuleElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
         impl RuleElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -12924,39 +12895,42 @@ pub mod rules {
                 let mut prio: ::core::option::Option<::core::primitive::i32> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"default" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"default" {
                         helper.read_attrib(&mut default, b"default", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"id" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"id" {
                         helper.read_attrib(&mut id, b"id", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"name" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"name" {
                         helper.read_attrib(&mut name, b"name", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"premium" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"premium" {
                         helper.read_attrib(&mut premium, b"premium", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"type" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"type" {
                         helper.read_attrib(&mut type_, b"type", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"tags" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"tags" {
                         helper.read_attrib(&mut tags, b"tags", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"tone_tags" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"tone_tags" {
                         helper.read_attrib(&mut tone_tags, b"tone_tags", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"is_goal_specific" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"is_goal_specific"
+                    {
                         helper.read_attrib(
                             &mut is_goal_specific,
                             b"is_goal_specific",
                             &attrib.value,
                         )?;
-                    } else if attrib.key.local_name().as_ref() == b"min_prev_matches" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"min_prev_matches"
+                    {
                         helper.read_attrib(
                             &mut min_prev_matches,
                             b"min_prev_matches",
                             &attrib.value,
                         )?;
-                    } else if attrib.key.local_name().as_ref() == b"distance_tokens" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"distance_tokens"
+                    {
                         helper.read_attrib(
                             &mut distance_tokens,
                             b"distance_tokens",
                             &attrib.value,
                         )?;
-                    } else if attrib.key.local_name().as_ref() == b"prio" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"prio" {
                         helper.read_attrib(&mut prio, b"prio", &attrib.value)?;
                     } else {
                         helper.raise_unexpected_attrib_checked(&attrib)?;
@@ -13155,8 +13129,7 @@ pub mod rules {
             state__: ::std::boxed::Box<RuleElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        pub enum RuleElementTypeContentDeserializerState {
-            Init__ , Antipattern (:: core :: option :: Option < super :: AntipatternElementType > , :: core :: option :: Option << super :: AntipatternElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: AntipatternElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Pattern (:: core :: option :: Option < super :: PatternElementType > , :: core :: option :: Option << super :: PatternElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: PatternElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Regexp (:: core :: option :: Option < super :: RegexpElementType > , :: core :: option :: Option << super :: RegexpElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: RegexpElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Filter (:: core :: option :: Option < super :: FilterElementType > , :: core :: option :: Option << super :: FilterElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: FilterElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Message (:: core :: option :: Option < super :: MessageElementType > , :: core :: option :: Option << super :: MessageElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: MessageElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Suggestion (:: core :: option :: Option < super :: SuggestionElementType > , :: core :: option :: Option << super :: SuggestionElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: SuggestionElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Url (:: core :: option :: Option < :: std :: string :: String > , :: core :: option :: Option << :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Short (:: core :: option :: Option < :: std :: string :: String > , :: core :: option :: Option << :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Example (:: core :: option :: Option < super :: ExampleElementType > , :: core :: option :: Option << super :: ExampleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: ExampleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: RuleElementTypeContent) , Unknown__ , }
+        pub enum RuleElementTypeContentDeserializerState { Init__ , Antipattern (:: core :: option :: Option < super :: AntipatternElementType > , :: core :: option :: Option << super :: AntipatternElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: AntipatternElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Pattern (:: core :: option :: Option < super :: PatternElementType > , :: core :: option :: Option << super :: PatternElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: PatternElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Regexp (:: core :: option :: Option < super :: RegexpElementType > , :: core :: option :: Option << super :: RegexpElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: RegexpElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Filter (:: core :: option :: Option < super :: FilterElementType > , :: core :: option :: Option << super :: FilterElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: FilterElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Message (:: core :: option :: Option < super :: MessageElementType > , :: core :: option :: Option << super :: MessageElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: MessageElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Suggestion (:: core :: option :: Option < super :: SuggestionElementType > , :: core :: option :: Option << super :: SuggestionElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: SuggestionElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Url (:: core :: option :: Option < :: std :: string :: String > , :: core :: option :: Option << :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Short (:: core :: option :: Option < :: std :: string :: String > , :: core :: option :: Option << :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Example (:: core :: option :: Option < super :: ExampleElementType > , :: core :: option :: Option << super :: ExampleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: ExampleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: RuleElementTypeContent) , Unknown__ , }
         impl RuleElementTypeContentDeserializer {
             fn find_suitable<'de>(
                 &mut self,
@@ -13169,7 +13142,7 @@ pub mod rules {
                 if let ::xsd_parser_types::quick_xml::Event::Start(x)
                 | ::xsd_parser_types::quick_xml::Event::Empty(x) = &event
                 {
-                    if x.name().local_name().as_ref() == b"antipattern" {
+                    if x.name().local_name().into_inner().as_bytes() == b"antipattern" {
                         let output = < super :: AntipatternElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_antipattern(
                             helper,
@@ -13178,7 +13151,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"pattern" {
+                    if x.name().local_name().into_inner().as_bytes() == b"pattern" {
                         let output = < super :: PatternElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_pattern(
                             helper,
@@ -13187,7 +13160,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"regexp" {
+                    if x.name().local_name().into_inner().as_bytes() == b"regexp" {
                         let output = < super :: RegexpElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_regexp(
                             helper,
@@ -13196,7 +13169,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"filter" {
+                    if x.name().local_name().into_inner().as_bytes() == b"filter" {
                         let output = < super :: FilterElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_filter(
                             helper,
@@ -13205,7 +13178,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"message" {
+                    if x.name().local_name().into_inner().as_bytes() == b"message" {
                         let output = < super :: MessageElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_message(
                             helper,
@@ -13214,7 +13187,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"suggestion" {
+                    if x.name().local_name().into_inner().as_bytes() == b"suggestion" {
                         let output = < super :: SuggestionElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_suggestion(
                             helper,
@@ -13223,7 +13196,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"url" {
+                    if x.name().local_name().into_inner().as_bytes() == b"url" {
                         let output = < :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_url(
                             helper,
@@ -13232,7 +13205,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"short" {
+                    if x.name().local_name().into_inner().as_bytes() == b"short" {
                         let output = < :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_short(
                             helper,
@@ -13241,7 +13214,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"example" {
+                    if x.name().local_name().into_inner().as_bytes() == b"example" {
                         let output = < super :: ExampleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_example(
                             helper,
@@ -14353,8 +14326,7 @@ pub mod rules {
             state__: ::std::boxed::Box<RulegroupElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum RulegroupElementTypeDeserializerState {
-            Init__ , Url (:: core :: option :: Option << :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Short (:: core :: option :: Option << :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Antipattern (:: core :: option :: Option << super :: AntipatternElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Rule (:: core :: option :: Option << super :: RuleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
+        enum RulegroupElementTypeDeserializerState { Init__ , Url (:: core :: option :: Option << :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Short (:: core :: option :: Option << :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Antipattern (:: core :: option :: Option << super :: AntipatternElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Rule (:: core :: option :: Option << super :: RuleElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
         impl RulegroupElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -14375,39 +14347,42 @@ pub mod rules {
                 let mut prio: ::core::option::Option<::core::primitive::i32> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"default" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"default" {
                         helper.read_attrib(&mut default, b"default", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"id" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"id" {
                         helper.read_attrib(&mut id, b"id", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"name" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"name" {
                         helper.read_attrib(&mut name, b"name", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"premium" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"premium" {
                         helper.read_attrib(&mut premium, b"premium", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"type" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"type" {
                         helper.read_attrib(&mut type_, b"type", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"tags" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"tags" {
                         helper.read_attrib(&mut tags, b"tags", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"tone_tags" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"tone_tags" {
                         helper.read_attrib(&mut tone_tags, b"tone_tags", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"is_goal_specific" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"is_goal_specific"
+                    {
                         helper.read_attrib(
                             &mut is_goal_specific,
                             b"is_goal_specific",
                             &attrib.value,
                         )?;
-                    } else if attrib.key.local_name().as_ref() == b"min_prev_matches" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"min_prev_matches"
+                    {
                         helper.read_attrib(
                             &mut min_prev_matches,
                             b"min_prev_matches",
                             &attrib.value,
                         )?;
-                    } else if attrib.key.local_name().as_ref() == b"distance_tokens" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"distance_tokens"
+                    {
                         helper.read_attrib(
                             &mut distance_tokens,
                             b"distance_tokens",
                             &attrib.value,
                         )?;
-                    } else if attrib.key.local_name().as_ref() == b"prio" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"prio" {
                         helper.read_attrib(&mut prio, b"prio", &attrib.value)?;
                     } else {
                         helper.raise_unexpected_attrib_checked(&attrib)?;
@@ -14987,8 +14962,7 @@ pub mod rules {
             state__: ::std::boxed::Box<RulesElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum RulesElementTypeDeserializerState {
-            Init__ , Next__ , Content__ (< super :: RulesElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
+        enum RulesElementTypeDeserializerState { Init__ , Next__ , Content__ (< super :: RulesElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
         impl RulesElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -15002,13 +14976,13 @@ pub mod rules {
                 let mut integrate: ::core::option::Option<super::RulesIntegrateType> = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"lang" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"lang" {
                         helper.read_attrib(&mut lang, b"lang", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"idprefix" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"idprefix" {
                         helper.read_attrib(&mut idprefix, b"idprefix", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"premium" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"premium" {
                         helper.read_attrib(&mut premium, b"premium", &attrib.value)?;
-                    } else if attrib.key.local_name().as_ref() == b"integrate" {
+                    } else if attrib.key.local_name().into_inner().as_bytes() == b"integrate" {
                         helper.read_attrib(&mut integrate, b"integrate", &attrib.value)?;
                     } else {
                         helper.raise_unexpected_attrib_checked(&attrib)?;
@@ -15195,8 +15169,7 @@ pub mod rules {
             state__: ::std::boxed::Box<RulesElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        pub enum RulesElementTypeContentDeserializerState {
-            Init__ , Unification (:: core :: option :: Option < super :: super :: pattern :: UnificationElementType > , :: core :: option :: Option << super :: super :: pattern :: UnificationElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: UnificationElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Phrases (:: core :: option :: Option < super :: super :: pattern :: PhrasesElementType > , :: core :: option :: Option << super :: super :: pattern :: PhrasesElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: PhrasesElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Category (:: core :: option :: Option < super :: CategoryElementType > , :: core :: option :: Option << super :: CategoryElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: CategoryElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: RulesElementTypeContent) , Unknown__ , }
+        pub enum RulesElementTypeContentDeserializerState { Init__ , Unification (:: core :: option :: Option < super :: super :: pattern :: UnificationElementType > , :: core :: option :: Option << super :: super :: pattern :: UnificationElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: UnificationElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Phrases (:: core :: option :: Option < super :: super :: pattern :: PhrasesElementType > , :: core :: option :: Option << super :: super :: pattern :: PhrasesElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: super :: pattern :: PhrasesElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Category (:: core :: option :: Option < super :: CategoryElementType > , :: core :: option :: Option << super :: CategoryElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > , :: core :: option :: Option << super :: CategoryElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer > ,) , Done__ (super :: RulesElementTypeContent) , Unknown__ , }
         impl RulesElementTypeContentDeserializer {
             fn find_suitable<'de>(
                 &mut self,
@@ -15209,7 +15182,7 @@ pub mod rules {
                 if let ::xsd_parser_types::quick_xml::Event::Start(x)
                 | ::xsd_parser_types::quick_xml::Event::Empty(x) = &event
                 {
-                    if x.name().local_name().as_ref() == b"unification" {
+                    if x.name().local_name().into_inner().as_bytes() == b"unification" {
                         let output = < super :: super :: pattern :: UnificationElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_unification(
                             helper,
@@ -15218,7 +15191,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"phrases" {
+                    if x.name().local_name().into_inner().as_bytes() == b"phrases" {
                         let output = < super :: super :: pattern :: PhrasesElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_phrases(
                             helper,
@@ -15227,7 +15200,7 @@ pub mod rules {
                             output,
                         );
                     }
-                    if x.name().local_name().as_ref() == b"category" {
+                    if x.name().local_name().into_inner().as_bytes() == b"category" {
                         let output = < super :: CategoryElementType as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: init (helper , event) ? ;
                         return self.handle_category(
                             helper,
@@ -15701,8 +15674,7 @@ pub mod rules {
             state__: ::std::boxed::Box<SuggestionElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum SuggestionElementTypeDeserializerState {
-            Init__ , TextBefore (:: core :: option :: Option << :: xsd_parser_types :: xml :: Text as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Content (:: core :: option :: Option << super :: SuggestionElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
+        enum SuggestionElementTypeDeserializerState { Init__ , TextBefore (:: core :: option :: Option << :: xsd_parser_types :: xml :: Text as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Content (:: core :: option :: Option << super :: SuggestionElementTypeContent as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
         impl SuggestionElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -15714,7 +15686,7 @@ pub mod rules {
                 > = None;
                 for attrib in helper.filter_xmlns_attributes(bytes_start) {
                     let attrib = attrib?;
-                    if attrib.key.local_name().as_ref() == b"suppress_misspelled" {
+                    if attrib.key.local_name().into_inner().as_bytes() == b"suppress_misspelled" {
                         helper.read_attrib(
                             &mut suppress_misspelled,
                             b"suppress_misspelled",
@@ -16051,8 +16023,7 @@ pub mod rules {
             state__: ::std::boxed::Box<SuggestionElementTypeContentDeserializerState>,
         }
         #[derive(Debug)]
-        enum SuggestionElementTypeContentDeserializerState {
-            Init__ , Match (:: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: super :: pattern :: MatchElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
+        enum SuggestionElementTypeContentDeserializerState { Init__ , Match (:: core :: option :: Option << :: xsd_parser_types :: xml :: Mixed < super :: super :: pattern :: MatchElementType > as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer >) , Done__ , Unknown__ , }
         impl SuggestionElementTypeContentDeserializer {
             fn finish_state(
                 &mut self,
@@ -16307,8 +16278,7 @@ pub mod rules {
             state__: ::std::boxed::Box<ExampleMarkerElementTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum ExampleMarkerElementTypeDeserializerState {
-            Init__ , Content__ (< :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
+        enum ExampleMarkerElementTypeDeserializerState { Init__ , Content__ (< :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
         impl ExampleMarkerElementTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
@@ -16513,7 +16483,7 @@ pub mod xs {
         type Deserializer = ::std::boxed::Box<quick_xml_deserialize::AnySimpleTypeDeserializer>;
     }
     pub type AnyUriType = ::std::string::String;
-    pub type Base64BinaryType = ::std::string::String;
+    pub type Base64BinaryType = ::xsd_parser_types::xml::Base64String;
     pub type BooleanType = ::core::primitive::bool;
     pub type ByteType = ::core::primitive::i8;
     pub type DateType = ::std::string::String;
@@ -16527,7 +16497,7 @@ pub mod xs {
     pub type GMonthDayType = ::std::string::String;
     pub type GYearType = ::std::string::String;
     pub type GYearMonthType = ::std::string::String;
-    pub type HexBinaryType = ::std::string::String;
+    pub type HexBinaryType = ::xsd_parser_types::xml::HexString;
     pub type IntType = ::core::primitive::i32;
     pub type IntegerType = ::core::primitive::i32;
     pub type LanguageType = ::std::string::String;
@@ -16554,8 +16524,7 @@ pub mod xs {
             state__: ::std::boxed::Box<AnySimpleTypeDeserializerState>,
         }
         #[derive(Debug)]
-        enum AnySimpleTypeDeserializerState {
-            Init__ , Content__ (< :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
+        enum AnySimpleTypeDeserializerState { Init__ , Content__ (< :: std :: string :: String as :: xsd_parser_types :: quick_xml :: WithDeserializer > :: Deserializer) , Unknown__ , }
         impl AnySimpleTypeDeserializer {
             fn from_bytes_start(
                 helper: &mut ::xsd_parser_types::quick_xml::DeserializeHelper,
