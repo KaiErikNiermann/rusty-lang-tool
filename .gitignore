@@ -70,3 +70,8 @@ node_modules/
 .venv/
 __pycache__/
 .semgrep_logs/
+
+# Local working state: session log, upstream-issue records, scratch output
+/LOG.md
+/.upstream-issues/
+/.scratch/
