@@ -1733,7 +1733,7 @@ dependencies = [
  "serde",
  "tracing",
  "tracing-subscriber",
- "xsd-parser-types 0.3.0",
+ "xsd-parser-types",
 ]
 
 [[package]]
@@ -2655,22 +2655,7 @@ dependencies = [
  "tracing",
  "unindent",
  "url",
- "xsd-parser-types 0.4.0",
-]
-
-[[package]]
-name = "xsd-parser-types"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63fb57acbcae7a25b81c24693cc856cce2d68c012257a802ea255dbe2d1c1663"
-dependencies = [
- "base64 0.23.1",
- "const-hex",
- "encoding_rs",
- "indexmap",
- "quick-xml",
- "regex",
- "thiserror 2.0.21",
+ "xsd-parser-types",
 ]
 
 [[package]]
