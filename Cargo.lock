@@ -282,9 +282,9 @@ dependencies = [
 
 [[package]]
 name = "brotli-decompressor"
-version = "6.3.0"
+version = "6.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97d9071e5b45944c5a9c06baf13a7a65ffa2c88c204015967852c90869692c05"
+checksum = "75c74c9c51b9140663e196b5fb88bc94c334d7a497c8311cb759d8557874747f"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",
@@ -1733,7 +1733,7 @@ dependencies = [
  "serde",
  "tracing",
  "tracing-subscriber",
- "xsd-parser-types",
+ "xsd-parser-types 0.3.0",
 ]
 
 [[package]]
@@ -2635,9 +2635,9 @@ checksum = "3ae8337f8a065cfc972643663ea4279e04e7256de865aa66fe25cec5fb912d3f"
 
 [[package]]
 name = "xsd-parser"
-version = "1.6.0"
+version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42e24b4c4b0df674e6a8849ccfae5e55cfa680baf5624e8c2cc60ad8c0cd469c"
+checksum = "1c553afdb4e8f2692f204b38e7d8fa48b136670dda98652334a2f5e6c21c9e5b"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -2655,7 +2655,7 @@ dependencies = [
  "tracing",
  "unindent",
  "url",
- "xsd-parser-types",
+ "xsd-parser-types 0.4.0",
 ]
 
 [[package]]
@@ -2663,6 +2663,21 @@ name = "xsd-parser-types"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63fb57acbcae7a25b81c24693cc856cce2d68c012257a802ea255dbe2d1c1663"
+dependencies = [
+ "base64 0.23.1",
+ "const-hex",
+ "encoding_rs",
+ "indexmap",
+ "quick-xml",
+ "regex",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "xsd-parser-types"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c1c82cb88d5b9975c39d0cf7a293ce007ccb4fe519ec3ca8409501edc0dbc85"
 dependencies = [
  "base64 0.23.1",
  "const-hex",
