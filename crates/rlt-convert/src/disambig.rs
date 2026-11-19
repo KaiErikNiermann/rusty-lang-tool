@@ -12,7 +12,7 @@
 //! the rule is kept and named, but inert — so coverage stays a computed number, not a silent drop.
 
 use anyhow::{Context, Result, anyhow};
-use rlt_ir::{Construct, DisambigRule, ExceptionPat, TagAction, TokenPat};
+use rlt_ir::{Construct, DisambigRule, ExceptionPat, ExceptionScope, TagAction, TokenPat};
 use serde::Deserialize;
 
 use crate::expand_entities;
@@ -190,6 +190,11 @@ fn lower_exception(e: &XException) -> ExceptionPat {
         inflected: is_yes(e.inflected.as_deref()),
         negate: is_yes(e.negate.as_deref()),
         case_sensitive: is_yes(e.case_sensitive.as_deref()),
+        scope: match e.scope.as_deref() {
+            Some("next") => ExceptionScope::Next,
+            Some("previous") => ExceptionScope::Previous,
+            _ => ExceptionScope::Current,
+        },
     }
 }
 
@@ -351,6 +356,8 @@ struct XException {
     inflected: Option<String>,
     #[serde(rename = "@case_sensitive")]
     case_sensitive: Option<String>,
+    #[serde(rename = "@scope")]
+    scope: Option<String>,
     #[serde(rename = "$text")]
     text: Option<String>,
 }

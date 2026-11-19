@@ -516,6 +516,31 @@ pub struct TokenPat {
     pub exceptions: Vec<ExceptionPat>,
 }
 
+/// Which token an `<exception>` is checked against (LT's `scope` attribute).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Archive,
+    Serialize,
+    Deserialize,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub enum ExceptionScope {
+    /// The token the exception belongs to (default).
+    #[default]
+    Current,
+    /// The token(s) following it: the immediately next token, and every token a `skip` passes over.
+    Next,
+    /// The token preceding it.
+    Previous,
+}
+
 /// A `<token>`'s `<exception>`: a lighter token-like matcher that, when it matches the candidate,
 /// disqualifies the enclosing token from matching.
 #[derive(
@@ -541,6 +566,8 @@ pub struct ExceptionPat {
     pub negate: bool,
     /// `case_sensitive="yes"`: match text case-sensitively.
     pub case_sensitive: bool,
+    /// `scope`: which token the exception is checked against (`current`, `next` or `previous`).
+    pub scope: ExceptionScope,
 }
 
 /// A disambiguation rule: a pattern (with an optional `<marker>` delimiting the affected tokens) plus

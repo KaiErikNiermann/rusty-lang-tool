@@ -16,8 +16,8 @@ use std::collections::HashMap;
 
 use regex::Regex;
 use rlt_ir::{
-    Case, Construct, DisambigRule, ExceptionPat, Rule, SugPart, Suggestion as IrSuggestion,
-    TagAction, TokenPat,
+    Case, Construct, DisambigRule, ExceptionPat, ExceptionScope, Rule, SugPart,
+    Suggestion as IrSuggestion, TagAction, TokenPat,
 };
 
 use crate::{Analysis, Diagnostic, GrammarChecker, Source, Span, Suggestion, Token};
@@ -199,6 +199,8 @@ struct TokenMatcher {
     /// `None` ignores it (the default). Checked against the gap between adjacent token spans.
     space_before: Option<bool>,
     exceptions: Vec<TokenMatcher>,
+    /// Which token this matcher is checked against when it is an exception (`scope` attribute).
+    scope: ExceptionScope,
 }
 
 enum TextMatch {
@@ -471,6 +473,7 @@ fn compile_token(t: &TokenPat) -> Option<TokenMatcher> {
         negate: t.negate,
         space_before: t.space_before,
         exceptions,
+        scope: ExceptionScope::Current,
     })
 }
 
@@ -489,6 +492,7 @@ fn compile_exception(e: &ExceptionPat) -> Option<TokenMatcher> {
         negate: e.negate,
         space_before: None, // exceptions constrain the token's content, not its spacing
         exceptions: Vec::new(),
+        scope: e.scope,
     })
 }
 
@@ -545,6 +549,16 @@ impl Matcher {
     }
 }
 
+impl Matcher {
+    /// `scope="next"` exceptions of every constraint in this position, tested against `token`.
+    fn blocks_next(&self, token: &Token) -> bool {
+        match self {
+            Matcher::One(m) => m.blocks_next(token),
+            Matcher::Or(ms) | Matcher::And(ms) => ms.iter().any(|m| m.blocks_next(token)),
+        }
+    }
+}
+
 impl TokenMatcher {
     /// Whether this matcher accepts `tokens[k]` (applying the spacebefore constraint, negation, and
     /// exceptions).
@@ -562,14 +576,27 @@ impl TokenMatcher {
         if !hit {
             return false;
         }
-        // Disqualified if any exception matches.
-        !self.exceptions.iter().any(|e| {
-            let mut m = e.constraint(token);
-            if e.negate {
-                m = !m;
-            }
-            m
+        // Disqualified if any exception matches: `current` ones against this token, `previous` ones
+        // against the token before it. `next` ones are applied by the quantifier loop (they also
+        // bound what a `skip` may pass over), see `blocks_next`.
+        !self.exceptions.iter().any(|e| match e.scope {
+            ExceptionScope::Current => e.exception_hits(token),
+            ExceptionScope::Previous => k > 0 && e.exception_hits(&tokens[k - 1]),
+            ExceptionScope::Next => false,
         })
+    }
+
+    fn exception_hits(&self, token: &Token) -> bool {
+        let m = self.constraint(token);
+        if self.negate { !m } else { m }
+    }
+
+    /// Whether `token` matches one of this matcher's `scope="next"` exceptions, i.e. may be neither
+    /// the token right after a match of this matcher nor one that a `skip` passes over.
+    fn blocks_next(&self, token: &Token) -> bool {
+        self.exceptions
+            .iter()
+            .any(|e| e.scope == ExceptionScope::Next && e.exception_hits(token))
     }
 
     /// The raw text-AND-POS constraint, ignoring negation/exceptions.
@@ -630,6 +657,15 @@ fn match_elements(
         let base = ti + count;
         let skip_end = (base + elem.skip).min(tokens.len());
         for next in base..=skip_end {
+            // `scope="next"` exceptions: the token after the match, and every token the skip passes
+            // over, must not hit them (only relevant while another element still has to match).
+            if ei + 1 < elements.len()
+                && tokens
+                    .get(next)
+                    .is_some_and(|t| elem.matcher.blocks_next(t))
+            {
+                break;
+            }
             if let Some(end) = match_elements(elements, ei + 1, tokens, next, captures) {
                 return Some(end);
             }
@@ -1274,6 +1310,77 @@ mod tests {
         );
         // <match no=1> copies the first token surface ("were"), StartUpper → "Were".
         assert_eq!(diags[0].suggestions[0].replacement, "Were");
+    }
+
+    #[test]
+    fn next_scope_exception_blocks_skip_over_comma() {
+        // `a` (skip=-1, exception scope=next ",") … `b`: a skip may not pass over a comma.
+        let rule = Rule {
+            id: "SCOPE_NEXT".to_owned(),
+            pattern: vec![
+                Construct::Token(TokenPat {
+                    text: Some("a".to_owned()),
+                    skip: Some(-1),
+                    exceptions: vec![rlt_ir::ExceptionPat {
+                        text: Some(",".to_owned()),
+                        scope: rlt_ir::ExceptionScope::Next,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+                Construct::Token(TokenPat {
+                    text: Some("b".to_owned()),
+                    ..Default::default()
+                }),
+            ],
+            antipatterns: vec![],
+            message: String::new(),
+            suggestions: vec![IrSuggestion {
+                parts: vec![SugPart::Text("x".to_owned())],
+            }],
+        };
+        let matcher = IrMatcher::new(&[rule]);
+        let plain = analyze(
+            "a x b",
+            &[("a", &[], &[]), ("x", &[], &[]), ("b", &[], &[])],
+        );
+        assert_eq!(matcher.grammar_diagnostics("a x b", &plain).len(), 1);
+        let comma = analyze(
+            "a x , b",
+            &[
+                ("a", &[], &[]),
+                ("x", &[], &[]),
+                (",", &[], &[]),
+                ("b", &[], &[]),
+            ],
+        );
+        assert!(matcher.grammar_diagnostics("a x , b", &comma).is_empty());
+    }
+
+    #[test]
+    fn previous_scope_exception_checks_preceding_token() {
+        let rule = Rule {
+            id: "SCOPE_PREV".to_owned(),
+            pattern: vec![Construct::Token(TokenPat {
+                text: Some("b".to_owned()),
+                exceptions: vec![rlt_ir::ExceptionPat {
+                    text: Some("a".to_owned()),
+                    scope: rlt_ir::ExceptionScope::Previous,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })],
+            antipatterns: vec![],
+            message: String::new(),
+            suggestions: vec![IrSuggestion {
+                parts: vec![SugPart::Text("x".to_owned())],
+            }],
+        };
+        let matcher = IrMatcher::new(&[rule]);
+        let hit = analyze("c b", &[("c", &[], &[]), ("b", &[], &[])]);
+        assert_eq!(matcher.grammar_diagnostics("c b", &hit).len(), 1);
+        let blocked = analyze("a b", &[("a", &[], &[]), ("b", &[], &[])]);
+        assert!(matcher.grammar_diagnostics("a b", &blocked).is_empty());
     }
 
     #[test]

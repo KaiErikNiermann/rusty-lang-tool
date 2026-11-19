@@ -28,7 +28,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
 use regex::Regex;
-use rlt_ir::{Case, Construct, ExceptionPat, Rule, SugPart, Suggestion, TokenPat};
+use rlt_ir::{Case, Construct, ExceptionPat, ExceptionScope, Rule, SugPart, Suggestion, TokenPat};
 use xsd_parser_types::quick_xml::{DeserializeSync, SliceReader, XmlReader};
 
 use lt_schema::{pattern, rules};
@@ -974,6 +974,11 @@ fn lower_exception(e: &pattern::ExceptionElementType) -> ExceptionPat {
         inflected: is_yes(&e.inflected),
         negate: is_yes(&e.negate),
         case_sensitive: e.case_sensitive.as_ref().is_some_and(is_yes),
+        scope: match e.scope {
+            lt_schema::pattern::ExceptionScopeType::Current => ExceptionScope::Current,
+            lt_schema::pattern::ExceptionScopeType::Next => ExceptionScope::Next,
+            lt_schema::pattern::ExceptionScopeType::Previous => ExceptionScope::Previous,
+        },
     }
 }
 
