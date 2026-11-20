@@ -627,6 +627,8 @@ fn lower_rule(
     let mut message = String::new();
     let mut suggestions = Vec::new();
     let mut antipatterns: Vec<Vec<Construct>> = group_antipatterns.to_vec();
+    // `<message suppress_misspelled>` also covers the `<suggestion>`s that follow it in the rule.
+    let mut rule_suppress = false;
     for c in &r.content {
         match c {
             rules::RuleElementTypeContent::Pattern(p) => {
@@ -656,8 +658,11 @@ fn lower_rule(
                     message = text;
                 }
                 suggestions.extend(sugs);
+                rule_suppress |= m.suppress_misspelled.as_ref().is_some_and(is_yes);
             }
-            rules::RuleElementTypeContent::Suggestion(s) => suggestions.extend(lower_suggestion(s)),
+            rules::RuleElementTypeContent::Suggestion(s) => {
+                suggestions.push(lower_suggestion(s, rule_suppress));
+            }
             // Url/Short/Example are not part of the match-and-suggest path here.
             _ => {}
         }
@@ -708,11 +713,12 @@ fn lower_message(m: &rules::MessageElementType) -> (String, Vec<Suggestion>) {
         .as_ref()
         .map_or_else(String::new, |t| t.0.clone());
     let mut suggestions = Vec::new();
+    let message_suppress = m.suppress_misspelled.as_ref().is_some_and(is_yes);
     for item in &m.content {
         match item {
             rules::MessageElementTypeContent::Suggestion(s) => {
                 text.push_str(&inline_suggestion(&s.value));
-                suggestions.extend(lower_suggestion(&s.value));
+                suggestions.push(lower_suggestion(&s.value, message_suppress));
                 if let Some(after) = &s.text_after {
                     text.push_str(&after.0);
                 }
@@ -748,32 +754,51 @@ fn inline_suggestion(s: &rules::SuggestionElementType) -> String {
 }
 
 /// Lower a `<suggestion>` into a correction template (literal text + `<match no>` token refs, with
-/// optional `regexp_replace`). Returns `None` when a `<match>` needs morphological synthesis
-/// (`postag_replace`), which we cannot perform — better to drop the suggestion than render it wrong.
-fn lower_suggestion(s: &rules::SuggestionElementType) -> Option<Suggestion> {
+/// optional `regexp_replace`). A `<match>` with a `postag` becomes a [`SugPart::Synth`], which the
+/// matcher fills with inflected forms when it has a synthesizer for the language.
+///
+/// `rule_suppress` is the enclosing `<message suppress_misspelled="yes">`. LT's `PatternRuleHandler`
+/// (v6.8) sets it at `<message>` (line 374) and hands `<match>` elements in a suggestion the OR of it
+/// and the suggestion's own attribute (lines 381 and 445).
+fn lower_suggestion(s: &rules::SuggestionElementType, rule_suppress: bool) -> Suggestion {
+    let suppress = rule_suppress || s.suppress_misspelled.as_ref().is_some_and(is_yes);
     let mut parts = Vec::new();
     if let Some(t) = &s.text_before {
         push_text(&mut parts, &t.0);
     }
     for item in &s.content {
         let m = &item.match_.value;
-        if m.postag_replace.is_some() {
-            return None; // synthesis (generate an inflected form) — unsupported
-        }
         let transform = match (m.regexp_match.as_ref(), m.regexp_replace.as_ref()) {
             (Some(rm), Some(rr)) => Some((rm.clone(), rr.clone())),
             _ => None,
         };
-        parts.push(SugPart::Token {
-            no: m.no,
-            case: map_case(m.case_conversion.as_ref()),
-            transform,
+        let case = map_case(m.case_conversion.as_ref());
+        parts.push(match &m.postag {
+            Some(postag) => SugPart::Synth {
+                no: m.no,
+                case,
+                transform,
+                postag: postag.clone(),
+                postag_regexp: is_yes(&m.postag_regexp),
+                postag_replace: m.postag_replace.clone(),
+                lemma: m
+                    .text
+                    .as_ref()
+                    .map(|t| t.0.trim().to_owned())
+                    .filter(|l| !l.is_empty()),
+                suppress_misspelled: suppress,
+            },
+            None => SugPart::Token {
+                no: m.no,
+                case,
+                transform,
+            },
         });
         if let Some(after) = &item.match_.text_after {
             push_text(&mut parts, &after.0);
         }
     }
-    Some(Suggestion { parts })
+    Suggestion { parts }
 }
 
 /// Append suggestion text, splitting LT's `\N` backreference shorthand (e.g. `\2`, equivalent to
@@ -1402,6 +1427,113 @@ mod tests {
             "token literal after <exception> was dropped (wildcard regression)",
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Lower a grammar that holds `rules_xml` (the `<rule>` elements) and return its IR rules.
+    fn lower_rules(name: &str, rules_xml: &str) -> Vec<super::Rule> {
+        let dir = std::env::temp_dir().join(format!("rlt-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("grammar.xml");
+        std::fs::write(
+            &path,
+            format!(
+                "<?xml version=\"1.0\"?>\n<rules lang=\"de\"><category id=\"C\" name=\"C\">{rules_xml}\
+                 </category></rules>\n"
+            ),
+        )
+        .unwrap();
+        let doc = super::parse_grammar(&path).expect("parse grammar");
+        let rules = super::lower_document(&doc);
+        std::fs::remove_dir_all(&dir).ok();
+        rules
+    }
+
+    /// `<match postag=…>` lowers to a synthesis part carrying every attribute the matcher needs;
+    /// a `<match>` without `postag` stays a plain token copy.
+    #[test]
+    #[cfg_attr(miri, ignore = "uses temp-file I/O; miri runs under fs isolation")]
+    fn match_with_postag_lowers_to_a_synthesis_part() {
+        use super::{Case, SugPart};
+        let rules = lower_rules(
+            "synth",
+            r#"<rule id="R1" name="r1">
+                 <pattern><token postag="ADJ:.*" postag_regexp="yes"/><token/></pattern>
+                 <message>Use <suggestion><match no="1" postag="ADJ:(.*)" postag_regexp="yes"
+                   postag_replace="ADJ:PRD:GRU" case_conversion="startupper"/></suggestion>.</message>
+                 <suggestion suppress_misspelled="yes"><match no="2" postag="V.*[123].*"
+                   postag_regexp="yes">sein</match> x</suggestion>
+                 <suggestion><match no="1" regexp_match="a" regexp_replace="b"/></suggestion>
+                 <example correction="x">a <marker>b</marker></example>
+               </rule>
+               <rule id="R2" name="r2">
+                 <pattern><token/></pattern>
+                 <message suppress_misspelled="yes"><suggestion><match no="1" postag="VER:INF:NON"/></suggestion></message>
+                 <example correction="x"><marker>b</marker></example>
+               </rule>"#,
+        );
+        let [r1, r2] = rules.as_slice() else {
+            panic!("expected two rules, got {}", rules.len());
+        };
+        assert_eq!(r1.suggestions.len(), 3, "no suggestion is dropped any more");
+        assert!(
+            matches!(
+                r1.suggestions[0].parts.as_slice(),
+                [SugPart::Synth {
+                    no: 1,
+                    case: Case::StartUpper,
+                    postag,
+                    postag_regexp: true,
+                    postag_replace: Some(replace),
+                    lemma: None,
+                    suppress_misspelled: false,
+                    ..
+                }] if postag == "ADJ:(.*)" && replace == "ADJ:PRD:GRU"
+            ),
+            "{:?}",
+            r1.suggestions[0].parts
+        );
+        assert!(
+            matches!(
+                r1.suggestions[1].parts.as_slice(),
+                [
+                    SugPart::Synth {
+                        no: 2,
+                        postag_replace: None,
+                        lemma: Some(lemma),
+                        suppress_misspelled: true,
+                        ..
+                    },
+                    SugPart::Text(x)
+                ] if lemma == "sein" && x == " x"
+            ),
+            "{:?}",
+            r1.suggestions[1].parts
+        );
+        assert!(
+            matches!(
+                r1.suggestions[2].parts.as_slice(),
+                [SugPart::Token {
+                    no: 1,
+                    transform: Some(_),
+                    ..
+                }]
+            ),
+            "{:?}",
+            r1.suggestions[2].parts
+        );
+        // `<message suppress_misspelled>` reaches the suggestions inside it.
+        assert!(
+            matches!(
+                r2.suggestions[0].parts.as_slice(),
+                [SugPart::Synth {
+                    postag_regexp: false,
+                    suppress_misspelled: true,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r2.suggestions[0].parts
+        );
     }
 
     /// Regression: `<pattern case_sensitive="yes">` must stamp case-sensitivity onto its tokens. Without
