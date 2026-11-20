@@ -12,7 +12,7 @@
 //! the rule is kept and named, but inert — so coverage stays a computed number, not a silent drop.
 
 use anyhow::{Context, Result, anyhow};
-use rlt_ir::{Construct, DisambigRule, ExceptionPat, TagAction, TokenPat};
+use rlt_ir::{Construct, DisambigRule, ExceptionPat, ExceptionScope, TagAction, TokenPat};
 use serde::Deserialize;
 
 use crate::expand_entities;
@@ -170,15 +170,25 @@ fn lower_token(t: &XToken) -> Option<TokenPat> {
         postag: t.postag.clone(),
         regexp: is_yes(t.regexp.as_deref()),
         postag_regexp: is_yes(t.postag_regexp.as_deref()),
+        negate_pos: is_yes(t.negate_pos.as_deref()),
         negate: is_yes(t.negate.as_deref()),
         inflected: is_yes(t.inflected.as_deref()),
         min: t.min,
         max: t.max,
         skip: t.skip,
         case_sensitive: is_yes(t.case_sensitive.as_deref()),
-        space_before: None, // disambiguation.xml's hand-written model doesn't parse spacebefore (rare there)
+        space_before: space_before(t.spacebefore.as_deref()),
         exceptions: t.exception.iter().map(lower_exception).collect(),
     })
+}
+
+/// LT's `spacebefore` (`yes`/`no`/`ignore`) as an optional whitespace constraint.
+fn space_before(s: Option<&str>) -> Option<bool> {
+    match s {
+        Some("yes") => Some(true),
+        Some("no") => Some(false),
+        _ => None,
+    }
 }
 
 fn lower_exception(e: &XException) -> ExceptionPat {
@@ -187,9 +197,16 @@ fn lower_exception(e: &XException) -> ExceptionPat {
         postag: e.postag.clone(),
         regexp: is_yes(e.regexp.as_deref()),
         postag_regexp: is_yes(e.postag_regexp.as_deref()),
+        negate_pos: is_yes(e.negate_pos.as_deref()),
         inflected: is_yes(e.inflected.as_deref()),
         negate: is_yes(e.negate.as_deref()),
         case_sensitive: is_yes(e.case_sensitive.as_deref()),
+        scope: match e.scope.as_deref() {
+            Some("next") => ExceptionScope::Next,
+            Some("previous") => ExceptionScope::Previous,
+            _ => ExceptionScope::Current,
+        },
+        space_before: space_before(e.spacebefore.as_deref()),
     }
 }
 
@@ -219,9 +236,11 @@ fn lower_action(d: &XDisambig) -> TagAction {
             lemmas,
             postag_regexp,
         },
+        // LT matches a filter's postag as a regex whether or not `postag_regexp` is set
+        // (`DisambiguationPatternRuleReplacer`, FILTER, v6.8): `postag="NN.*"` keeps the NN readings.
         "filter" => TagAction::Filter {
             postags,
-            postag_regexp,
+            postag_regexp: true,
         },
         _ => TagAction::Unsupported, // filterall, unify, ignore_spelling
     }
@@ -311,6 +330,10 @@ struct XToken {
     postag: Option<String>,
     #[serde(rename = "@postag_regexp")]
     postag_regexp: Option<String>,
+    #[serde(rename = "@spacebefore")]
+    spacebefore: Option<String>,
+    #[serde(rename = "@negate_pos")]
+    negate_pos: Option<String>,
     #[serde(rename = "@regexp")]
     regexp: Option<String>,
     #[serde(rename = "@negate")]
@@ -343,6 +366,8 @@ struct XException {
     postag: Option<String>,
     #[serde(rename = "@postag_regexp")]
     postag_regexp: Option<String>,
+    #[serde(rename = "@negate_pos")]
+    negate_pos: Option<String>,
     #[serde(rename = "@regexp")]
     regexp: Option<String>,
     #[serde(rename = "@negate")]
@@ -351,6 +376,10 @@ struct XException {
     inflected: Option<String>,
     #[serde(rename = "@case_sensitive")]
     case_sensitive: Option<String>,
+    #[serde(rename = "@spacebefore")]
+    spacebefore: Option<String>,
+    #[serde(rename = "@scope")]
+    scope: Option<String>,
     #[serde(rename = "$text")]
     text: Option<String>,
 }
@@ -396,6 +425,30 @@ mod tests {
                 .any(|c| matches!(c, Construct::Token(t) if t.case_sensitive)),
             "disambig pattern-level case_sensitive was not propagated to the token",
         );
+    }
+
+    /// `negate_pos`, `scope` and `spacebefore` on tokens and exceptions must survive lowering;
+    /// dropping them inverts or misplaces the constraint.
+    #[test]
+    fn negate_pos_scope_and_spacebefore_are_lowered() {
+        let xml = "<rules><rule id=\"X\"><pattern>\
+                   <token postag=\"V.*\" postag_regexp=\"yes\" negate_pos=\"yes\" spacebefore=\"no\">\
+                   <exception postag=\"N\" negate_pos=\"yes\" scope=\"next\" spacebefore=\"yes\"/>\
+                   </token></pattern>\
+                   <disambig postag=\"NNP\"/></rule></rules>";
+        let parsed: XRules = quick_xml::de::from_str(xml).expect("parse");
+        let rule = lower_rule(&parsed.rule[0], None);
+        let Some(Construct::Token(t)) = rule.pattern.first() else {
+            panic!("expected a token, got {:?}", rule.pattern);
+        };
+        assert!(t.negate_pos, "token negate_pos dropped");
+        let [e] = t.exceptions.as_slice() else {
+            panic!("expected one exception, got {:?}", t.exceptions);
+        };
+        assert!(e.negate_pos, "exception negate_pos dropped");
+        assert_eq!(e.scope, ExceptionScope::Next);
+        assert_eq!(t.space_before, Some(false), "token spacebefore dropped");
+        assert_eq!(e.space_before, Some(true), "exception spacebefore dropped");
     }
 
     #[test]

@@ -496,7 +496,11 @@ pub struct TokenPat {
     pub regexp: bool,
     /// `postag_regexp="yes"`: [`postag`](Self::postag) is a regular expression, not a literal tag.
     pub postag_regexp: bool,
-    /// `negate="yes"`: the token matches when it does *not* satisfy the constraint.
+    /// `negate_pos="yes"`: the POS test is inverted (the token must have a reading whose tag does
+    /// *not* match [`postag`](Self::postag)).
+    pub negate_pos: bool,
+    /// `negate="yes"`: the token matches when its text does *not* match [`text`](Self::text); the
+    /// POS constraint still has to hold. A negated token without text matches nothing (as in LT).
     pub negate: bool,
     /// `inflected="yes"`: match any inflected form of [`text`](Self::text) as a lemma.
     pub inflected: bool,
@@ -514,6 +518,31 @@ pub struct TokenPat {
     pub space_before: Option<bool>,
     /// `<exception>` children: the token does *not* match if any exception matches it.
     pub exceptions: Vec<ExceptionPat>,
+}
+
+/// Which token an `<exception>` is checked against (LT's `scope` attribute).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Archive,
+    Serialize,
+    Deserialize,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub enum ExceptionScope {
+    /// The token the exception belongs to (default).
+    #[default]
+    Current,
+    /// The token(s) following it: the immediately next token, and every token a `skip` passes over.
+    Next,
+    /// The token preceding it.
+    Previous,
 }
 
 /// A `<token>`'s `<exception>`: a lighter token-like matcher that, when it matches the candidate,
@@ -535,12 +564,19 @@ pub struct ExceptionPat {
     pub regexp: bool,
     /// `postag_regexp="yes"`: [`postag`](Self::postag) is a regular expression, not a literal tag.
     pub postag_regexp: bool,
+    /// `negate_pos="yes"`: the POS test is inverted.
+    pub negate_pos: bool,
     /// `inflected="yes"`: match [`text`](Self::text) against the candidate's lemmas.
     pub inflected: bool,
-    /// `negate="yes"`: the exception is satisfied when it does *not* match.
+    /// `negate="yes"`: the exception's text test is inverted; its POS constraint still has to hold.
     pub negate: bool,
     /// `case_sensitive="yes"`: match text case-sensitively.
     pub case_sensitive: bool,
+    /// `scope`: which token the exception is checked against (`current`, `next` or `previous`).
+    pub scope: ExceptionScope,
+    /// `spacebefore`: whether whitespace must (`Some(true)`) or must not (`Some(false)`) precede the
+    /// token the exception is checked against; `None` (LT's `ignore`, the default) places none.
+    pub space_before: Option<bool>,
 }
 
 /// A disambiguation rule: a pattern (with an optional `<marker>` delimiting the affected tokens) plus

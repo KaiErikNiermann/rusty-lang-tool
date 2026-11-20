@@ -10,9 +10,9 @@ on:
     # `crates/**` because the wasm bundle compiles the whole engine (rlt-core/native/convert/…), so an
     # engine change must redeploy even though only rlt-wasm is the direct entry point.
     paths: ["web/**", "crates/**", ".github/workflows/deploy-pages.yml"]
-  # Redeploy after the artifacts are re-cut (e.g. on an LT sync) so the demo always serves the latest
-  # release. release-artifacts excludes web/crates, so this is the only path that picks up new artifacts
-  # — the build below resolves the latest `artifacts-*` release, which is the one that just published.
+  # Redeploy after the artifacts are re-cut (an LT sync, or a change to the artifact format in
+  # crates/rlt-ir or crates/rlt-convert) so the demo always serves the latest release — the build below
+  # resolves the latest `artifacts-*` release, which is the one that just published.
   workflow_run:
     workflows: ["Release web artifacts"]
     types: [completed]
@@ -36,9 +36,40 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # A push that changes the artifact format also triggers release-artifacts, which redeploys through
+  # workflow_run once the matching artifacts exist. Deploying from the push itself would pair the new
+  # wasm with the previous release's artifacts, so such pushes skip the build here.
+  changes:
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_format: ${{ steps.diff.outputs.artifact_format }}
+    steps:
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
+      - id: diff
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # Keep this list in step with release-artifacts.yml's `paths` (minus lang-manifests/**).
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ]; then
+            hit=false # first push of the branch: nothing to diff against, deploy as usual
+          elif git diff --name-only "$BEFORE" "$GITHUB_SHA" | grep -qE '^crates/(rlt-ir|rlt-convert)/'; then
+            hit=true
+          else
+            hit=false
+          fi
+          echo "artifact_format=$hit" >> "$GITHUB_OUTPUT"
+          echo "artifact format changed: $hit"
+
   build:
-    # Skip when chained from a *failed* release-artifacts run; push/dispatch always proceed.
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    needs: changes
+    # Skip when chained from a *failed* release-artifacts run, or when this push changed the artifact
+    # format (release-artifacts deploys it instead). `changes` is skipped outside push, hence !failure().
+    if: >-
+      ${{ !failure() && !cancelled()
+          && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+          && needs.changes.outputs.artifact_format != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

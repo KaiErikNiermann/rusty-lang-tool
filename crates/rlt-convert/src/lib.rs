@@ -28,7 +28,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
 use regex::Regex;
-use rlt_ir::{Case, Construct, ExceptionPat, Rule, SugPart, Suggestion, TokenPat};
+use rlt_ir::{Case, Construct, ExceptionPat, ExceptionScope, Rule, SugPart, Suggestion, TokenPat};
 use xsd_parser_types::quick_xml::{DeserializeSync, SliceReader, XmlReader};
 
 use lt_schema::{pattern, rules};
@@ -920,6 +920,7 @@ fn lower_token(t: &pattern::TokenElementType) -> TokenPat {
         postag: t.postag.clone(),
         regexp: is_yes(&t.regexp),
         postag_regexp: is_yes(&t.postag_regexp),
+        negate_pos: is_yes(&t.negate_pos),
         negate: is_yes(&t.negate),
         inflected: is_yes(&t.inflected),
         min: t.min,
@@ -971,9 +972,20 @@ fn lower_exception(e: &pattern::ExceptionElementType) -> ExceptionPat {
         postag: e.postag.clone(),
         regexp: is_yes(&e.regexp),
         postag_regexp: is_yes(&e.postag_regexp),
+        negate_pos: is_yes(&e.negate_pos),
         inflected: is_yes(&e.inflected),
         negate: is_yes(&e.negate),
         case_sensitive: e.case_sensitive.as_ref().is_some_and(is_yes),
+        scope: match e.scope {
+            lt_schema::pattern::ExceptionScopeType::Current => ExceptionScope::Current,
+            lt_schema::pattern::ExceptionScopeType::Next => ExceptionScope::Next,
+            lt_schema::pattern::ExceptionScopeType::Previous => ExceptionScope::Previous,
+        },
+        space_before: match e.spacebefore {
+            pattern::ExceptionSpacebeforeType::Yes => Some(true),
+            pattern::ExceptionSpacebeforeType::No => Some(false),
+            pattern::ExceptionSpacebeforeType::Ignore => None,
+        },
     }
 }
 

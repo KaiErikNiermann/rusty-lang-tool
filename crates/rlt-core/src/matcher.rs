@@ -16,8 +16,8 @@ use std::collections::HashMap;
 
 use regex::Regex;
 use rlt_ir::{
-    Case, Construct, DisambigRule, ExceptionPat, Rule, SugPart, Suggestion as IrSuggestion,
-    TagAction, TokenPat,
+    Case, Construct, DisambigRule, ExceptionPat, ExceptionScope, Rule, SugPart,
+    Suggestion as IrSuggestion, TagAction, TokenPat,
 };
 
 use crate::{Analysis, Diagnostic, GrammarChecker, Source, Span, Suggestion, Token};
@@ -195,10 +195,14 @@ struct TokenMatcher {
     postag: Option<TagMatch>,
     inflected: bool,
     negate: bool,
+    /// `negate_pos`: invert the POS test.
+    negate_pos: bool,
     /// `spacebefore`: `Some(true)` requires whitespace before the token, `Some(false)` forbids it,
     /// `None` ignores it (the default). Checked against the gap between adjacent token spans.
     space_before: Option<bool>,
     exceptions: Vec<TokenMatcher>,
+    /// Which token this matcher is checked against when it is an exception (`scope` attribute).
+    scope: ExceptionScope,
 }
 
 enum TextMatch {
@@ -469,8 +473,10 @@ fn compile_token(t: &TokenPat) -> Option<TokenMatcher> {
         postag,
         inflected: t.inflected,
         negate: t.negate,
+        negate_pos: t.negate_pos,
         space_before: t.space_before,
         exceptions,
+        scope: ExceptionScope::Current,
     })
 }
 
@@ -487,8 +493,10 @@ fn compile_exception(e: &ExceptionPat) -> Option<TokenMatcher> {
         postag,
         inflected: e.inflected,
         negate: e.negate,
-        space_before: None, // exceptions constrain the token's content, not its spacing
+        negate_pos: e.negate_pos,
+        space_before: e.space_before,
         exceptions: Vec::new(),
+        scope: e.scope,
     })
 }
 
@@ -545,6 +553,16 @@ impl Matcher {
     }
 }
 
+impl Matcher {
+    /// `scope="next"` exceptions of every constraint in this position, tested against `token`.
+    fn blocks_next(&self, tokens: &[Token], k: usize) -> bool {
+        match self {
+            Matcher::One(m) => m.blocks_next(tokens, k),
+            Matcher::Or(ms) | Matcher::And(ms) => ms.iter().any(|m| m.blocks_next(tokens, k)),
+        }
+    }
+}
+
 impl TokenMatcher {
     /// Whether this matcher accepts `tokens[k]` (applying the spacebefore constraint, negation, and
     /// exceptions).
@@ -555,43 +573,65 @@ impl TokenMatcher {
             }
         }
         let token = &tokens[k];
-        let mut hit = self.constraint(token);
-        if self.negate {
-            hit = !hit;
-        }
-        if !hit {
+        if !self.constraint(token) {
             return false;
         }
-        // Disqualified if any exception matches.
-        !self.exceptions.iter().any(|e| {
-            let mut m = e.constraint(token);
-            if e.negate {
-                m = !m;
-            }
-            m
+        // Disqualified if any exception matches: `current` ones against this token, `previous` ones
+        // against the token before it. `next` ones are applied by `match_elements`, see
+        // `blocks_next`.
+        !self.exceptions.iter().any(|e| match e.scope {
+            ExceptionScope::Current => e.exception_hits(tokens, k),
+            ExceptionScope::Previous => k > 0 && e.exception_hits(tokens, k - 1),
+            ExceptionScope::Next => false,
         })
     }
 
-    /// The raw text-AND-POS constraint, ignoring negation/exceptions.
+    /// Whether this matcher, used as an exception, hits `tokens[k]` (with its `spacebefore`).
+    fn exception_hits(&self, tokens: &[Token], k: usize) -> bool {
+        self.space_before
+            .is_none_or(|want| has_space_before(tokens, k) == want)
+            && self.constraint(&tokens[k])
+    }
+
+    /// Whether `token` matches one of this matcher's `scope="next"` exceptions (see
+    /// `match_elements` for which tokens that is tested against).
+    fn blocks_next(&self, tokens: &[Token], k: usize) -> bool {
+        self.exceptions
+            .iter()
+            .any(|e| e.scope == ExceptionScope::Next && e.exception_hits(tokens, k))
+    }
+
+    /// The text and POS constraint with `negate`/`negate_pos`, ignoring exceptions. As in LT's
+    /// `PatternToken.isMatched`,
+    /// $(\text{text\_ok} \oplus \text{negate}) \land (\text{tag\_ok} \oplus \text{negate\_pos})$,
+    /// and a negated token without text matches nothing.
     fn constraint(&self, token: &Token) -> bool {
+        // LT's `PatternToken.getTestToken`: `inflected` tests the lemma, falling back to the surface
+        // form for a reading without one; literal and regex text alike.
+        let surface = std::slice::from_ref(&token.text);
+        let subjects = if self.inflected && !token.lemmas.is_empty() {
+            token.lemmas.as_slice()
+        } else {
+            surface
+        };
+        // LT evaluates each reading on its own, so a negated lemma test holds if any lemma differs.
         let text_ok = match &self.text {
-            None => true,
-            Some(TextMatch::Regex(re)) => re.is_match(&token.text),
+            None => !self.negate,
+            Some(TextMatch::Regex(re)) => subjects.iter().any(|s| re.is_match(s) != self.negate),
             Some(TextMatch::Literal {
                 value,
                 case_sensitive,
-            }) => {
-                if self.inflected {
-                    token.lemmas.iter().any(|l| eq(l, value, *case_sensitive))
-                } else {
-                    eq(&token.text, value, *case_sensitive)
-                }
-            }
+            }) => subjects
+                .iter()
+                .any(|s| eq(s, value, *case_sensitive) != self.negate),
         };
+        // `negate_pos` flips the POS test per reading; an untagged token is one reading without a
+        // tag, which a POS test fails (so a negated one passes). Without `postag` LT's POS test
+        // holds, so `negate_pos` alone matches nothing.
         let tag_ok = match &self.postag {
-            None => true,
-            Some(TagMatch::Regex(re)) => token.tags.iter().any(|t| re.is_match(t)),
-            Some(TagMatch::Literal(p)) => token.tags.iter().any(|t| t == p),
+            None => !self.negate_pos,
+            Some(_) if token.tags.is_empty() => self.negate_pos,
+            Some(p) => token.tags.iter().any(|t| p.matches(t) != self.negate_pos),
         };
         text_ok && tag_ok
     }
@@ -621,15 +661,31 @@ fn match_elements(
     let elem = &elements[ei];
     let remaining = tokens.len() - ti;
     let max = elem.max.min(remaining);
+    // `scope="next"` exceptions are checked where LT v6.8 checks them
+    // (`AbstractPatternRulePerformer.testAllReadings`): when the previous element has no `skip`,
+    // against the token right after this one, also for the last element of a pattern; and when this
+    // element has a `skip`, against every token the skip passes over and the next element's
+    // candidate. An element without `skip` that follows one with `skip` is not checked at all.
+    let prev_skip = ei.checked_sub(1).map_or(0, |p| elements[p].skip);
 
     for count in elem.min..=max {
         if count > 0 && !(ti..ti + count).all(|k| elem.matcher.matches(tokens, k)) {
             break; // contiguous run broken — larger counts cannot match either
         }
+        if count > 0
+            && ti + 1 < tokens.len()
+            && prev_skip == 0
+            && elem.matcher.blocks_next(tokens, ti + 1)
+        {
+            break; // depends only on `ti`, so larger counts are blocked too
+        }
         captures[ei] = (count > 0).then_some((ti, ti + count));
         let base = ti + count;
         let skip_end = (base + elem.skip).min(tokens.len());
         for next in base..=skip_end {
+            if elem.skip > 0 && next < tokens.len() && elem.matcher.blocks_next(tokens, next) {
+                break;
+            }
             if let Some(end) = match_elements(elements, ei + 1, tokens, next, captures) {
                 return Some(end);
             }
@@ -882,6 +938,12 @@ fn apply_disambig_rule(rule: &CompiledDisambig, tokens: &mut [Token]) {
         }
     }
     for (start, end) in hits {
+        // LT's FILTER acts on the first marked token only (`fromPos`); the other actions on all.
+        let end = if matches!(rule.action, CompiledAction::Filter { .. }) {
+            start + 1
+        } else {
+            end
+        };
         for token in &mut tokens[start..end] {
             apply_action(&rule.action, token);
         }
@@ -930,7 +992,8 @@ fn apply_action(action: &CompiledAction, token: &mut Token) {
             }
         }
         CompiledAction::Filter { tags } => {
-            if !tags.is_empty() {
+            // LT only filters when some reading matches; otherwise the token is left as it is.
+            if token.tags.iter().any(|t| tags.iter().any(|m| m.matches(t))) {
                 token.tags.retain(|t| tags.iter().any(|m| m.matches(t)));
             }
         }
@@ -1152,6 +1215,63 @@ mod tests {
     }
 
     #[test]
+    fn disambiguator_filter_keeps_matching_readings_on_first_marked_token() {
+        use rlt_ir::{DisambigRule, TagAction};
+
+        let tok = |text: &str, tags: &[&str]| Token {
+            text: text.to_owned(),
+            tags: tags.iter().map(|s| (*s).to_owned()).collect(),
+            ..Default::default()
+        };
+        let any = || {
+            Construct::Token(TokenPat {
+                text: Some(".*".to_owned()),
+                regexp: true,
+                ..Default::default()
+            })
+        };
+        let dis = Disambiguator::new(&[DisambigRule {
+            id: "F".to_owned(),
+            pattern: vec![
+                lit("the"),
+                Construct::MarkerStart,
+                any(),
+                any(),
+                Construct::MarkerEnd,
+            ],
+            antipatterns: vec![],
+            action: TagAction::Filter {
+                postags: vec!["NN.*".to_owned()],
+                postag_regexp: true,
+            },
+        }]);
+        let mut tokens = vec![
+            tok("the", &["DT"]),
+            tok("are", &["NN", "VBP"]),
+            tok("dogs", &["NNS", "VBZ"]),
+        ];
+        dis.disambiguate(&mut tokens);
+        assert_eq!(
+            tokens[1].tags,
+            vec!["NN"],
+            "filtered to the matching reading"
+        );
+        assert_eq!(
+            tokens[2].tags,
+            vec!["NNS", "VBZ"],
+            "only the first marked token"
+        );
+
+        let mut no_match = vec![tok("the", &["DT"]), tok("go", &["VB"]), tok("x", &[])];
+        dis.disambiguate(&mut no_match);
+        assert_eq!(
+            no_match[1].tags,
+            vec!["VB"],
+            "no matching reading: left as it is"
+        );
+    }
+
+    #[test]
     fn disambiguator_antipattern_suppresses_in_excluded_context() {
         use rlt_ir::{DisambigRule, TagAction};
 
@@ -1274,6 +1394,273 @@ mod tests {
         );
         // <match no=1> copies the first token surface ("were"), StartUpper → "Were".
         assert_eq!(diags[0].suggestions[0].replacement, "Were");
+    }
+
+    #[test]
+    fn next_scope_exception_blocks_skip_over_comma() {
+        // `a` (skip=-1, exception scope=next ",") … `b`: a skip may not pass over a comma.
+        let rule = Rule {
+            id: "SCOPE_NEXT".to_owned(),
+            pattern: vec![
+                Construct::Token(TokenPat {
+                    text: Some("a".to_owned()),
+                    skip: Some(-1),
+                    exceptions: vec![rlt_ir::ExceptionPat {
+                        text: Some(",".to_owned()),
+                        scope: rlt_ir::ExceptionScope::Next,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+                Construct::Token(TokenPat {
+                    text: Some("b".to_owned()),
+                    ..Default::default()
+                }),
+            ],
+            antipatterns: vec![],
+            message: String::new(),
+            suggestions: vec![IrSuggestion {
+                parts: vec![SugPart::Text("x".to_owned())],
+            }],
+        };
+        let matcher = IrMatcher::new(&[rule]);
+        let plain = analyze(
+            "a x b",
+            &[("a", &[], &[]), ("x", &[], &[]), ("b", &[], &[])],
+        );
+        assert_eq!(matcher.grammar_diagnostics("a x b", &plain).len(), 1);
+        let comma = analyze(
+            "a x , b",
+            &[
+                ("a", &[], &[]),
+                ("x", &[], &[]),
+                (",", &[], &[]),
+                ("b", &[], &[]),
+            ],
+        );
+        assert_eq!(
+            matcher.grammar_diagnostics("a x , b", &comma),
+            [] as [Diagnostic; 0]
+        );
+    }
+
+    fn tok_next_exc(text: &str, skip: Option<i32>, exc: &str) -> Construct {
+        Construct::Token(TokenPat {
+            text: Some(text.to_owned()),
+            skip,
+            exceptions: vec![rlt_ir::ExceptionPat {
+                text: Some(exc.to_owned()),
+                scope: rlt_ir::ExceptionScope::Next,
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+    }
+
+    fn rule_of(id: &str, pattern: Vec<Construct>) -> Rule {
+        Rule {
+            id: id.to_owned(),
+            pattern,
+            antipatterns: vec![],
+            message: String::new(),
+            suggestions: vec![IrSuggestion {
+                parts: vec![SugPart::Text("x".to_owned())],
+            }],
+        }
+    }
+
+    fn plain(text: &str) -> Analysis {
+        let words: Vec<(&str, &[&str], &[&str])> =
+            text.split(' ').map(|w| (w, &[][..], &[][..])).collect();
+        analyze(text, &words)
+    }
+
+    #[test]
+    fn next_scope_exception_on_last_element_checks_following_token() {
+        // LT checks a last element's `scope="next"` exception against the token after the match:
+        // `a` not followed by `b`.
+        let matcher = IrMatcher::new(&[rule_of("LAST_NEXT", vec![tok_next_exc("a", None, "b")])]);
+        assert_eq!(matcher.grammar_diagnostics("a c", &plain("a c")).len(), 1);
+        assert_eq!(matcher.grammar_diagnostics("c a", &plain("c a")).len(), 1);
+        assert_eq!(
+            matcher.grammar_diagnostics("a b", &plain("a b")),
+            [] as [Diagnostic; 0]
+        );
+    }
+
+    #[test]
+    fn next_scope_exception_after_skip_element_is_not_checked() {
+        // LT only tests an element's own `scope="next"` exception when the element before it has
+        // no `skip` (`prevSkipNext == 0` in `testAllReadings`); after a skipping element it is inert.
+        let matcher = IrMatcher::new(&[rule_of(
+            "QUIRK",
+            vec![
+                Construct::Token(TokenPat {
+                    text: Some("a".to_owned()),
+                    skip: Some(-1),
+                    ..Default::default()
+                }),
+                tok_next_exc("b", None, "c"),
+                lit("c"),
+            ],
+        )]);
+        let text = "a b c";
+        assert_eq!(matcher.grammar_diagnostics(text, &plain(text)).len(), 1);
+        // The same element after a non-skipping predecessor is checked, and blocks the match.
+        let checked = IrMatcher::new(&[rule_of(
+            "CHECKED",
+            vec![lit("a"), tok_next_exc("b", None, "c"), lit("c")],
+        )]);
+        assert_eq!(
+            checked.grammar_diagnostics(text, &plain(text)),
+            [] as [Diagnostic; 0]
+        );
+    }
+
+    #[test]
+    fn inflected_regex_matches_lemma_and_falls_back_to_surface() {
+        let matcher = IrMatcher::new(&[rule_of(
+            "INFL_RE",
+            vec![Construct::Token(TokenPat {
+                text: Some("be|have".to_owned()),
+                regexp: true,
+                inflected: true,
+                ..Default::default()
+            })],
+        )]);
+        let lemma = analyze("was", &[("was", &["VBD"], &["be"])]);
+        assert_eq!(matcher.grammar_diagnostics("was", &lemma).len(), 1);
+        let surface_only = analyze("have", &[("have", &[], &[])]);
+        assert_eq!(matcher.grammar_diagnostics("have", &surface_only).len(), 1);
+        let other_lemma = analyze("have", &[("have", &["NN"], &["haves"])]);
+        assert_eq!(
+            matcher.grammar_diagnostics("have", &other_lemma),
+            [] as [Diagnostic; 0]
+        );
+    }
+
+    #[test]
+    fn negate_inverts_only_the_text_test() {
+        // LT: `<token negate="yes" postag="NN">run</token>` is a noun other than "run".
+        let matcher = IrMatcher::new(&[rule_of(
+            "NEG",
+            vec![Construct::Token(TokenPat {
+                text: Some("run".to_owned()),
+                postag: Some("NN".to_owned()),
+                negate: true,
+                ..Default::default()
+            })],
+        )]);
+        let noun = analyze("walk", &[("walk", &["NN"], &[])]);
+        assert_eq!(matcher.grammar_diagnostics("walk", &noun).len(), 1);
+        let verb = analyze("walk", &[("walk", &["VB"], &[])]);
+        assert_eq!(
+            matcher.grammar_diagnostics("walk", &verb),
+            [] as [Diagnostic; 0]
+        );
+        let run = analyze("run", &[("run", &["NN"], &[])]);
+        assert_eq!(
+            matcher.grammar_diagnostics("run", &run),
+            [] as [Diagnostic; 0]
+        );
+    }
+
+    #[test]
+    fn negate_pos_inverts_the_pos_test() {
+        // `<token postag="VB.*" postag_regexp="yes" negate_pos="yes"/>`: a token with a non-verb reading,
+        // and an exception that disqualifies non-nouns.
+        let matcher = IrMatcher::new(&[rule_of(
+            "NEG_POS",
+            vec![Construct::Token(TokenPat {
+                postag: Some("VB.*".to_owned()),
+                postag_regexp: true,
+                negate_pos: true,
+                exceptions: vec![rlt_ir::ExceptionPat {
+                    postag: Some("NN".to_owned()),
+                    negate_pos: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })],
+        )]);
+        let noun = analyze("dog", &[("dog", &["NN"], &[])]);
+        assert_eq!(matcher.grammar_diagnostics("dog", &noun).len(), 1);
+        let verb = analyze("go", &[("go", &["VB"], &[])]);
+        assert_eq!(
+            matcher.grammar_diagnostics("go", &verb),
+            [] as [Diagnostic; 0]
+        );
+        let adj = analyze("red", &[("red", &["JJ"], &[])]);
+        assert_eq!(
+            matcher.grammar_diagnostics("red", &adj),
+            [] as [Diagnostic; 0]
+        );
+    }
+
+    #[test]
+    fn exception_spacebefore_constrains_the_tested_token() {
+        // `-` unless it is glued to the previous token: `<exception spacebefore="no">-</exception>`.
+        let matcher = IrMatcher::new(&[rule_of(
+            "DASH",
+            vec![Construct::Token(TokenPat {
+                text: Some("-".to_owned()),
+                exceptions: vec![rlt_ir::ExceptionPat {
+                    text: Some("-".to_owned()),
+                    space_before: Some(false),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })],
+        )]);
+        let spaced = plain("a - b");
+        assert_eq!(matcher.grammar_diagnostics("a - b", &spaced).len(), 1);
+        let glued = Analysis {
+            tokens: vec![
+                Token {
+                    text: "a".to_owned(),
+                    span: Span { start: 0, end: 1 },
+                    ..Default::default()
+                },
+                Token {
+                    text: "-".to_owned(),
+                    span: Span { start: 1, end: 2 },
+                    ..Default::default()
+                },
+            ],
+        };
+        assert_eq!(
+            matcher.grammar_diagnostics("a-", &glued),
+            [] as [Diagnostic; 0]
+        );
+    }
+
+    #[test]
+    fn previous_scope_exception_checks_preceding_token() {
+        let rule = Rule {
+            id: "SCOPE_PREV".to_owned(),
+            pattern: vec![Construct::Token(TokenPat {
+                text: Some("b".to_owned()),
+                exceptions: vec![rlt_ir::ExceptionPat {
+                    text: Some("a".to_owned()),
+                    scope: rlt_ir::ExceptionScope::Previous,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })],
+            antipatterns: vec![],
+            message: String::new(),
+            suggestions: vec![IrSuggestion {
+                parts: vec![SugPart::Text("x".to_owned())],
+            }],
+        };
+        let matcher = IrMatcher::new(&[rule]);
+        let hit = analyze("c b", &[("c", &[], &[]), ("b", &[], &[])]);
+        assert_eq!(matcher.grammar_diagnostics("c b", &hit).len(), 1);
+        let blocked = analyze("a b", &[("a", &[], &[]), ("b", &[], &[])]);
+        assert_eq!(
+            matcher.grammar_diagnostics("a b", &blocked),
+            [] as [Diagnostic; 0]
+        );
     }
 
     #[test]
