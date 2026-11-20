@@ -8,11 +8,12 @@
 //! comes from `tools/lt-probe/LtProbe.java` (see `cargo xtask coverage`), as [`LtSentence`] rows.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use rlt_convert::Example;
 use rlt_core::{
     Analysis, Checker, Composite, Diagnostic, Engine, GrammarChecker, IrMatcher, Source, Span,
-    Token,
+    Synthesizer, Token,
 };
 use rlt_ir::{Construct, Rule};
 use serde::{Deserialize, Serialize};
@@ -61,14 +62,16 @@ pub enum RuleStatus {
     Unsupported(String),
     /// No suggestion survived lowering, so the rule can never produce a correction.
     NoSuggestion,
+    /// Every suggestion needs inflected forms and no synthesizer is loaded for the language.
+    NeedsSynthesizer,
     /// The matcher rejects it otherwise (in practice a regex the `regex` crate cannot compile).
     Uncompilable,
 }
 
 impl RuleStatus {
-    /// The status of `rule` as the converter emitted it.
+    /// The status of `rule` as the converter emitted it, for a matcher with `synthesizer`.
     #[must_use]
-    pub fn of(rule: &Rule) -> Self {
+    pub fn of(rule: &Rule, synthesizer: Option<&Arc<dyn Synthesizer>>) -> Self {
         for c in &rule.pattern {
             match c {
                 Construct::Opaque { class, .. } => return Self::Filter(short_class(class)),
@@ -76,13 +79,32 @@ impl RuleStatus {
                 _ => {}
             }
         }
+        let compiles = |synthesizer: Option<Arc<dyn Synthesizer>>| {
+            IrMatcher::with_synthesizer(std::slice::from_ref(rule), synthesizer).rule_count() == 1
+        };
         if rule.suggestions.is_empty() {
             Self::NoSuggestion
-        } else if IrMatcher::new(std::slice::from_ref(rule)).rule_count() == 1 {
+        } else if compiles(synthesizer.cloned()) {
             Self::Compiled
+        } else if synthesizer.is_none() && compiles(Some(Arc::new(NoForms))) {
+            Self::NeedsSynthesizer
         } else {
             Self::Uncompilable
         }
+    }
+}
+
+/// A synthesizer that finds no forms: it only tells [`RuleStatus::of`] that a rule would compile
+/// with one.
+struct NoForms;
+
+impl Synthesizer for NoForms {
+    fn synthesize(&self, _lemma: &str, _tag: &str) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn synthesize_matching(&self, _lemma: &str, _tags: &regex::Regex) -> Vec<String> {
+        Vec::new()
     }
 }
 
@@ -121,6 +143,9 @@ impl std::fmt::Display for RuleStatus {
             Self::Filter(class) => write!(f, "filter {class}"),
             Self::Unsupported(kind) => write!(f, "unsupported <{kind}>"),
             Self::NoSuggestion => f.write_str("no suggestion survives lowering"),
+            Self::NeedsSynthesizer => {
+                f.write_str("every suggestion needs inflected forms and no synthesizer is loaded")
+            }
             Self::Uncompilable => f.write_str("regex the matcher cannot compile"),
         }
     }
@@ -477,6 +502,7 @@ pub fn compare<E: Engine>(
     lt: &[LtSentence],
     sent_start: &str,
     sent_end: &str,
+    synthesizer: Option<&Arc<dyn Synthesizer>>,
 ) -> CoverageReport {
     assert_eq!(examples.len(), lt.len(), "one LT row per example");
     // Analyse each sentence once per side; both checkers then read the stored analyses, which is
@@ -491,18 +517,16 @@ pub fn compare<E: Engine>(
             .entry(ex.text.clone())
             .or_insert_with(|| lt_analysis(&ex.text, l));
     }
-    let ours = Checker::new(Composite::new(
-        FixedAnalyses(&ours_by_text),
-        IrMatcher::new(rules),
-    ));
-    let on_lt = Checker::new(Composite::new(
-        FixedAnalyses(&lt_by_text),
-        IrMatcher::new(rules),
-    ));
-    let raw = IrMatcher::new(rules);
+    let matcher = || IrMatcher::with_synthesizer(rules, synthesizer.cloned());
+    let ours = Checker::new(Composite::new(FixedAnalyses(&ours_by_text), matcher()));
+    let on_lt = Checker::new(Composite::new(FixedAnalyses(&lt_by_text), matcher()));
+    let raw = matcher();
     let ctx = Context {
         rules,
-        statuses: rules.iter().map(RuleStatus::of).collect(),
+        statuses: rules
+            .iter()
+            .map(|r| RuleStatus::of(r, synthesizer))
+            .collect(),
         grammar_full_ids: examples.iter().map(|e| e.full_id.clone()).collect(),
         boundary: [sent_start, sent_end, "PARA_END"],
     };
@@ -695,6 +719,31 @@ mod tests {
     }
 
     #[test]
+    fn a_rule_that_needs_inflected_forms_runs_only_with_a_synthesizer() {
+        use rlt_ir::SugPart;
+        let mut needs_forms = rule("FORMS", "foo", "bar");
+        needs_forms.suggestions[0].parts = vec![SugPart::Synth {
+            no: 1,
+            case: rlt_ir::Case::Keep,
+            transform: None,
+            postag: "ADJ:(.*)".to_owned(),
+            postag_regexp: true,
+            postag_replace: Some("ADJ:PRD:GRU".to_owned()),
+            lemma: None,
+            suppress_misspelled: false,
+        }];
+        assert_eq!(
+            RuleStatus::of(&needs_forms, None),
+            RuleStatus::NeedsSynthesizer
+        );
+        let synthesizer: Arc<dyn Synthesizer> = Arc::new(NoForms);
+        assert_eq!(
+            RuleStatus::of(&needs_forms, Some(&synthesizer)),
+            RuleStatus::Compiled
+        );
+    }
+
+    #[test]
     fn attributes_gaps_to_tokenization_and_unrun_rules() {
         // Rule 0 matches the whole word "E-Mail", which our engine splits; rule 1 cannot run.
         let mut unrunnable = rule("NO_SUG", "foo", "bar");
@@ -715,6 +764,7 @@ mod tests {
             &lt,
             "SENT_START",
             "SENT_END",
+            None,
         );
         let gaps: Vec<_> = report.outcomes.iter().map(|o| o.gap.clone()).collect();
         assert_eq!(

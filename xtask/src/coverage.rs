@@ -44,6 +44,15 @@ pub fn run(cfg: &'static rlt_lang::LangConfig, lt_version: &str) -> Result<()> {
     let lt = probe(&runtime, cfg.code, version, &examples, &out_dir)?;
     let engine = rlt_native::NativeEngine::for_lang(cfg)
         .map_err(|e| anyhow::anyhow!("loading the {} engine (build-lang first): {e}", cfg.code))?;
+    let synthesizer = rlt_cli::oracle_score::load_synthesizer(cfg)?;
+    println!(
+        "synthesizer: {}",
+        if synthesizer.is_some() {
+            "loaded"
+        } else {
+            "none (suggestions that need inflected forms are rendered without them)"
+        }
+    );
     let report = coverage::compare(
         &engine,
         &rules,
@@ -51,6 +60,7 @@ pub fn run(cfg: &'static rlt_lang::LangConfig, lt_version: &str) -> Result<()> {
         &lt,
         cfg.tagset.sent_start,
         cfg.tagset.sent_end,
+        synthesizer.as_ref(),
     );
 
     write_outputs(&report, &out_dir)?;

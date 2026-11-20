@@ -269,7 +269,9 @@ fn load_ir_matcher(cfg: &rlt_lang::LangConfig) -> Result<IrMatcher> {
             cfg.code
         )
     })?;
-    IrMatcher::from_rkyv_bytes(&bytes).map_err(|e| anyhow!("compiling IR rules from {blob}: {e}"))
+    let synthesizer = rlt_cli::oracle_score::load_synthesizer(cfg)?;
+    IrMatcher::from_rkyv_bytes_with(&bytes, synthesizer)
+        .map_err(|e| anyhow!("compiling IR rules from {blob}: {e}"))
 }
 
 /// Load the L3 confusion model if `cfg` enables it and it's present, else an empty (no-op) checker.

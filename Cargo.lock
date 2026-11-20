@@ -1706,6 +1706,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "regex",
  "rlt-convert",
  "rlt-core",
  "rlt-engine",

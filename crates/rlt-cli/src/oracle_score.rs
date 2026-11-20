@@ -5,10 +5,11 @@
 //! numbers for *any* LT version). The functions here never assert — they just measure.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use rlt_convert::Example;
-use rlt_core::{Checker, Composite, Engine, GrammarChecker, IrMatcher, Source};
+use rlt_core::{Checker, Composite, Engine, GrammarChecker, IrMatcher, Source, Synthesizer};
 use rlt_engine::VendoredEngine;
 use serde::Serialize;
 
@@ -108,7 +109,7 @@ fn pct(n: usize, total: usize) -> f64 {
 pub fn score_ir(tokenizer: &Path, blob: &Path, grammar: &Path) -> Result<ScoreReport> {
     let engine = VendoredEngine::from_path(tokenizer)
         .with_context(|| format!("loading engine from {}", tokenizer.display()))?;
-    score_ir_with_engine(engine, blob, grammar)
+    score_ir_with_engine(engine, blob, grammar, None)
 }
 
 /// Score the IR matcher using the **native** engine for token analysis (current-LT tags from
@@ -127,10 +128,32 @@ pub fn score_ir_native(
 ) -> Result<ScoreReport> {
     let engine = rlt_native::NativeEngine::from_paths(cfg, segment_srx, tagger, disambig)
         .map_err(|e| anyhow!("loading native engine: {e}"))?;
-    score_ir_with_engine(engine, blob, grammar)
+    score_ir_with_engine(engine, blob, grammar, load_synthesizer(cfg)?)
 }
 
-/// Score `Composite<E, IrMatcher>` over a grammar's `<example>` corpus, for any analysis engine `E`.
+/// `cfg`'s word-form synthesizer: `None` when the language has no synthesis configured or its
+/// artifact (`resources/<lang>/synth.rkyv`, `cargo xtask build-synth`) has not been built, in which
+/// case the matcher renders suggestions that need inflected forms without them.
+///
+/// # Errors
+/// Returns an error if the artifact exists but cannot be read or is malformed.
+pub fn load_synthesizer(cfg: &rlt_lang::LangConfig) -> Result<Option<Arc<dyn Synthesizer>>> {
+    let Some(synth) = cfg.synth else {
+        return Ok(None);
+    };
+    let path = cfg.synth_path();
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(anyhow!("reading {path}: {e}")),
+    };
+    let synthesizer = rlt_native::DictSynthesizer::from_bytes(&bytes, synth.policy)
+        .map_err(|e| anyhow!("loading {path}: {e}"))?;
+    Ok(Some(Arc::new(synthesizer)))
+}
+
+/// Score `Composite<E, IrMatcher>` over a grammar's `<example>` corpus, for any analysis engine `E`,
+/// rendering inflected suggestions with `synthesizer` when given.
 ///
 /// # Errors
 /// Returns an error if the blob can't load or the grammar can't be parsed.
@@ -138,9 +161,10 @@ pub fn score_ir_with_engine<E: Engine>(
     engine: E,
     blob: &Path,
     grammar: &Path,
+    synthesizer: Option<Arc<dyn Synthesizer>>,
 ) -> Result<ScoreReport> {
     let bytes = std::fs::read(blob).with_context(|| format!("reading {}", blob.display()))?;
-    let ir = IrMatcher::from_rkyv_bytes(&bytes)
+    let ir = IrMatcher::from_rkyv_bytes_with(&bytes, synthesizer)
         .map_err(|e| anyhow!("compiling IR rules from {}: {e}", blob.display()))?;
     let checker = Checker::new(Composite::new(engine, ir));
 
