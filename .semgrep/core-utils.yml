@@ -184,9 +184,14 @@ rules:
           - pattern: regex::Regex::new($X)
           - pattern: RegexBuilder::new($X)
           - pattern: regex::RegexBuilder::new($X)
-      - pattern-not: Regex::new(&crate::java_regex::translate(...))
+      # Translated in the argument itself (directly or inside a `format!`, whose arguments semgrep
+      # does not parse as expressions, hence the text match), or bound to a variable first.
+      - pattern-not-regex: 'java_regex::translate\('
       - pattern-not-inside: |
           let $T = crate::java_regex::translate(...);
+          ...
+      - pattern-not-inside: |
+          let $T = java_regex::translate(...);
           ...
       - pattern-not-inside: |
           mod tests { ... }
