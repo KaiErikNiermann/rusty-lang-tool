@@ -12,13 +12,16 @@ on:
         description: Release tag (blank = artifacts-<LT version>)
         default: ""
   push:
-    # Auto-cut when an LT sync lands on master. `lang-manifests/**` are content-hash manifests of LT's
-    # vendored grammar/dicts, so they change *iff* the artifact bytes would differ — this fires exactly
-    # on a real linguistic update and never on unrelated xtask/web edits. A successful run chains into
-    # deploy-pages (workflow_run). Manual re-cuts still go through workflow_dispatch or an `artifacts-*`
-    # tag push (tags are matched independently of the path filter).
+    # Auto-cut when an LT sync lands on master, or when the code that defines the artifact bytes
+    # changes. `lang-manifests/**` are content-hash manifests of LT's vendored grammar/dicts, so they
+    # change when LT's data does; `crates/rlt-ir/**` (the rkyv types) and `crates/rlt-convert/**` (the
+    # lowering) change what the same data compiles to, and a wasm built from new IR types cannot read
+    # artifacts serialized with the old ones. deploy-pages skips pushes touching these code paths and
+    # deploys from this run instead (workflow_run), so the site never pairs new wasm with old
+    # artifacts. Manual re-cuts still go through workflow_dispatch or an `artifacts-*` tag push (tags
+    # are matched independently of the path filter).
     branches: [master]
-    paths: ["lang-manifests/**"]
+    paths: ["lang-manifests/**", "crates/rlt-ir/**", "crates/rlt-convert/**"]
     tags: ["artifacts-*"]
 
 permissions:
