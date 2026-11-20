@@ -933,6 +933,12 @@ fn apply_disambig_rule(rule: &CompiledDisambig, tokens: &mut [Token]) {
         }
     }
     for (start, end) in hits {
+        // LT's FILTER acts on the first marked token only (`fromPos`); the other actions on all.
+        let end = if matches!(rule.action, CompiledAction::Filter { .. }) {
+            start + 1
+        } else {
+            end
+        };
         for token in &mut tokens[start..end] {
             apply_action(&rule.action, token);
         }
@@ -981,7 +987,8 @@ fn apply_action(action: &CompiledAction, token: &mut Token) {
             }
         }
         CompiledAction::Filter { tags } => {
-            if !tags.is_empty() {
+            // LT only filters when some reading matches; otherwise the token is left as it is.
+            if token.tags.iter().any(|t| tags.iter().any(|m| m.matches(t))) {
                 token.tags.retain(|t| tags.iter().any(|m| m.matches(t)));
             }
         }
@@ -1199,6 +1206,63 @@ mod tests {
             tokens[3].tags,
             vec!["FOO", "CD"],
             "target absent → added, not clobbered"
+        );
+    }
+
+    #[test]
+    fn disambiguator_filter_keeps_matching_readings_on_first_marked_token() {
+        use rlt_ir::{DisambigRule, TagAction};
+
+        let tok = |text: &str, tags: &[&str]| Token {
+            text: text.to_owned(),
+            tags: tags.iter().map(|s| (*s).to_owned()).collect(),
+            ..Default::default()
+        };
+        let any = || {
+            Construct::Token(TokenPat {
+                text: Some(".*".to_owned()),
+                regexp: true,
+                ..Default::default()
+            })
+        };
+        let dis = Disambiguator::new(&[DisambigRule {
+            id: "F".to_owned(),
+            pattern: vec![
+                lit("the"),
+                Construct::MarkerStart,
+                any(),
+                any(),
+                Construct::MarkerEnd,
+            ],
+            antipatterns: vec![],
+            action: TagAction::Filter {
+                postags: vec!["NN.*".to_owned()],
+                postag_regexp: true,
+            },
+        }]);
+        let mut tokens = vec![
+            tok("the", &["DT"]),
+            tok("are", &["NN", "VBP"]),
+            tok("dogs", &["NNS", "VBZ"]),
+        ];
+        dis.disambiguate(&mut tokens);
+        assert_eq!(
+            tokens[1].tags,
+            vec!["NN"],
+            "filtered to the matching reading"
+        );
+        assert_eq!(
+            tokens[2].tags,
+            vec!["NNS", "VBZ"],
+            "only the first marked token"
+        );
+
+        let mut no_match = vec![tok("the", &["DT"]), tok("go", &["VB"]), tok("x", &[])];
+        dis.disambiguate(&mut no_match);
+        assert_eq!(
+            no_match[1].tags,
+            vec!["VB"],
+            "no matching reading: left as it is"
         );
     }
 

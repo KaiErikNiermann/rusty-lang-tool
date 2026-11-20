@@ -224,9 +224,11 @@ fn lower_action(d: &XDisambig) -> TagAction {
             lemmas,
             postag_regexp,
         },
+        // LT matches a filter's postag as a regex whether or not `postag_regexp` is set
+        // (`DisambiguationPatternRuleReplacer`, FILTER, v6.8): `postag="NN.*"` keeps the NN readings.
         "filter" => TagAction::Filter {
             postags,
-            postag_regexp,
+            postag_regexp: true,
         },
         _ => TagAction::Unsupported, // filterall, unify, ignore_spelling
     }
