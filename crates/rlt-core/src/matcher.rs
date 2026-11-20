@@ -1081,6 +1081,9 @@ fn marker_token_range(
 /// Render one suggestion template against the captured tokens: one string per combination of the
 /// forms its [`CompiledPart::Synth`] parts produce (the first such part varies slowest, as in LT's
 /// `PatternRuleMatcher.formatMultipleSynthesis`), or none if a token reference is missing.
+///
+/// A reference to an optional element that matched nothing renders as nothing and takes one of the
+/// spaces around it with it (LT `formatMatches`, lines 273-279, and `concatWithoutExtraSpace`).
 fn render_suggestion(
     sug: &CompiledSuggestion,
     text: &str,
@@ -1089,12 +1092,23 @@ fn render_suggestion(
     synthesizer: Option<&dyn Synthesizer>,
 ) -> Vec<String> {
     let mut out = vec![String::new()];
-    for part in &sug.parts {
+    let mut skip_leading_space = false;
+    for (i, part) in sug.parts.iter().enumerate() {
         match part {
             CompiledPart::Text(t) => {
+                let t = if std::mem::take(&mut skip_leading_space) {
+                    t.strip_prefix(' ').unwrap_or(t)
+                } else {
+                    t
+                };
                 for o in &mut out {
                     o.push_str(t);
                 }
+            }
+            CompiledPart::Token { no, .. } | CompiledPart::Synth { no, .. }
+                if is_unmatched_optional(*no, captures) =>
+            {
+                skip_leading_space = drop_extra_space(&mut out, sug.parts.get(i + 1));
             }
             CompiledPart::Token { no, case, regex } => {
                 let Some(surface) = captured_surface(*no, text, tokens, captures) else {
@@ -1130,6 +1144,41 @@ fn render_suggestion(
         }
     }
     out
+}
+
+/// Whether pattern element `no` (1-based) exists but matched no token (`min="0"`).
+fn is_unmatched_optional(no: usize, captures: &[Option<(usize, usize)>]) -> bool {
+    no.checked_sub(1)
+        .and_then(|i| captures.get(i))
+        .is_some_and(Option::is_none)
+}
+
+/// LT's `concatWithoutExtraSpace` for a removed reference between `out` and the `next` part: a
+/// space before it goes when what follows starts with whitespace or punctuation (or ends the
+/// suggestion); at the start of the suggestion, a space after it goes instead. Returns whether the
+/// next text part must drop its leading space.
+fn drop_extra_space(out: &mut [String], next: Option<&CompiledPart>) -> bool {
+    let next_text = match next {
+        None => Some(""),
+        Some(CompiledPart::Text(t)) => Some(t.as_str()),
+        Some(_) => None,
+    };
+    let Some(right) = next_text else {
+        return false;
+    };
+    let closes_gap =
+        right.is_empty() || right.starts_with(|c: char| c.is_whitespace() || ",:;.!?".contains(c));
+    let mut popped = false;
+    if closes_gap {
+        for o in out.iter_mut() {
+            if o.ends_with(' ') {
+                o.pop();
+                popped = true;
+            }
+        }
+    }
+    // Only at the start of the suggestion, where there is no text to the left.
+    !popped && out.iter().all(String::is_empty) && right.starts_with(' ')
 }
 
 /// The first token captured by the `no`-th (1-based) pattern element: the one LT's `MatchState`
@@ -1864,6 +1913,64 @@ mod tests {
         }
         let matcher = IrMatcher::new(&[synth_rule(vec![copy])]);
         assert_eq!(replacements(&matcher, text, &analysis), ["schnellem"]);
+    }
+
+    /// `a [b]? c` suggesting `parts`, run over `a c` and `a b c`.
+    fn optional_middle(parts: Vec<SugPart>) -> (Vec<String>, Vec<String>) {
+        let optional = Construct::Token(TokenPat {
+            text: Some("b".to_owned()),
+            min: Some(0),
+            ..Default::default()
+        });
+        let rule = Rule {
+            id: "OPT".to_owned(),
+            pattern: vec![lit("a"), optional, lit("c")],
+            antipatterns: vec![],
+            message: String::new(),
+            suggestions: vec![IrSuggestion { parts }],
+        };
+        let matcher = IrMatcher::new(&[rule]);
+        let run = |text: &str, words: &[&str]| {
+            let tagged: Vec<(&str, &[&str], &[&str])> =
+                words.iter().map(|w| (*w, &[][..], &[][..])).collect();
+            replacements(&matcher, text, &analyze(text, &tagged))
+        };
+        (run("a c", &["a", "c"]), run("a b c", &["a", "b", "c"]))
+    }
+
+    fn copy(no: usize) -> SugPart {
+        SugPart::Token {
+            no,
+            case: Case::Keep,
+            transform: None,
+        }
+    }
+
+    fn text(t: &str) -> SugPart {
+        SugPart::Text(t.to_owned())
+    }
+
+    #[test]
+    fn a_reference_to_a_skipped_optional_token_takes_one_space_with_it() {
+        // `\1 \2 \3`: the gap closes in the middle.
+        let (without, with) =
+            optional_middle(vec![copy(1), text(" "), copy(2), text(" "), copy(3)]);
+        assert_eq!(
+            (without, with),
+            (
+                ["a c"].map(String::from).to_vec(),
+                ["a b c"].map(String::from).to_vec()
+            )
+        );
+        // `\1 \2`: the trailing space goes, since nothing follows.
+        let (without, _) = optional_middle(vec![copy(1), text(" "), copy(2)]);
+        assert_eq!(without, ["a"]);
+        // `\2 \3`: at the start, the space after it goes.
+        let (without, _) = optional_middle(vec![copy(2), text(" "), copy(3)]);
+        assert_eq!(without, ["c"]);
+        // Punctuation after it also closes the gap: `\1 \2, \3`.
+        let (without, _) = optional_middle(vec![copy(1), text(" "), copy(2), text(", "), copy(3)]);
+        assert_eq!(without, ["a, c"]);
     }
 
     #[test]
