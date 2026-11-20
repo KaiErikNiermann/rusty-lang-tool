@@ -95,6 +95,9 @@ impl CompiledSynth {
         let mut forms = BTreeSet::new();
         if lemmas.is_empty() {
             // LT lines 238-243: a reading without a lemma (an unknown word) stands for itself.
+            // LT decides this per reading (`oneForm`), so a token where only some readings lack
+            // a lemma can also skip synthesis there; our tokens keep one flat lemma list, so only
+            // a token with no lemma at all takes this branch.
             forms.insert(token.text.clone());
         } else if let Ok(tags) = Regex::new(&format!("^(?:{})$", java_regex::translate(&target))) {
             for lemma in &lemmas {
