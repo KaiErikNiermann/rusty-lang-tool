@@ -55,6 +55,8 @@ pub struct NativeEngine {
     normalization: Normalization,
     /// Elision clitics that split off a leading apostrophe-word (French/Italian); empty otherwise.
     elision: &'static [&'static str],
+    /// Add the lower-case form's analyses to the sentence-initial word (German).
+    sentence_start_lowercase: bool,
 }
 
 impl NativeEngine {
@@ -71,6 +73,7 @@ impl NativeEngine {
             compounds: None,
             normalization: Normalization::None,
             elision: &[],
+            sentence_start_lowercase: false,
         }
     }
 
@@ -120,6 +123,7 @@ impl NativeEngine {
             compounds: cfg.compounds.as_ref(),
             normalization: cfg.normalization,
             elision: cfg.elision,
+            sentence_start_lowercase: cfg.sentence_start_lowercase,
         })
     }
 
@@ -193,6 +197,9 @@ impl Engine for NativeEngine {
                     Cow::Borrowed(_) => self.tagger.tag_token(token),
                     Cow::Owned(key) => self.tagger.tag_token_as(token, &key),
                 }
+                if self.sentence_start_lowercase && token.span.start == range.start {
+                    self.add_lowercase_analyses(token);
+                }
                 // Out-of-lexicon word + a compounding language → try a compound split, taking the head
                 // constituent's analyses (so e.g. German `Haustür` is tagged, not flagged unknown).
                 if token.tags.is_empty() {
@@ -233,6 +240,20 @@ impl Engine for NativeEngine {
 }
 
 impl NativeEngine {
+    /// Add the analyses of `token`'s lower-case form when it differs ("Ich" also gets "ich").
+    fn add_lowercase_analyses(&self, token: &mut Token) {
+        let lower = token.text.to_lowercase();
+        if lower == token.text {
+            return;
+        }
+        if let Some(analyses) = self.tagger.analyses(&lower) {
+            for wd in &analyses {
+                push_unique(&mut token.tags, &wd.tag);
+                push_unique(&mut token.lemmas, &wd.lemma);
+            }
+        }
+    }
+
     /// The dictionary-lookup key for a surface form under this engine's normalization. For
     /// `StripCombiningMarks`, drop every nonspacing mark; otherwise borrow the surface unchanged
     /// (zero-cost for en/de/ru, and for Arabic input that carries no tashkeel).
@@ -567,6 +588,56 @@ mod tests {
         );
         // Spans must tile the text exactly.
         assert_eq!(sents.concat(), text);
+    }
+
+    #[test]
+    fn german_sentence_start_adds_lower_case_readings() {
+        use std::collections::BTreeMap;
+
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../resources/segment.srx");
+        let Ok(xml) = std::fs::read_to_string(path) else {
+            eprintln!("skip: {path} not fetched");
+            return;
+        };
+        let word = |lemma: &str, tag: &str| WordData {
+            lemma: lemma.to_owned(),
+            tag: tag.to_owned(),
+        };
+        let mut words = BTreeMap::new();
+        words.insert("Ich".to_owned(), vec![word("Ich", "SUB:NOM:SIN:NEU")]);
+        words.insert("ich".to_owned(), vec![word("ich", "PRO:PER:NOM:SIN:ALG")]);
+        let artifact = build_artifact(&words).unwrap();
+        let engine = |cfg: &'static LangConfig| {
+            let tagger = Tagger::from_bytes(&artifact).unwrap();
+            let mut e = NativeEngine::new(Segmenter::from_srx(&xml, "de").unwrap(), tagger);
+            e.sentence_start_lowercase = cfg.sentence_start_lowercase;
+            e
+        };
+        let tags = |e: &NativeEngine, text: &str| -> Vec<Vec<String>> {
+            e.analyze(text)
+                .tokens
+                .into_iter()
+                .filter(|t| t.text == "Ich")
+                .map(|t| t.tags)
+                .collect()
+        };
+        let de = engine(&rlt_lang::DE);
+        // At the sentence start: the noun and the pronoun; elsewhere: the noun only.
+        assert_eq!(
+            tags(&de, "Ich sagte Ich laut"),
+            [
+                vec![
+                    "SUB:NOM:SIN:NEU".to_owned(),
+                    "PRO:PER:NOM:SIN:ALG".to_owned()
+                ],
+                vec!["SUB:NOM:SIN:NEU".to_owned()],
+            ]
+        );
+        // Languages without the flag keep the plain lookup.
+        assert_eq!(
+            tags(&engine(&rlt_lang::EN), "Ich sagte"),
+            [vec!["SUB:NOM:SIN:NEU".to_owned()]]
+        );
     }
 
     #[test]

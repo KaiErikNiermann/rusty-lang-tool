@@ -41,6 +41,11 @@ pub struct LangConfig {
     pub elision: &'static [&'static str],
     /// Compound-word splitting rules, if the language compounds (German does; English doesn't).
     pub compounds: Option<Compounding>,
+    /// Whether a capitalised word at the very start of a sentence also gets the analyses of its
+    /// lower-case form, as LT's `GermanTagger.tag` does for the token at offset 0 (v6.8), so that
+    /// "Ich" is a pronoun as well as the noun "das Ich". Languages without it keep the tagger's
+    /// plain exact-then-lower-case lookup.
+    pub sentence_start_lowercase: bool,
 }
 
 /// Where a language's morfologik POS dictionary comes from. Most languages publish a standalone
@@ -419,6 +424,7 @@ pub static EN: LangConfig = LangConfig {
     normalization: Normalization::None,
     elision: &[],
     compounds: None,
+    sentence_start_lowercase: false,
 };
 
 /// German. The morfologik dict is complete (no AGID/closed-class); STTS-style tagset; compounds split.
@@ -466,6 +472,7 @@ pub static DE: LangConfig = LangConfig {
         head_is_last: true,
         min_part_len: 3,
     }),
+    sentence_start_lowercase: true,
 };
 
 /// Russian — the first far-from-Latin language. The morfologik dict ships inside the LT repo as
@@ -507,6 +514,7 @@ pub static RU: LangConfig = LangConfig {
     normalization: Normalization::None,
     elision: &[],
     compounds: None,
+    sentence_start_lowercase: false,
 };
 
 /// The Arabic `[.,;:…!?]` punctuation class plus the Arabic comma `،`, semicolon `؛`, and question
@@ -551,6 +559,7 @@ pub static AR: LangConfig = LangConfig {
     normalization: Normalization::StripCombiningMarks,
     elision: &[],
     compounds: None,
+    sentence_start_lowercase: false,
 };
 
 /// French — Romance. Maven dict (`org.languagetool:french-pos-dict`, CFSA2/UTF-8/SUFFIX, `_` sep).
@@ -596,6 +605,7 @@ pub static FR: LangConfig = LangConfig {
         "puisqu'", "quoiqu'", "quelqu'",
     ],
     compounds: None,
+    sentence_start_lowercase: false,
 };
 
 /// Spanish — Romance. Maven dict shipped by Softcatalà (`org.softcatala:spanish-pos-dict`, jar entries
@@ -638,6 +648,7 @@ pub static ES: LangConfig = LangConfig {
     normalization: Normalization::None,
     elision: &[],
     compounds: None,
+    sentence_start_lowercase: false,
 };
 
 /// Italian — Romance, but the **first FSA5** language: `italian.dict` ships in the LT repo in the older
@@ -682,6 +693,7 @@ pub static IT: LangConfig = LangConfig {
         "d'", "n'", "v'", "m'", "t'", "s'", "anch'", "gliel'", "sant'", "bell'", "grand'",
     ],
     compounds: None,
+    sentence_start_lowercase: false,
 };
 
 #[cfg(test)]
