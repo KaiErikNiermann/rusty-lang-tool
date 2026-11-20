@@ -149,3 +149,72 @@ rules:
   # 8 of 10 crates carry it; the two that do not (`rlt-cli/src/lib.rs`, `xtask/src/main.rs`) are
   # already covered by `[workspace.lints.rust] unsafe_code = "warn"` plus the pre-push
   # `-D warnings`. Enforcing the attribute too would be enforcing the same fact twice.
+
+  - id: ascii-case-fold-on-text
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      ASCII-only case folding on what may be natural-language text. `to_ascii_lowercase`,
+      `to_ascii_uppercase` and `eq_ignore_ascii_case` leave every non-ASCII letter alone, so "Über"
+      never equals "über" and Cyrillic, Greek or accented capitals never fold. LanguageTool folds
+      with Java's `equalsIgnoreCase` and `UNICODE_CASE` (`StringMatcher`, v6.8).
+      FOUND 8 sites, all now Unicode: the matcher's literal comparison and first-literal index
+      (3; fixing them reproduced 54 more ru examples on LT's oracle), the confusion-model build (4),
+      which folded differently from the checker that looks the words up, and French elision, whose
+      clitic `ç'` never matched a sentence-initial `Ç'`.
+      Use `rlt_core::fold_case` or `to_lowercase`. Comparing with a fixed ASCII keyword (`"yes"`,
+      `"utf-8"`) is exempt; anything else ASCII-only by design gets a `nosemgrep` with its reason.
+    paths:
+      include:
+        - "/crates/rlt-core/src/"
+        - "/crates/rlt-native/src/"
+        - "/crates/rlt-convert/src/"
+        - "/crates/rlt-morfologik/src/"
+    patterns:
+      - pattern-either:
+          - pattern: $X.to_ascii_lowercase()
+          - pattern: $X.to_ascii_uppercase()
+          - pattern: $X.eq_ignore_ascii_case($Y)
+      - pattern-not: $X.eq_ignore_ascii_case("...")
+      - pattern-not-inside: |
+          mod tests { ... }
+
+  - id: lt-category-without-enabled-check
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      A walk over LT `<category>` elements that does not skip disabled categories. LT disables every
+      rule of a `default="off"` category (`JLanguageTool` `isCategoryDisabled`, v6.8).
+      `lower_document` (the converted rules) and `extract_examples` (the oracle corpus, carrying each
+      example's `rule_index`) must apply the same filters in the same order, or every index after the
+      first difference points at the wrong rule.
+      FOUND 2 walks without the check, both now calling `category_enabled`; until then German's
+      WIKIPEDIA category (8 rules) ran on everything.
+    paths:
+      include:
+        - "/crates/rlt-convert/src/"
+    patterns:
+      - pattern: |
+          let rules::RulesElementTypeContent::Category($C) = $X else { ... };
+      - pattern-not-inside: |
+          let rules::RulesElementTypeContent::Category($C) = $X else { ... };
+          if !category_enabled($C) { ... }
+
+  - id: ir-pattern-struct-defaulted-in-converter
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      An IR pattern struct (`TokenPat`, `ExceptionPat`, `Rule`, `DisambigRule`) built with
+      `..Default::default()` in the converter. Writing every field is what makes adding an IR field
+      a compile error at each lowering site, which is how LT attributes get carried through rather
+      than silently defaulted (`negate_pos`, `scope` and `spacebefore` were each dropped this way
+      before they had IR fields).
+      FORWARD GUARD: 0 hits when written (every lowering site lists its fields); validated on a
+      planted defaulted literal. Tests may default.
+    paths:
+      include:
+        - "/crates/rlt-convert/src/"
+    patterns:
+      - pattern-regex: '\b(TokenPat|ExceptionPat|DisambigRule|Rule)\s*\{[^{}]*\.\.(Default::default\(\)|\w+::default\(\))'
+      - pattern-not-inside: |
+          mod tests { ... }

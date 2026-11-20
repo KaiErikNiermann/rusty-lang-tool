@@ -160,3 +160,56 @@ rules:
         - "/web/src/lib/editor/"
     pattern: |
       $MODEL.getPositionAt($B2U($SPAN.start))
+
+  - id: use-java-regex-translate
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      A regex compiled from LanguageTool rule text without `crate::java_regex::translate`. LT writes
+      `java.util.regex` syntax: `\` escapes any non-alphanumeric character (`\–`, `\ä`, `\=`), `\<`
+      and `\>` are literals (word boundaries in the `regex` crate), and supplementary characters are
+      UTF-16 surrogate pairs. Uncompiled, the regex is rejected and the exception, antipattern or
+      rule silently drops (SONDERN_KOMMA's dash exceptions: 10 de false positives); compiled
+      verbatim, `\<` changes meaning without an error.
+      FOUND 3 compile sites in the matcher (token text, rule-level `<regexp>`, suggestion
+      `regexp_match`), all now translated; replacement strings go through `translate_replacement`.
+    paths:
+      include:
+        - "/crates/rlt-core/src/"
+      exclude:
+        - "/crates/rlt-core/src/java_regex.rs"
+    patterns:
+      - pattern-either:
+          - pattern: Regex::new($X)
+          - pattern: regex::Regex::new($X)
+          - pattern: RegexBuilder::new($X)
+          - pattern: regex::RegexBuilder::new($X)
+      - pattern-not: Regex::new(&crate::java_regex::translate(...))
+      - pattern-not-inside: |
+          let $T = crate::java_regex::translate(...);
+          ...
+      - pattern-not-inside: |
+          mod tests { ... }
+
+  - id: use-rlt-ir-align-bytes
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      rkyv validated access on a buffer that was not re-aligned. `rkyv::from_bytes`/`access` require
+      the archive's alignment, but a `&[u8]` from a file, a JS/wasm buffer or a sub-slice only
+      guarantees byte alignment; production allocators over-align and hide it, Miri and the wasm
+      path do not. Pass `&rlt_ir::align_bytes(bytes)`.
+      FOUND every loader doing this before e9e65ce (Miri-found UB); the one outside rlt-ir
+      (`rlt-native`'s tagger) now aligns.
+    paths:
+      exclude:
+        - "/crates/rlt-ir/"
+    patterns:
+      - pattern-either:
+          - pattern: rkyv::from_bytes::<$T, $E>($B)
+          - pattern: rkyv::access::<$T, $E>($B)
+          - pattern: rkyv::from_bytes($B)
+          - pattern: rkyv::access($B)
+          - pattern: rkyv::access_unchecked::<$T>($B)
+      - pattern-not: rkyv::from_bytes::<$T, $E>(&rlt_ir::align_bytes(...))
+      - pattern-not: rkyv::access::<$T, $E>(&rlt_ir::align_bytes(...))
