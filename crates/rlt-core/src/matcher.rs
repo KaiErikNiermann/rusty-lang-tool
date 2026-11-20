@@ -601,19 +601,21 @@ impl TokenMatcher {
 
     /// The raw text-AND-POS constraint, ignoring negation/exceptions.
     fn constraint(&self, token: &Token) -> bool {
+        // LT's `PatternToken.getTestToken`: `inflected` tests the lemma, falling back to the surface
+        // form for a reading without one; literal and regex text alike.
+        let surface = std::slice::from_ref(&token.text);
+        let subjects = if self.inflected && !token.lemmas.is_empty() {
+            token.lemmas.as_slice()
+        } else {
+            surface
+        };
         let text_ok = match &self.text {
             None => true,
-            Some(TextMatch::Regex(re)) => re.is_match(&token.text),
+            Some(TextMatch::Regex(re)) => subjects.iter().any(|s| re.is_match(s)),
             Some(TextMatch::Literal {
                 value,
                 case_sensitive,
-            }) => {
-                if self.inflected {
-                    token.lemmas.iter().any(|l| eq(l, value, *case_sensitive))
-                } else {
-                    eq(&token.text, value, *case_sensitive)
-                }
-            }
+            }) => subjects.iter().any(|s| eq(s, value, *case_sensitive)),
         };
         let tag_ok = match &self.postag {
             None => true,
@@ -1441,6 +1443,28 @@ mod tests {
         )]);
         assert_eq!(
             checked.grammar_diagnostics(text, &plain(text)),
+            [] as [Diagnostic; 0]
+        );
+    }
+
+    #[test]
+    fn inflected_regex_matches_lemma_and_falls_back_to_surface() {
+        let matcher = IrMatcher::new(&[rule_of(
+            "INFL_RE",
+            vec![Construct::Token(TokenPat {
+                text: Some("be|have".to_owned()),
+                regexp: true,
+                inflected: true,
+                ..Default::default()
+            })],
+        )]);
+        let lemma = analyze("was", &[("was", &["VBD"], &["be"])]);
+        assert_eq!(matcher.grammar_diagnostics("was", &lemma).len(), 1);
+        let surface_only = analyze("have", &[("have", &[], &[])]);
+        assert_eq!(matcher.grammar_diagnostics("have", &surface_only).len(), 1);
+        let other_lemma = analyze("have", &[("have", &["NN"], &["haves"])]);
+        assert_eq!(
+            matcher.grammar_diagnostics("have", &other_lemma),
             [] as [Diagnostic; 0]
         );
     }
