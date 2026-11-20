@@ -1,0 +1,6 @@
+// Resolves a LanguageTool release from Maven Central for the coverage probe (LtProbe.java).
+// Usage: gradle -q -p tools/lt-probe copyDeps -PltVersion=6.8 -PltLang=de -PoutDir=<dir>
+plugins { id 'java' }
+repositories { mavenCentral() }
+dependencies { implementation "org.languagetool:language-${property('ltLang')}:${property('ltVersion')}" }
+tasks.register('copyDeps', Copy) { from configurations.runtimeClasspath; into project.property('outDir') }

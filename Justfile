@@ -84,6 +84,10 @@ build-all:
 audit lang="en":
     cargo run -p xtask -- audit-rules --lang {{lang}}
 
+# Compare with LanguageTool itself on its examples and attribute every gap (needs java 21+, gradle)
+coverage lang="de":
+    cargo run --release -p xtask -- coverage --lang {{lang}}
+
 # Score the example-corpus oracle for both backends (the on-thesis gate; needs built artifacts)
 oracle:
     cargo test -p rlt-cli --test oracle --release -- --ignored --nocapture --test-threads 1

@@ -24,6 +24,9 @@ rlt-convert.workspace = true
 rlt-core.workspace = true
 # Per-language config: artifact paths + POS-dict Maven coordinates + LT module paths.
 rlt-lang.workspace = true
+# coverage: compare with LanguageTool (the comparison logic lives in rlt-cli's library).
+rlt-cli.workspace = true
+rlt-ir.workspace = true
 unicode-properties = "0.1.4"
 sha2 = "0.11.0"
 # web-manifest: gzip the served artifacts (the browser decompresses via the native DecompressionStream).

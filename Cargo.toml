@@ -82,6 +82,7 @@ rlt-core = { path = "crates/rlt-core" }
 rlt-convert = { path = "crates/rlt-convert" }
 rlt-tagger = { path = "crates/rlt-tagger" }
 rlt-native = { path = "crates/rlt-native" }
+rlt-cli = { path = "crates/rlt-cli" }
 
 # Pedantic clippy baseline, applied across the workspace via `[lints] workspace = true`.
 [workspace.lints.clippy]

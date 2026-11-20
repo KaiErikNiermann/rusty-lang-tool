@@ -16,6 +16,8 @@
 //! - `adapt-sweep` — run the codegen + converter + oracle across past LT releases (adaptability gauge).
 //! - `fuzz` — run a libFuzzer target via `cargo-fuzz` (thin passthrough; lists targets with no arg).
 
+mod coverage;
+
 use std::path::Path;
 use std::process::Command;
 
@@ -250,6 +252,15 @@ enum Task {
         #[arg(long, default_value = "en")]
         lang: String,
     },
+    /// Compare our pipeline with LanguageTool itself on LT's example sentences, and attribute every
+    /// example LT reproduces and we miss to a cause (rule not run, matcher, tokenization, tags).
+    /// Needs `java` 21+ and `gradle`, `fetch-lt` and the language's built artifacts; writes
+    /// `target/coverage/<lang>/`. Validated for `en` and `de`.
+    Coverage {
+        /// Language ISO code.
+        #[arg(long, default_value = "en")]
+        lang: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -311,6 +322,7 @@ fn main() -> Result<()> {
         }
         Task::WebManifest { out, langs } => web_manifest(&out, &langs),
         Task::AuditRules { lang } => audit_rules(lang_cfg(&lang)?),
+        Task::Coverage { lang } => coverage::run(lang_cfg(&lang)?, &lt_version()),
         Task::BuildL4 => build_l4(),
         Task::RunL4Oracle => run(
             "cargo",

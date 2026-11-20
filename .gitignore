@@ -54,6 +54,10 @@ node_modules/
 # Java extractor build deps (NgramDump.java source IS committed)
 /tools/lib/
 /tools/out/
+# LanguageTool runtime resolved by `cargo xtask coverage` (Maven jars, per version and language)
+/tools/lt-runtime/
+/tools/lt-probe/.gradle/
+/tools/lt-probe/build/
 
 # Web demo build outputs (the SvelteKit app is committed; its build/deps are not). The wasm-pack
 # bundle lands in /crates/rlt-wasm/pkg/ (ignored above); the gzipped artifacts land in /dist/.
