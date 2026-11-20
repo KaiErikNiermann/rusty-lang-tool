@@ -320,6 +320,14 @@ mod tests {
     }
 
     #[test]
+    fn a_fixed_lemma_keeps_the_pattern_as_target_when_no_tag_of_the_token_matched() {
+        // LT replaces only `if (... && !posTags.isEmpty())` (`MatchState.java` line 342).
+        let c = CompiledSynth::new("VER:(.*)", false, Some("X:$1"), Some("sein"), false).unwrap();
+        let t = token("Hund", &["SUB:NOM:SIN:MAS"], &["Hund"]);
+        assert_eq!(c.static_target_tag(&t.tags), "VER:(.*)");
+    }
+
+    #[test]
     fn an_invalid_postag_regex_is_rejected() {
         assert!(CompiledSynth::new("ADJ:(", true, None, None, false).is_none());
     }

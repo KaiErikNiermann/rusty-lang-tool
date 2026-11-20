@@ -1083,6 +1083,85 @@ mod tests {
         );
     }
 
+    /// A minimal FSA5 (goto length 2, no node data, no suffix sharing) accepting exactly `entries`.
+    fn tiny_fsa5(entries: &[&[u8]]) -> Vec<u8> {
+        #[derive(Default)]
+        struct Node {
+            kids: BTreeMap<u8, (bool, usize)>,
+        }
+        let mut nodes = vec![Node::default()];
+        for entry in entries {
+            let mut at = 0;
+            for (i, &byte) in entry.iter().enumerate() {
+                let last = i + 1 == entry.len();
+                let known = nodes[at].kids.get(&byte).copied();
+                let next = match known {
+                    Some((_, next)) if next != 0 => next,
+                    _ if last => 0,
+                    _ => {
+                        nodes.push(Node::default());
+                        nodes.len() - 1
+                    }
+                };
+                let was_final = known.is_some_and(|(f, _)| f);
+                nodes[at].kids.insert(byte, (was_final || last, next));
+                at = next;
+            }
+        }
+        // Arcs region: dummy arc (2 bytes), epsilon arc (3 bytes), then the nodes in order.
+        let mut offsets = Vec::new();
+        let mut next_offset = 5;
+        for node in &nodes {
+            offsets.push(next_offset);
+            next_offset += 3 * node.kids.len();
+        }
+        let goto = |target: usize, flags: u8| -> [u8; 2] {
+            u16::try_from((target << 3) | usize::from(flags))
+                .unwrap()
+                .to_le_bytes()
+        };
+        let mut out = b"\\fsa\x05\x00\x00\x02".to_vec(); // header: filler, annotation, hgtl = gtl 2
+        out.extend([0, 0b100]); // dummy arc whose flag byte says "next"
+        out.push(0);
+        out.extend(goto(offsets[0], 0b10)); // epsilon arc to the root, last in its node
+        for node in &nodes {
+            let count = node.kids.len();
+            for (i, (&label, &(is_final, next))) in node.kids.iter().enumerate() {
+                let flags = u8::from(is_final) | if i + 1 == count { 0b10 } else { 0 };
+                out.push(label);
+                out.extend(goto(if next == 0 { 0 } else { offsets[next] }, flags));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn lookup_follows_the_key_then_the_separator_through_a_small_automaton() {
+        let meta = DictMeta {
+            separator: b'+',
+            encoder: Encoder::None,
+            encoding: None,
+            frequency_included: false,
+        };
+        let dict = Dictionary::new(
+            tiny_fsa5(&[b"ab+x+T1", b"ab+yy+T2", b"ab+", b"abc+z", b"b+q"]),
+            meta,
+        )
+        .expect("valid FSA5");
+        let pair = |a: &str, b: &str| (a.to_owned(), b.to_owned());
+        // Every continuation of `ab+` comes back, including the entry that ends at the separator.
+        assert_eq!(
+            dict.lookup("ab"),
+            [pair("", ""), pair("x", "T1"), pair("yy", "T2")]
+        );
+        assert_eq!(dict.lookup("abc"), [pair("z", "")]);
+        assert_eq!(dict.lookup("b"), [pair("q", "")]);
+        // A key that is only a prefix of another, or not there at all, finds nothing.
+        assert_eq!(dict.lookup("a"), []);
+        assert_eq!(dict.lookup("abd"), []);
+        assert_eq!(dict.lookup(""), []);
+    }
+
     #[test]
     fn dictionary_rejects_bad_header() {
         let meta = DictMeta {
