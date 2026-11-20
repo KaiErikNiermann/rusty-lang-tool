@@ -1354,7 +1354,10 @@ mod tests {
                 ("b", &[], &[]),
             ],
         );
-        assert!(matcher.grammar_diagnostics("a x , b", &comma).is_empty());
+        assert_eq!(
+            matcher.grammar_diagnostics("a x , b", &comma),
+            [] as [Diagnostic; 0]
+        );
     }
 
     #[test]
@@ -1380,7 +1383,10 @@ mod tests {
         let hit = analyze("c b", &[("c", &[], &[]), ("b", &[], &[])]);
         assert_eq!(matcher.grammar_diagnostics("c b", &hit).len(), 1);
         let blocked = analyze("a b", &[("a", &[], &[]), ("b", &[], &[])]);
-        assert!(matcher.grammar_diagnostics("a b", &blocked).is_empty());
+        assert_eq!(
+            matcher.grammar_diagnostics("a b", &blocked),
+            [] as [Diagnostic; 0]
+        );
     }
 
     #[test]
