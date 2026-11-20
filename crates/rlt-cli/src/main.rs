@@ -249,21 +249,12 @@ fn load_nlprule_engine() -> Result<VendoredEngine> {
 /// Load the native analysis engine for `cfg` (`segment.srx` + `resources/<lang>/tagger.rkyv`, with
 /// `disambig.rkyv` when present), using the language's structural tagset.
 fn load_native_engine(cfg: &'static rlt_lang::LangConfig) -> Result<rlt_native::NativeEngine> {
-    let srx = PathBuf::from(cfg.segment_srx_path());
-    let tagger = PathBuf::from(cfg.tagger_path());
-    let disambig = PathBuf::from(cfg.disambig_path());
-    rlt_native::NativeEngine::from_paths(
-        cfg,
-        &srx,
-        &tagger,
-        disambig.exists().then_some(disambig.as_path()),
-    )
-    .with_context(|| {
+    rlt_native::NativeEngine::for_lang(cfg).with_context(|| {
         format!(
             "loading native engine — needs {} (cargo xtask fetch-lt) and {} \
              (cargo xtask build-tagger --lang {}); disambig via build-disambig",
-            srx.display(),
-            tagger.display(),
+            cfg.segment_srx_path(),
+            cfg.tagger_path(),
             cfg.code,
         )
     })

@@ -147,6 +147,21 @@ impl NativeEngine {
         }
         Ok(engine)
     }
+
+    /// Load `cfg`'s artifacts from their default paths (`segment.srx`, `resources/<code>/tagger.rkyv`,
+    /// and `disambig.rkyv` when it exists) — the engine the CLI and the oracle tasks check with.
+    ///
+    /// # Errors
+    /// Returns [`NativeError`] if a file is missing or an artifact is malformed.
+    pub fn for_lang(cfg: &'static LangConfig) -> Result<Self, NativeError> {
+        let disambig = std::path::PathBuf::from(cfg.disambig_path());
+        Self::from_paths(
+            cfg,
+            Path::new(cfg.segment_srx_path()),
+            Path::new(&cfg.tagger_path()),
+            disambig.exists().then_some(disambig.as_path()),
+        )
+    }
 }
 
 impl Engine for NativeEngine {

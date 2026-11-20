@@ -1793,16 +1793,9 @@ fn audit_rules(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
 
     // (2) Firing-rate anomalies — run the L2 IR matcher over the example corpus, count per rule.
     println!("== rule firing rates (L2 IR matcher over the example corpus) ==");
-    let engine = rlt_native::NativeEngine::from_paths(
-        cfg,
-        Path::new(cfg.segment_srx_path()),
-        &std::path::PathBuf::from(cfg.tagger_path()),
-        Path::new(&cfg.disambig_path())
-            .exists()
-            .then(|| std::path::PathBuf::from(cfg.disambig_path()))
-            .as_deref(),
-    )
-    .map_err(|e| anyhow::anyhow!("loading {} native engine (build-lang first): {e}", cfg.code))?;
+    let engine = rlt_native::NativeEngine::for_lang(cfg).map_err(|e| {
+        anyhow::anyhow!("loading {} native engine (build-lang first): {e}", cfg.code)
+    })?;
     let ir = rlt_core::IrMatcher::from_rkyv_bytes(&std::fs::read(cfg.grammar_blob_path())?)
         .map_err(|e| anyhow::anyhow!("loading {}: {e}", cfg.grammar_blob_path()))?;
 

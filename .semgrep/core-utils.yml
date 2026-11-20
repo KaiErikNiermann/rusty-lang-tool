@@ -120,6 +120,28 @@ rules:
       - pattern-not: crate::floor_char_boundary(...)
       - pattern-not: crate::ceil_char_boundary(...)
 
+  - id: use-native-engine-for-lang
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      `rlt_native::NativeEngine::for_lang(cfg)` already is "load the language's engine from its
+      default artifact paths, with `disambig.rkyv` when it exists". FOUND 3 hand-written copies,
+      all now calling it: `rlt-cli`'s `load_native_engine`, `xtask`'s `audit_rules` and the
+      `rlt-native` `leak_probe` example (the coverage task would have been the fourth). Copies drift on the one detail that matters: whether
+      a missing disambiguation artifact is skipped or silently changes the tags every rule sees.
+      Calls that pass explicit paths (benches, the oracle tests' disambig-free engines,
+      `build-confusion`) are not this pattern.
+    patterns:
+      - pattern-either:
+          - pattern: NativeEngine::from_paths(...)
+          - pattern: rlt_native::NativeEngine::from_paths(...)
+      # The default disambiguation path, passed inline or bound to a variable first.
+      - pattern-either:
+          - pattern: $E::from_paths(..., <... $C.disambig_path() ...>, ...)
+          - pattern-inside: |
+              let $D = $P::from($C.disambig_path());
+              ...
+
   - id: use-byte-span-to-utf16
     languages: [typescript]
     severity: WARNING

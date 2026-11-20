@@ -9,8 +9,6 @@
 //! LSan reports any "definitely lost" blocks at exit. Needs the artifacts (`cargo xtask build-lang
 //! --lang <code>`; `segment.srx` via `fetch-lt`).
 
-use std::path::{Path, PathBuf};
-
 use rlt_core::Engine;
 use rlt_native::NativeEngine;
 
@@ -34,14 +32,8 @@ const ITERS: usize = 3000;
 fn main() {
     let lang = std::env::args().nth(1).unwrap_or_else(|| "en".to_owned());
     let cfg = rlt_lang::config(&lang).expect("known language code (en, de)");
-    let disambig = PathBuf::from(cfg.disambig_path());
-    let engine = NativeEngine::from_paths(
-        cfg,
-        Path::new(cfg.segment_srx_path()),
-        &PathBuf::from(cfg.tagger_path()),
-        disambig.exists().then_some(disambig.as_path()),
-    )
-    .expect("load native engine — build the artifacts first");
+    let engine =
+        NativeEngine::for_lang(cfg).expect("load native engine — build the artifacts first");
     let (corpus, words) = if lang == "de" {
         (DE_CORPUS, DE_WORDS)
     } else {
