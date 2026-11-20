@@ -41,6 +41,15 @@ pub struct Rule {
     pub suggestions: Vec<Suggestion>,
 }
 
+/// Opens an inline `<suggestion>` in a [`Rule::message`]: `START k FALLBACK SEP text END`, where
+/// `k` is the suggestion's index in [`Rule::suggestions`] and `text` is the `\N` rendering used when
+/// that suggestion renders nothing. Private-use code points, which LT rule text never contains.
+pub const MESSAGE_SUGGESTION_START: char = '\u{E000}';
+/// Separates the index from the fallback text (see [`MESSAGE_SUGGESTION_START`]).
+pub const MESSAGE_SUGGESTION_FALLBACK: char = '\u{E001}';
+/// Closes an inline suggestion (see [`MESSAGE_SUGGESTION_START`]).
+pub const MESSAGE_SUGGESTION_END: char = '\u{E002}';
+
 /// A correction template: an ordered sequence of literal text and back-references to matched
 /// tokens, rendered into a replacement string when the rule fires.
 #[derive(Debug, Clone, Archive, Serialize, Deserialize, serde::Serialize, serde::Deserialize)]

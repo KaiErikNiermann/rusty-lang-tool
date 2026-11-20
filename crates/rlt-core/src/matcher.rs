@@ -174,7 +174,8 @@ struct CompiledRule {
     message: String,
     elements: Vec<Elem>,
     marker: Option<(usize, usize)>,
-    suggestions: Vec<CompiledSuggestion>,
+    /// Indexed like the IR rule's suggestions; `None` where a template cannot render.
+    suggestions: Vec<Option<CompiledSuggestion>>,
     /// Antipattern element sequences; if any matches overlapping the rule's match, suppress it.
     antipatterns: Vec<Vec<Elem>>,
     /// Whether suggestions follow the matched text's case (see [`CaseAdjust`]).
@@ -316,15 +317,18 @@ fn compile_rule(r: &Rule, synthesis: bool) -> Option<CompiledRule> {
 
 /// Pre-compile a rule's suggestion templates, or `None` if none render — a rule with no renderable
 /// correction cannot produce a fix, so the caller skips it.
+///
+/// The result keeps the IR's indices (`None` where a template cannot render), since a message names
+/// its inline suggestions by index.
 fn compile_suggestions(
     suggestions: &[IrSuggestion],
     synthesis: bool,
-) -> Option<Vec<CompiledSuggestion>> {
-    let compiled: Vec<CompiledSuggestion> = suggestions
+) -> Option<Vec<Option<CompiledSuggestion>>> {
+    let compiled: Vec<Option<CompiledSuggestion>> = suggestions
         .iter()
-        .filter_map(|s| compile_suggestion(s, synthesis))
+        .map(|s| compile_suggestion(s, synthesis))
         .collect();
-    (!compiled.is_empty()).then_some(compiled)
+    compiled.iter().any(Option::is_some).then_some(compiled)
 }
 
 /// Pre-compile a suggestion's parts (compiling any `regexp_replace`); `None` if a transform regex
@@ -401,7 +405,8 @@ struct CompiledRegexpRule {
     message: String,
     regex: Regex,
     mark: Option<usize>,
-    suggestions: Vec<CompiledSuggestion>,
+    /// Indexed like the IR rule's suggestions; `None` where a template cannot render.
+    suggestions: Vec<Option<CompiledSuggestion>>,
 }
 
 impl CompiledRegexpRule {
@@ -411,11 +416,17 @@ impl CompiledRegexpRule {
             let Some(m) = self.mark.and_then(|g| caps.get(g)).or_else(|| caps.get(0)) else {
                 continue;
             };
-            let suggestions = dedup_suggestions(
-                self.suggestions
-                    .iter()
-                    .map(|s| render_regexp_suggestion(s, &caps).into_iter().collect()),
-            );
+            let rendered: Vec<Vec<String>> = self
+                .suggestions
+                .iter()
+                .map(|s| {
+                    s.as_ref()
+                        .and_then(|s| render_regexp_suggestion(s, &caps))
+                        .into_iter()
+                        .collect()
+                })
+                .collect();
+            let suggestions = dedup_suggestions(rendered.iter().cloned());
             if suggestions.is_empty() {
                 continue;
             }
@@ -425,7 +436,7 @@ impl CompiledRegexpRule {
                     end: m.end(),
                 },
                 code: self.id.clone(),
-                message: render_message_refs(&self.message, |n| {
+                message: render_message(&self.message, &rendered, |n| {
                     caps.get(n).map(|g| g.as_str().to_owned())
                 }),
                 suggestions,
@@ -987,19 +998,26 @@ fn render(
         end,
         text.get(span.start..span.end).unwrap_or_default(),
     );
-    let suggestions = dedup_suggestions(rule.suggestions.iter().map(|s| {
-        render_suggestion(s, text, tokens, captures, synthesizer)
-            .into_iter()
-            .map(|r| case.apply(r))
-            .collect()
-    }));
+    let rendered: Vec<Vec<String>> = rule
+        .suggestions
+        .iter()
+        .map(|s| {
+            s.as_ref().map_or_else(Vec::new, |s| {
+                render_suggestion(s, text, tokens, captures, synthesizer)
+                    .into_iter()
+                    .map(|r| case.apply(r))
+                    .collect()
+            })
+        })
+        .collect();
+    let suggestions = dedup_suggestions(rendered.iter().cloned());
     if suggestions.is_empty() {
         return None;
     }
     Some(Diagnostic {
         span,
         code: rule.id.clone(),
-        message: render_message_refs(&rule.message, |n| {
+        message: render_message(&rule.message, &rendered, |n| {
             captured_surface(n, text, tokens, captures)
         }),
         suggestions,
@@ -1020,17 +1038,48 @@ fn captured_surface(
         .map(str::to_owned)
 }
 
+/// Render a rule message: each inline-suggestion marker (see [`rlt_ir::MESSAGE_SUGGESTION_START`])
+/// becomes what that suggestion rendered, forms joined by ", " as LT lists several synthesized forms
+/// (`PatternRuleMatcher.formatMultipleSynthesis`), or its `\N` fallback when it rendered nothing;
+/// the remaining text has its `\N` references resolved. Rendered suggestions are not scanned again.
+fn render_message(
+    message: &str,
+    rendered: &[Vec<String>],
+    resolve: impl Fn(usize) -> Option<String>,
+) -> String {
+    let mut out = String::with_capacity(message.len());
+    let mut rest = message;
+    while let Some(start) = rest.find(rlt_ir::MESSAGE_SUGGESTION_START) {
+        out.push_str(&render_message_refs(&rest[..start], &resolve));
+        let body = &rest[start + rlt_ir::MESSAGE_SUGGESTION_START.len_utf8()..];
+        let Some(end) = body.find(rlt_ir::MESSAGE_SUGGESTION_END) else {
+            rest = body; // malformed: drop the stray marker, keep the text
+            continue;
+        };
+        let (index, fallback) = body[..end]
+            .split_once(rlt_ir::MESSAGE_SUGGESTION_FALLBACK)
+            .unwrap_or(("", &body[..end]));
+        match index.parse::<usize>().ok().and_then(|k| rendered.get(k)) {
+            Some(forms) if !forms.is_empty() => out.push_str(&forms.join(", ")),
+            _ => out.push_str(&render_message_refs(fallback, &resolve)),
+        }
+        rest = &body[end + rlt_ir::MESSAGE_SUGGESTION_END.len_utf8()..];
+    }
+    out.push_str(&render_message_refs(rest, &resolve));
+    out
+}
+
 /// Substitute `\N` backreferences in a message with `resolve(N)` (the Nth matched token/group surface);
 /// an unresolved ref is left literal. LT messages embed `<match>`/`<suggestion>` (lowered to `\N`), so
 /// without this they render with the words missing or the raw `\1` showing.
-fn render_message_refs(message: &str, resolve: impl Fn(usize) -> Option<String>) -> String {
+fn render_message_refs(message: &str, resolve: &impl Fn(usize) -> Option<String>) -> String {
     let mut out = String::with_capacity(message.len());
     let mut rest = message;
     while let Some(bs) = rest.find('\\') {
         out.push_str(&rest[..bs]);
         let after = &rest[bs + 1..];
         let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
-        if let Some(v) = digits.parse::<usize>().ok().and_then(&resolve) {
+        if let Some(v) = digits.parse::<usize>().ok().and_then(resolve) {
             out.push_str(&v);
         } else {
             out.push('\\');
@@ -1460,14 +1509,30 @@ mod tests {
     }
 
     #[test]
+    fn message_shows_what_its_inline_suggestion_renders() {
+        use rlt_ir::{
+            MESSAGE_SUGGESTION_END as END, MESSAGE_SUGGESTION_FALLBACK as SEP,
+            MESSAGE_SUGGESTION_START as START,
+        };
+        let resolve = |n: usize| (n == 2).then(|| "schnelle".to_owned());
+        let message = format!("Meinten Sie {START}0{SEP}\\2{END}? Oder {START}1{SEP}\\2{END}.");
+        // Suggestion 0 rendered two forms; suggestion 1 rendered nothing, so its fallback shows.
+        let rendered = [vec!["schnell".to_owned(), "schneller".to_owned()], vec![]];
+        assert_eq!(
+            render_message(&message, &rendered, resolve),
+            "Meinten Sie schnell, schneller? Oder schnelle."
+        );
+    }
+
+    #[test]
     fn render_message_refs_substitutes_known_and_keeps_unknown() {
         let resolve = |n: usize| (n == 1).then(|| "should".to_owned());
         assert_eq!(
-            render_message_refs("Use \\1 have.", resolve),
+            render_message_refs("Use \\1 have.", &resolve),
             "Use should have."
         );
-        assert_eq!(render_message_refs("a \\2 b", resolve), "a \\2 b"); // unresolved → literal
-        assert_eq!(render_message_refs("plain text", resolve), "plain text");
+        assert_eq!(render_message_refs("a \\2 b", &resolve), "a \\2 b"); // unresolved → literal
+        assert_eq!(render_message_refs("plain text", &resolve), "plain text");
     }
 
     #[test]

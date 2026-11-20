@@ -653,7 +653,7 @@ fn lower_rule(
                 });
             }
             rules::RuleElementTypeContent::Message(m) => {
-                let (text, sugs) = lower_message(m);
+                let (text, sugs) = lower_message(m, suggestions.len());
                 if message.is_empty() {
                     message = text;
                 }
@@ -707,7 +707,10 @@ fn lower_antipattern(a: &rules::AntipatternElementType, phrases: &Phrases) -> Ve
 /// `<suggestion>`/`<match>` are rendered into the text as `\N` token backreferences (the runtime
 /// substitutes them with the matched surface) — otherwise the words are dropped and the message reads
 /// "Use  or, in informal register, ." (the mangled-message bug).
-fn lower_message(m: &rules::MessageElementType) -> (String, Vec<Suggestion>) {
+/// `first_index` is where the message's suggestions will start in the rule's suggestion list: each
+/// inline `<suggestion>` is written as a marker naming its index (see
+/// [`rlt_ir::MESSAGE_SUGGESTION_START`]), so the message can show what the suggestion renders.
+fn lower_message(m: &rules::MessageElementType, first_index: usize) -> (String, Vec<Suggestion>) {
     let mut text = m
         .text_before
         .as_ref()
@@ -717,7 +720,11 @@ fn lower_message(m: &rules::MessageElementType) -> (String, Vec<Suggestion>) {
     for item in &m.content {
         match item {
             rules::MessageElementTypeContent::Suggestion(s) => {
+                text.push(rlt_ir::MESSAGE_SUGGESTION_START);
+                text.push_str(&(first_index + suggestions.len()).to_string());
+                text.push(rlt_ir::MESSAGE_SUGGESTION_FALLBACK);
                 text.push_str(&inline_suggestion(&s.value));
+                text.push(rlt_ir::MESSAGE_SUGGESTION_END);
                 suggestions.push(lower_suggestion(&s.value, message_suppress));
                 if let Some(after) = &s.text_after {
                     text.push_str(&after.0);
