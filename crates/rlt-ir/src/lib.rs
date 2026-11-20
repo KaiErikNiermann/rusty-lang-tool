@@ -83,6 +83,13 @@ pub enum Case {
     Lower,
     /// Upper-case the first character only.
     StartUpper,
+    /// Lower-case the first character only (`startlower`).
+    StartLower,
+    /// Lower-case the whole token, then upper-case its first character (`firstupper`).
+    FirstUpper,
+    /// Follow the matched token's case (`preserve`): all upper-case if it is, a capital first
+    /// character if it has one, unchanged otherwise.
+    Preserve,
 }
 
 impl Rule {

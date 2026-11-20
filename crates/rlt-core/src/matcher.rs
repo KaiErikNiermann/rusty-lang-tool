@@ -380,7 +380,7 @@ fn render_regexp_suggestion(sug: &CompiledSuggestion, caps: &regex::Captures) ->
                     Some((re, rep)) => re.replace_all(surface, rep.as_str()).into_owned(),
                     None => surface.to_owned(),
                 };
-                out.push_str(&apply_case(&transformed, *case));
+                out.push_str(&apply_case(&transformed, *case, surface));
             }
         }
     }
@@ -827,9 +827,9 @@ fn render_suggestion(
                 let surface = captured_surface(*no, text, tokens, captures)?;
                 let transformed = match regex {
                     Some((re, rep)) => re.replace_all(&surface, rep.as_str()).into_owned(),
-                    None => surface,
+                    None => surface.clone(),
                 };
-                out.push_str(&apply_case(&transformed, *case));
+                out.push_str(&apply_case(&transformed, *case, &surface));
             }
         }
     }
@@ -837,12 +837,23 @@ fn render_suggestion(
 }
 
 /// Apply a [`Case`] transform to a copied token surface.
-fn apply_case(s: &str, case: Case) -> String {
+/// Apply a `case_conversion` to `s`; `sample` is the matched token's surface, which `Preserve`
+/// follows (LT's `CaseConversionHelper.convertCase`).
+fn apply_case(s: &str, case: Case, sample: &str) -> String {
     match case {
-        Case::Keep => s.to_owned(),
         Case::Upper => s.to_uppercase(),
         Case::Lower => s.to_lowercase(),
         Case::StartUpper => crate::capitalize_first(s),
+        Case::StartLower => crate::lowercase_first(s),
+        Case::FirstUpper => crate::capitalize_first(&s.to_lowercase()),
+        Case::Preserve if sample.chars().next().is_some_and(char::is_uppercase) => {
+            if sample.chars().any(char::is_lowercase) {
+                crate::capitalize_first(s)
+            } else {
+                s.to_uppercase()
+            }
+        }
+        Case::Keep | Case::Preserve => s.to_owned(),
     }
 }
 
@@ -1632,6 +1643,16 @@ mod tests {
             matcher.grammar_diagnostics("a-", &glued),
             [] as [Diagnostic; 0]
         );
+    }
+
+    #[test]
+    fn case_conversions_follow_lt() {
+        assert_eq!(apply_case("Haus", Case::StartLower, "Haus"), "haus");
+        assert_eq!(apply_case("hAUS", Case::FirstUpper, "x"), "Haus");
+        assert_eq!(apply_case("haus", Case::Preserve, "Baum"), "Haus");
+        assert_eq!(apply_case("haus", Case::Preserve, "BAUM"), "HAUS");
+        assert_eq!(apply_case("Haus", Case::Preserve, "baum"), "Haus");
+        assert_eq!(apply_case("", Case::StartLower, "x"), "");
     }
 
     #[test]

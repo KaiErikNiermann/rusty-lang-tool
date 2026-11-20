@@ -34,6 +34,15 @@ pub fn capitalize_first(s: &str) -> String {
     })
 }
 
+/// `s` with its first character lower-cased.
+#[must_use]
+pub fn lowercase_first(s: &str) -> String {
+    let mut chars = s.chars();
+    chars.next().map_or_else(String::new, |c| {
+        c.to_lowercase().collect::<String>() + chars.as_str()
+    })
+}
+
 /// Append `value` to `out` iff it is non-empty and not already present (order-preserving unique) —
 /// taggers yield the same POS/lemma across a word's analyses, and downstream wants each once.
 pub fn push_unique(out: &mut Vec<String>, value: &str) {

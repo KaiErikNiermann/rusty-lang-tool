@@ -787,13 +787,16 @@ fn push_text(parts: &mut Vec<SugPart>, text: &str) {
     }
 }
 
-/// Map LT's `case_conversion` to the IR [`Case`].
+/// Map LT's `case_conversion` to the IR [`Case`] (LT's `CaseConversionHelper.convertCase`).
 fn map_case(c: Option<&pattern::MatchCaseConversionType>) -> Case {
     use pattern::MatchCaseConversionType as M;
     match c {
         Some(M::Allupper) => Case::Upper,
         Some(M::Alllower) => Case::Lower,
-        Some(M::Startupper | M::Firstupper) => Case::StartUpper,
+        Some(M::Startupper) => Case::StartUpper,
+        Some(M::Startlower) => Case::StartLower,
+        Some(M::Firstupper) => Case::FirstUpper,
+        Some(M::Preserve) => Case::Preserve,
         _ => Case::Keep,
     }
 }
