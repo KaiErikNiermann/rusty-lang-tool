@@ -981,6 +981,11 @@ fn lower_exception(e: &pattern::ExceptionElementType) -> ExceptionPat {
             lt_schema::pattern::ExceptionScopeType::Next => ExceptionScope::Next,
             lt_schema::pattern::ExceptionScopeType::Previous => ExceptionScope::Previous,
         },
+        space_before: match e.spacebefore {
+            pattern::ExceptionSpacebeforeType::Yes => Some(true),
+            pattern::ExceptionSpacebeforeType::No => Some(false),
+            pattern::ExceptionSpacebeforeType::Ignore => None,
+        },
     }
 }
 

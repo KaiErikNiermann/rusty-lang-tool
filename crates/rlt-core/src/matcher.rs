@@ -494,7 +494,7 @@ fn compile_exception(e: &ExceptionPat) -> Option<TokenMatcher> {
         inflected: e.inflected,
         negate: e.negate,
         negate_pos: e.negate_pos,
-        space_before: None, // exceptions constrain the token's content, not its spacing
+        space_before: e.space_before,
         exceptions: Vec::new(),
         scope: e.scope,
     })
@@ -555,10 +555,10 @@ impl Matcher {
 
 impl Matcher {
     /// `scope="next"` exceptions of every constraint in this position, tested against `token`.
-    fn blocks_next(&self, token: &Token) -> bool {
+    fn blocks_next(&self, tokens: &[Token], k: usize) -> bool {
         match self {
-            Matcher::One(m) => m.blocks_next(token),
-            Matcher::Or(ms) | Matcher::And(ms) => ms.iter().any(|m| m.blocks_next(token)),
+            Matcher::One(m) => m.blocks_next(tokens, k),
+            Matcher::Or(ms) | Matcher::And(ms) => ms.iter().any(|m| m.blocks_next(tokens, k)),
         }
     }
 }
@@ -580,22 +580,25 @@ impl TokenMatcher {
         // against the token before it. `next` ones are applied by `match_elements`, see
         // `blocks_next`.
         !self.exceptions.iter().any(|e| match e.scope {
-            ExceptionScope::Current => e.exception_hits(token),
-            ExceptionScope::Previous => k > 0 && e.exception_hits(&tokens[k - 1]),
+            ExceptionScope::Current => e.exception_hits(tokens, k),
+            ExceptionScope::Previous => k > 0 && e.exception_hits(tokens, k - 1),
             ExceptionScope::Next => false,
         })
     }
 
-    fn exception_hits(&self, token: &Token) -> bool {
-        self.constraint(token)
+    /// Whether this matcher, used as an exception, hits `tokens[k]` (with its `spacebefore`).
+    fn exception_hits(&self, tokens: &[Token], k: usize) -> bool {
+        self.space_before
+            .is_none_or(|want| has_space_before(tokens, k) == want)
+            && self.constraint(&tokens[k])
     }
 
     /// Whether `token` matches one of this matcher's `scope="next"` exceptions (see
     /// `match_elements` for which tokens that is tested against).
-    fn blocks_next(&self, token: &Token) -> bool {
+    fn blocks_next(&self, tokens: &[Token], k: usize) -> bool {
         self.exceptions
             .iter()
-            .any(|e| e.scope == ExceptionScope::Next && e.exception_hits(token))
+            .any(|e| e.scope == ExceptionScope::Next && e.exception_hits(tokens, k))
     }
 
     /// The text and POS constraint with `negate`/`negate_pos`, ignoring exceptions. As in LT's
@@ -670,10 +673,9 @@ fn match_elements(
             break; // contiguous run broken — larger counts cannot match either
         }
         if count > 0
+            && ti + 1 < tokens.len()
             && prev_skip == 0
-            && tokens
-                .get(ti + 1)
-                .is_some_and(|t| elem.matcher.blocks_next(t))
+            && elem.matcher.blocks_next(tokens, ti + 1)
         {
             break; // depends only on `ti`, so larger counts are blocked too
         }
@@ -681,11 +683,7 @@ fn match_elements(
         let base = ti + count;
         let skip_end = (base + elem.skip).min(tokens.len());
         for next in base..=skip_end {
-            if elem.skip > 0
-                && tokens
-                    .get(next)
-                    .is_some_and(|t| elem.matcher.blocks_next(t))
-            {
+            if elem.skip > 0 && next < tokens.len() && elem.matcher.blocks_next(tokens, next) {
                 break;
             }
             if let Some(end) = match_elements(elements, ei + 1, tokens, next, captures) {
@@ -1595,6 +1593,43 @@ mod tests {
         let adj = analyze("red", &[("red", &["JJ"], &[])]);
         assert_eq!(
             matcher.grammar_diagnostics("red", &adj),
+            [] as [Diagnostic; 0]
+        );
+    }
+
+    #[test]
+    fn exception_spacebefore_constrains_the_tested_token() {
+        // `-` unless it is glued to the previous token: `<exception spacebefore="no">-</exception>`.
+        let matcher = IrMatcher::new(&[rule_of(
+            "DASH",
+            vec![Construct::Token(TokenPat {
+                text: Some("-".to_owned()),
+                exceptions: vec![rlt_ir::ExceptionPat {
+                    text: Some("-".to_owned()),
+                    space_before: Some(false),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })],
+        )]);
+        let spaced = plain("a - b");
+        assert_eq!(matcher.grammar_diagnostics("a - b", &spaced).len(), 1);
+        let glued = Analysis {
+            tokens: vec![
+                Token {
+                    text: "a".to_owned(),
+                    span: Span { start: 0, end: 1 },
+                    ..Default::default()
+                },
+                Token {
+                    text: "-".to_owned(),
+                    span: Span { start: 1, end: 2 },
+                    ..Default::default()
+                },
+            ],
+        };
+        assert_eq!(
+            matcher.grammar_diagnostics("a-", &glued),
             [] as [Diagnostic; 0]
         );
     }

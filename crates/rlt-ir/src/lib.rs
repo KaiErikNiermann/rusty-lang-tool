@@ -574,6 +574,9 @@ pub struct ExceptionPat {
     pub case_sensitive: bool,
     /// `scope`: which token the exception is checked against (`current`, `next` or `previous`).
     pub scope: ExceptionScope,
+    /// `spacebefore`: whether whitespace must (`Some(true)`) or must not (`Some(false)`) precede the
+    /// token the exception is checked against; `None` (LT's `ignore`, the default) places none.
+    pub space_before: Option<bool>,
 }
 
 /// A disambiguation rule: a pattern (with an optional `<marker>` delimiting the affected tokens) plus
