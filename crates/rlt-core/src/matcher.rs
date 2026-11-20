@@ -289,7 +289,10 @@ fn compile_suggestion(s: &IrSuggestion) -> Option<CompiledSuggestion> {
                 transform,
             } => {
                 let regex = match transform {
-                    Some((m, r)) => Some((Regex::new(m).ok()?, r.clone())),
+                    Some((m, r)) => Some((
+                        Regex::new(&crate::java_regex::translate(m)).ok()?,
+                        r.clone(),
+                    )),
                     None => None,
                 };
                 parts.push(CompiledPart::Token {
@@ -360,7 +363,7 @@ fn compile_regexp_rule(r: &Rule) -> Option<CompiledRegexpRule> {
     } else {
         format!("(?i){pattern}")
     };
-    let regex = Regex::new(&src).ok()?;
+    let regex = Regex::new(&crate::java_regex::translate(&src)).ok()?;
     let suggestions = compile_suggestions(&r.suggestions)?;
     Some(CompiledRegexpRule {
         id: r.id.clone(),
@@ -532,6 +535,7 @@ fn compile_constraint(
 /// Compile a whole-token-anchored regex (optionally case-insensitive). `None` on regex error.
 fn anchored(pattern: &str, case_insensitive: bool) -> Option<Regex> {
     let prefix = if case_insensitive { "(?i)" } else { "" };
+    let pattern = crate::java_regex::translate(pattern);
     Regex::new(&format!("{prefix}^(?:{pattern})$")).ok()
 }
 

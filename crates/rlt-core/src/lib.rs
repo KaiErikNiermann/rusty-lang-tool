@@ -16,6 +16,7 @@
 #![forbid(unsafe_code)]
 
 mod disambig;
+mod java_regex;
 mod matcher;
 mod spell;
 #[doc(hidden)]
