@@ -58,12 +58,14 @@ impl CompiledSynth {
         suppress: bool,
     ) -> Option<Self> {
         let translated = java_regex::translate(postag);
+        let tag_find = Regex::new(&translated).ok()?;
         Some(Self {
             postag: postag.to_owned(),
             regexp: postag_regexp || lemma.is_some(),
             tag_full: Regex::new(&format!("^(?:{translated})$")).ok()?,
-            tag_find: Regex::new(&translated).ok()?,
-            replace: postag_replace.map(java_regex::translate_replacement),
+            replace: postag_replace
+                .map(|r| java_regex::translate_replacement(r, tag_find.captures_len() - 1)),
+            tag_find,
             lemma: lemma.map(str::to_owned),
             suppress,
         })
@@ -325,6 +327,22 @@ mod tests {
         let c = CompiledSynth::new("VER:(.*)", false, Some("X:$1"), Some("sein"), false).unwrap();
         let t = token("Hund", &["SUB:NOM:SIN:MAS"], &["Hund"]);
         assert_eq!(c.static_target_tag(&t.tags), "VER:(.*)");
+    }
+
+    #[test]
+    fn a_group_reference_followed_by_a_digit_is_group_one_and_a_digit() {
+        // SUBJECT_VERB_AGREEMENT: `VER:$12:PLU:$2` over `VER:(.*)2:SIN:(.+)` has two groups, so
+        // `$12` is group 1 followed by `2` (Java), not a twelfth group.
+        let c = CompiledSynth::new(
+            "VER:(.*)2:SIN:(.+)",
+            true,
+            Some("VER:$12:PLU:$2"),
+            None,
+            false,
+        )
+        .unwrap();
+        let t = token("fragst", &["VER:2:SIN:PRÄ:NON"], &["fragen"]);
+        assert_eq!(c.target_tag(&t.tags), "VER:2:PLU:PRÄ:NON");
     }
 
     #[test]

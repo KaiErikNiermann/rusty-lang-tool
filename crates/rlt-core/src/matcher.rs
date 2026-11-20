@@ -402,10 +402,11 @@ fn compile_token_part(
     transform: Option<&(String, String)>,
 ) -> Option<CompiledPart> {
     let regex = match transform {
-        Some((m, r)) => Some((
-            Regex::new(&crate::java_regex::translate(m)).ok()?,
-            crate::java_regex::translate_replacement(r),
-        )),
+        Some((m, r)) => {
+            let re = Regex::new(&crate::java_regex::translate(m)).ok()?;
+            let rep = crate::java_regex::translate_replacement(r, re.captures_len() - 1);
+            Some((re, rep))
+        }
         None => None,
     };
     Some(CompiledPart::Token { no, case, regex })

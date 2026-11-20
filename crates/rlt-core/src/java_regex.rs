@@ -52,12 +52,15 @@ pub fn translate(src: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
-/// `rep`, a Java `Matcher.replaceAll` replacement, in the `regex` crate's replacement syntax.
+/// `rep`, a Java `Matcher.replaceAll` replacement for a pattern with `groups` capture groups, in the
+/// `regex` crate's replacement syntax.
 ///
 /// Java reads `$1s` as group 1 followed by `s`; `regex` reads it as a group named `1s` and inserts
-/// nothing. Java's `\x` is a literal `x`; a literal `$` is `$$` in `regex`.
+/// nothing. Java's `\x` is a literal `x`; a literal `$` is `$$` in `regex`. Further digits after
+/// `$` extend the group number only while it stays a group of the pattern (`Matcher.appendReplacement`,
+/// JDK 21): `$12` is group 12 for a pattern with twelve groups, else group 1 followed by `2`.
 #[must_use]
-pub fn translate_replacement(rep: &str) -> String {
+pub fn translate_replacement(rep: &str, groups: usize) -> String {
     let mut out = String::with_capacity(rep.len() + 4);
     let mut chars = rep.chars().peekable();
     while let Some(c) = chars.next() {
@@ -68,11 +71,16 @@ pub fn translate_replacement(rep: &str) -> String {
                 None => out.push('\\'),
             },
             '$' if chars.peek().is_some_and(char::is_ascii_digit) => {
-                out.push_str("${");
-                while let Some(d) = chars.next_if(char::is_ascii_digit) {
-                    out.push(d);
+                let mut group = chars.next().and_then(|d| d.to_digit(10)).unwrap_or(0) as usize;
+                while let Some(d) = chars.peek().and_then(|d| d.to_digit(10)) {
+                    let longer = group * 10 + d as usize;
+                    if longer > groups {
+                        break;
+                    }
+                    group = longer;
+                    chars.next();
                 }
-                out.push('}');
+                let _ = write!(out, "${{{group}}}");
             }
             '$' if chars.peek() == Some(&'{') => out.push('$'), // `${name}` reads the same
             '$' => out.push_str("$$"),
@@ -126,11 +134,20 @@ mod tests {
     #[test]
     fn replacements_keep_java_group_boundaries() {
         use super::translate_replacement as rep;
-        assert_eq!(rep("$1s"), "${1}s");
-        assert_eq!(rep("Grü$1e"), "Grü${1}e");
-        assert_eq!(rep(r"\$$1 \\x"), r"$$${1} \x");
+        assert_eq!(rep("$1s", 1), "${1}s");
+        assert_eq!(rep("Grü$1e", 1), "Grü${1}e");
+        assert_eq!(rep(r"\$$1 \\x", 1), r"$$${1} \x");
         let re = regex::Regex::new("(a)").unwrap();
-        assert_eq!(re.replace_all("a", rep("$1x").as_str()), "ax");
+        assert_eq!(re.replace_all("a", rep("$1x", 1).as_str()), "ax");
+    }
+
+    #[test]
+    fn a_longer_group_number_is_read_only_while_the_group_exists() {
+        use super::translate_replacement as rep;
+        // LT's `VER:$12:PLU:$2` for a pattern with two groups: group 1, then the digit 2.
+        assert_eq!(rep("VER:$12:PLU:$2", 2), "VER:${1}2:PLU:${2}");
+        assert_eq!(rep("$12", 12), "${12}");
+        assert_eq!(rep("$10", 3), "${1}0");
     }
 
     #[test]
