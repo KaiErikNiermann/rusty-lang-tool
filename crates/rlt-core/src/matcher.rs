@@ -87,7 +87,10 @@ impl IrMatcher {
     fn diagnostics(&self, text: &str, tokens: &[Token]) -> Vec<Diagnostic> {
         let mut out: Vec<Diagnostic> = Vec::new();
         // Lower-case each surface once for the first-literal index probe, not once per start.
-        let lower: Vec<String> = tokens.iter().map(|t| t.text.to_ascii_lowercase()).collect();
+        let lower: Vec<String> = tokens
+            .iter()
+            .map(|t| fold_case(&t.text).collect())
+            .collect();
         // Reused across every (start, rule) pair so the capture slots and failure marks are not
         // reallocated for each of the thousands of rule attempts per token.
         let mut scratch = MatchScratch::default();
@@ -157,7 +160,7 @@ enum CompiledPart {
 }
 
 impl CompiledRule {
-    /// The first element's literal lower-cased word, if it is an un-negated literal-text token —
+    /// The first element's literal case-folded word, if it is an un-negated literal-text token —
     /// used to index the rule so it is only attempted where that word occurs.
     fn first_literal(&self) -> Option<String> {
         let Matcher::One(m) = &self.elements.first()?.matcher else {
@@ -165,7 +168,7 @@ impl CompiledRule {
         };
         match (&m.text, m.negate, &m.postag) {
             (Some(TextMatch::Literal { value, .. }), false, None) if !m.inflected => {
-                Some(value.to_ascii_lowercase())
+                Some(fold_case(value).collect())
             }
             _ => None,
         }
@@ -643,13 +646,21 @@ impl TokenMatcher {
     }
 }
 
-/// String equality, optionally case-insensitive (ASCII-fold).
+/// String equality, optionally case-insensitive. LT compares literals with Java's
+/// `equalsIgnoreCase` (`StringMatcher`, v6.8), which folds every letter, not only ASCII: "Über"
+/// equals "über", and Cyrillic and Greek fold too.
 fn eq(a: &str, b: &str, case_sensitive: bool) -> bool {
     if case_sensitive {
         a == b
     } else {
-        a.eq_ignore_ascii_case(b)
+        fold_case(a).eq(fold_case(b))
     }
+}
+
+/// `s` lower-cased character by character: the key for case-insensitive comparison and for the
+/// first-literal index, so that two words [`eq`] calls equal always share an index key.
+fn fold_case(s: &str) -> impl Iterator<Item = char> + '_ {
+    s.chars().flat_map(char::to_lowercase)
 }
 
 /// Scratch state for matching one pattern from one start token: each element's captured token
@@ -1880,6 +1891,19 @@ mod tests {
             "{} calls, more than the memoized bound {bound}",
             scratch.steps
         );
+    }
+
+    #[test]
+    fn case_insensitive_literals_fold_non_ascii_letters() {
+        let rule = |word: &str| rule_of("FOLD", vec![lit(word)]);
+        let matcher = IrMatcher::new(&[rule("über"), rule("мама")]);
+        for text in ["Über", "МАМА"] {
+            assert_eq!(
+                matcher.grammar_diagnostics(text, &plain(text)).len(),
+                1,
+                "{text}"
+            );
+        }
     }
 
     #[test]
