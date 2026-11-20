@@ -123,6 +123,9 @@ jobs:
 
   deploy:
     needs: build
+    # Without its own status check this job inherits the skip of `changes` (push-only, so skipped
+    # on workflow_run) through `build`, and the release-chained deploy never publishes.
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
