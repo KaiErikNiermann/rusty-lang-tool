@@ -569,6 +569,26 @@ fn lower_phrase(p: &pattern::PhraseElementType) -> Vec<Construct> {
     out
 }
 
+/// LT's "smart" `<regexp>` mode (the default): a space outside `[...]` matches any run of
+/// whitespace, no-break spaces included (`PatternRuleHandler.replaceSpacesInRegex`, v6.8).
+fn smart_regexp_spaces(regex: &str) -> String {
+    let mut out = String::with_capacity(regex.len());
+    let mut in_bracket = false;
+    for c in regex.chars() {
+        match c {
+            '[' => in_bracket = true,
+            ']' => in_bracket = false,
+            _ => {}
+        }
+        if c == ' ' && !in_bracket {
+            out.push_str("(?:[\\s\u{00A0}\u{202F}]+)");
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Whether a `<category>` is enabled: LT disables every rule of a `default="off"` category
 /// (`JLanguageTool`'s `isCategoryDisabled`, v6.8).
 fn category_enabled(cat: &rules::CategoryElementType) -> bool {
@@ -623,7 +643,10 @@ fn lower_rule(
             }),
             rules::RuleElementTypeContent::Regexp(re) => {
                 pattern.push(Construct::Regexp {
-                    pattern: re.content.clone(),
+                    pattern: match re.type_ {
+                        rules::RegexpType::Smart => smart_regexp_spaces(&re.content),
+                        rules::RegexpType::Exact => re.content.clone(),
+                    },
                     mark: re.mark.and_then(|m| usize::try_from(m).ok()),
                     case_sensitive: re.case_sensitive.as_ref().is_some_and(is_yes),
                 });
@@ -1477,6 +1500,14 @@ mod tests {
                 "{code}: full ids carry the [n] suffix"
             );
         }
+    }
+
+    #[test]
+    fn smart_regexp_spaces_match_any_whitespace_outside_brackets() {
+        assert_eq!(
+            super::smart_regexp_spaces("a b[ ]c"),
+            "a(?:[\\s\u{00A0}\u{202F}]+)b[ ]c"
+        );
     }
 
     /// LT's case-sensitivity precedence (`XMLRuleHandler.finalizeTokens`/`finalizeExceptions`).
