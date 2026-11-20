@@ -396,7 +396,10 @@ fn split_elision(token: Token, clitics: &[&str], out: &mut Vec<Token>) {
         let after = p + 1; // ' is one byte
         if p > 0 && after < token.text.len() {
             let prefix = &token.text[..after];
-            if clitics.iter().any(|c| c.eq_ignore_ascii_case(prefix)) {
+            if clitics
+                .iter()
+                .any(|c| rlt_core::fold_case(c).eq(rlt_core::fold_case(prefix)))
+            {
                 let start = token.span.start;
                 out.push(Token {
                     text: prefix.to_owned(),
@@ -528,6 +531,8 @@ mod tests {
         );
         assert_eq!(split("qu'il", rlt_lang::FR.elision).len(), 2);
         assert_eq!(split("jusqu'à", rlt_lang::FR.elision)[0].2, "jusqu'");
+        // Case folds for every letter: a sentence-initial `Ç'a` matches the clitic `ç'`.
+        assert_eq!(split("Ç'a", rlt_lang::FR.elision)[0].2, "Ç'");
         // `aujourd'hui` is a whole word (prefix `aujourd'` is not a clitic) — must NOT split.
         assert_eq!(split("aujourd'hui", rlt_lang::FR.elision).len(), 1);
         // Italian: dell'arte splits; the truncation `po'` (terminal apostrophe) stays whole.

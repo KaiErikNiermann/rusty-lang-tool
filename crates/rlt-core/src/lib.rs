@@ -35,6 +35,12 @@ pub fn capitalize_first(s: &str) -> String {
     })
 }
 
+/// `s` lower-cased character by character, the key for case-insensitive comparison of text in any
+/// script (ASCII-only folding leaves "Ü", "Ç" or Cyrillic capitals alone).
+pub fn fold_case(s: &str) -> impl Iterator<Item = char> + '_ {
+    s.chars().flat_map(char::to_lowercase)
+}
+
 /// `s` with its first character lower-cased.
 #[must_use]
 pub fn lowercase_first(s: &str) -> String {

@@ -89,7 +89,7 @@ impl IrMatcher {
         // Lower-case each surface once for the first-literal index probe, not once per start.
         let lower: Vec<String> = tokens
             .iter()
-            .map(|t| fold_case(&t.text).collect())
+            .map(|t| crate::fold_case(&t.text).collect())
             .collect();
         // Reused across every (start, rule) pair so the capture slots and failure marks are not
         // reallocated for each of the thousands of rule attempts per token.
@@ -168,7 +168,7 @@ impl CompiledRule {
         };
         match (&m.text, m.negate, &m.postag) {
             (Some(TextMatch::Literal { value, .. }), false, None) if !m.inflected => {
-                Some(fold_case(value).collect())
+                Some(crate::fold_case(value).collect())
             }
             _ => None,
         }
@@ -653,14 +653,8 @@ fn eq(a: &str, b: &str, case_sensitive: bool) -> bool {
     if case_sensitive {
         a == b
     } else {
-        fold_case(a).eq(fold_case(b))
+        crate::fold_case(a).eq(crate::fold_case(b))
     }
-}
-
-/// `s` lower-cased character by character: the key for case-insensitive comparison and for the
-/// first-literal index, so that two words [`eq`] calls equal always share an index key.
-fn fold_case(s: &str) -> impl Iterator<Item = char> + '_ {
-    s.chars().flat_map(char::to_lowercase)
 }
 
 /// Scratch state for matching one pattern from one start token: each element's captured token
