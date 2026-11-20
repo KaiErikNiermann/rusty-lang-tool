@@ -53,7 +53,7 @@ impl IrMatcher {
     /// (`<match postag=…>`) are rendered with them, otherwise they behave as in [`IrMatcher::new`].
     #[must_use]
     pub fn with_synthesizer(rules: &[Rule], synthesizer: Option<Arc<dyn Synthesizer>>) -> Self {
-        let mode = SynthMode::of(synthesizer.is_some());
+        let synthesis = synthesizer.is_some();
         let mut compiled = Vec::new();
         let mut by_first_literal: HashMap<String, Vec<usize>> = HashMap::new();
         let mut general = Vec::new();
@@ -66,7 +66,7 @@ impl IrMatcher {
                 regexp_rules.extend(compile_regexp_rule(r));
                 continue;
             }
-            let Some(rule) = compile_rule(r, mode) else {
+            let Some(rule) = compile_rule(r, synthesis) else {
                 continue;
             };
             let idx = compiled.len();
@@ -275,10 +275,10 @@ impl TagMatch {
 
 /// Compile a rule, or `None` if it cannot be matched faithfully (unsupported construct, no
 /// suggestions, empty pattern, or an uncompilable main regex).
-fn compile_rule(r: &Rule, mode: SynthMode) -> Option<CompiledRule> {
+fn compile_rule(r: &Rule, synthesis: bool) -> Option<CompiledRule> {
     // Compile suggestions up front (pre-compiling regex transforms); a rule with no renderable
     // suggestion cannot produce a correction, so skip it.
-    let suggestions = compile_suggestions(&r.suggestions, mode)?;
+    let suggestions = compile_suggestions(&r.suggestions, synthesis)?;
     let mut elements = Vec::new();
     let mut marker_start = None;
     let mut marker = None;
@@ -314,42 +314,23 @@ fn compile_rule(r: &Rule, mode: SynthMode) -> Option<CompiledRule> {
     })
 }
 
-/// Whether a rule's `<match postag=…>` parts can be synthesized.
-#[derive(Clone, Copy)]
-enum SynthMode {
-    /// The matcher has no synthesizer (or the rule matches over text, not tokens, so there are no
-    /// tags to synthesize from).
-    Absent,
-    /// The matcher has a synthesizer.
-    Available,
-}
-
-impl SynthMode {
-    fn of(available: bool) -> Self {
-        if available {
-            Self::Available
-        } else {
-            Self::Absent
-        }
-    }
-}
-
 /// Pre-compile a rule's suggestion templates, or `None` if none render — a rule with no renderable
 /// correction cannot produce a fix, so the caller skips it.
 fn compile_suggestions(
     suggestions: &[IrSuggestion],
-    mode: SynthMode,
+    synthesis: bool,
 ) -> Option<Vec<CompiledSuggestion>> {
     let compiled: Vec<CompiledSuggestion> = suggestions
         .iter()
-        .filter_map(|s| compile_suggestion(s, mode))
+        .filter_map(|s| compile_suggestion(s, synthesis))
         .collect();
     (!compiled.is_empty()).then_some(compiled)
 }
 
 /// Pre-compile a suggestion's parts (compiling any `regexp_replace`); `None` if a transform regex
 /// or an unknown part makes it unrenderable.
-fn compile_suggestion(s: &IrSuggestion, mode: SynthMode) -> Option<CompiledSuggestion> {
+/// `synthesis` says whether the matcher has a synthesizer for `<match postag=…>` parts.
+fn compile_suggestion(s: &IrSuggestion, synthesis: bool) -> Option<CompiledSuggestion> {
     let mut parts = Vec::new();
     for p in &s.parts {
         match p {
@@ -370,25 +351,27 @@ fn compile_suggestion(s: &IrSuggestion, mode: SynthMode) -> Option<CompiledSugge
                 postag_replace,
                 lemma,
                 suppress_misspelled,
-            } => match mode {
-                SynthMode::Available => parts.push(CompiledPart::Synth {
-                    no: *no,
-                    case: *case,
-                    synth: CompiledSynth::new(
-                        postag,
-                        *postag_regexp,
-                        postag_replace.as_deref(),
-                        lemma.as_deref(),
-                        *suppress_misspelled,
-                    )?,
-                }),
-                // Without a synthesizer LT copies the matched token (`MatchState.toFinalString`,
-                // line 232); this matcher always dropped a suggestion that needed `postag_replace`.
-                SynthMode::Absent if postag_replace.is_some() => return None,
-                SynthMode::Absent => {
+            } => {
+                if synthesis {
+                    parts.push(CompiledPart::Synth {
+                        no: *no,
+                        case: *case,
+                        synth: CompiledSynth::new(
+                            postag,
+                            *postag_regexp,
+                            postag_replace.as_deref(),
+                            lemma.as_deref(),
+                            *suppress_misspelled,
+                        )?,
+                    });
+                } else if postag_replace.is_some() {
+                    // Without a synthesizer LT copies the matched token (`MatchState.toFinalString`,
+                    // line 232); this matcher always dropped a suggestion that needed `postag_replace`.
+                    return None;
+                } else {
                     parts.push(compile_token_part(*no, *case, transform.as_ref())?);
                 }
-            },
+            }
             _ => return None,
         }
     }
@@ -470,7 +453,7 @@ fn compile_regexp_rule(r: &Rule) -> Option<CompiledRegexpRule> {
     };
     let regex = Regex::new(&crate::java_regex::translate(&src)).ok()?;
     // Capture groups carry no tags, so there is nothing to synthesize from.
-    let suggestions = compile_suggestions(&r.suggestions, SynthMode::Absent)?;
+    let suggestions = compile_suggestions(&r.suggestions, false)?;
     Some(CompiledRegexpRule {
         id: r.id.clone(),
         message: r.message.clone(),
@@ -494,7 +477,7 @@ fn render_regexp_suggestion(sug: &CompiledSuggestion, caps: &regex::Captures) ->
                 };
                 out.push_str(&apply_case(&transformed, *case, surface));
             }
-            // Never compiled for a rule matched over text (`SynthMode::Absent`).
+            // Never compiled for a rule matched over text (compiled without synthesis).
             CompiledPart::Synth { .. } => return None,
         }
     }
