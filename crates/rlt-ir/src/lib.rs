@@ -496,7 +496,8 @@ pub struct TokenPat {
     pub regexp: bool,
     /// `postag_regexp="yes"`: [`postag`](Self::postag) is a regular expression, not a literal tag.
     pub postag_regexp: bool,
-    /// `negate="yes"`: the token matches when it does *not* satisfy the constraint.
+    /// `negate="yes"`: the token matches when its text does *not* match [`text`](Self::text); the
+    /// POS constraint still has to hold. A negated token without text matches nothing (as in LT).
     pub negate: bool,
     /// `inflected="yes"`: match any inflected form of [`text`](Self::text) as a lemma.
     pub inflected: bool,
@@ -562,7 +563,7 @@ pub struct ExceptionPat {
     pub postag_regexp: bool,
     /// `inflected="yes"`: match [`text`](Self::text) against the candidate's lemmas.
     pub inflected: bool,
-    /// `negate="yes"`: the exception is satisfied when it does *not* match.
+    /// `negate="yes"`: the exception's text test is inverted; its POS constraint still has to hold.
     pub negate: bool,
     /// `case_sensitive="yes"`: match text case-sensitively.
     pub case_sensitive: bool,

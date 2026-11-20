@@ -569,11 +569,7 @@ impl TokenMatcher {
             }
         }
         let token = &tokens[k];
-        let mut hit = self.constraint(token);
-        if self.negate {
-            hit = !hit;
-        }
-        if !hit {
+        if !self.constraint(token) {
             return false;
         }
         // Disqualified if any exception matches: `current` ones against this token, `previous` ones
@@ -587,8 +583,7 @@ impl TokenMatcher {
     }
 
     fn exception_hits(&self, token: &Token) -> bool {
-        let m = self.constraint(token);
-        if self.negate { !m } else { m }
+        self.constraint(token)
     }
 
     /// Whether `token` matches one of this matcher's `scope="next"` exceptions (see
@@ -599,7 +594,10 @@ impl TokenMatcher {
             .any(|e| e.scope == ExceptionScope::Next && e.exception_hits(token))
     }
 
-    /// The raw text-AND-POS constraint, ignoring negation/exceptions.
+    /// The text and POS constraint with `negate`, ignoring exceptions. As in LT's
+    /// `PatternToken.isMatched`, `negate` flips only the text test,
+    /// $(\text{text\_ok} \oplus \text{negate}) \land \text{tag\_ok}$, and a negated token without
+    /// text matches nothing.
     fn constraint(&self, token: &Token) -> bool {
         // LT's `PatternToken.getTestToken`: `inflected` tests the lemma, falling back to the surface
         // form for a reading without one; literal and regex text alike.
@@ -609,13 +607,16 @@ impl TokenMatcher {
         } else {
             surface
         };
+        // LT evaluates each reading on its own, so a negated lemma test holds if any lemma differs.
         let text_ok = match &self.text {
-            None => true,
-            Some(TextMatch::Regex(re)) => subjects.iter().any(|s| re.is_match(s)),
+            None => !self.negate,
+            Some(TextMatch::Regex(re)) => subjects.iter().any(|s| re.is_match(s) != self.negate),
             Some(TextMatch::Literal {
                 value,
                 case_sensitive,
-            }) => subjects.iter().any(|s| eq(s, value, *case_sensitive)),
+            }) => subjects
+                .iter()
+                .any(|s| eq(s, value, *case_sensitive) != self.negate),
         };
         let tag_ok = match &self.postag {
             None => true,
@@ -1465,6 +1466,32 @@ mod tests {
         let other_lemma = analyze("have", &[("have", &["NN"], &["haves"])]);
         assert_eq!(
             matcher.grammar_diagnostics("have", &other_lemma),
+            [] as [Diagnostic; 0]
+        );
+    }
+
+    #[test]
+    fn negate_inverts_only_the_text_test() {
+        // LT: `<token negate="yes" postag="NN">run</token>` is a noun other than "run".
+        let matcher = IrMatcher::new(&[rule_of(
+            "NEG",
+            vec![Construct::Token(TokenPat {
+                text: Some("run".to_owned()),
+                postag: Some("NN".to_owned()),
+                negate: true,
+                ..Default::default()
+            })],
+        )]);
+        let noun = analyze("walk", &[("walk", &["NN"], &[])]);
+        assert_eq!(matcher.grammar_diagnostics("walk", &noun).len(), 1);
+        let verb = analyze("walk", &[("walk", &["VB"], &[])]);
+        assert_eq!(
+            matcher.grammar_diagnostics("walk", &verb),
+            [] as [Diagnostic; 0]
+        );
+        let run = analyze("run", &[("run", &["NN"], &[])]);
+        assert_eq!(
+            matcher.grammar_diagnostics("run", &run),
             [] as [Diagnostic; 0]
         );
     }
