@@ -88,9 +88,9 @@ impl IrMatcher {
         let mut out: Vec<Diagnostic> = Vec::new();
         // Lower-case each surface once for the first-literal index probe, not once per start.
         let lower: Vec<String> = tokens.iter().map(|t| t.text.to_ascii_lowercase()).collect();
-        // Reused across every (start, rule) pair so the per-element capture slots are not
+        // Reused across every (start, rule) pair so the capture slots and failure marks are not
         // reallocated for each of the thousands of rule attempts per token.
-        let mut captures: Vec<Option<(usize, usize)>> = Vec::new();
+        let mut scratch = MatchScratch::default();
         for (start, key) in lower.iter().enumerate() {
             let literal = self
                 .by_first_literal
@@ -98,13 +98,12 @@ impl IrMatcher {
                 .map_or(&[][..], Vec::as_slice);
             for &ri in self.general.iter().chain(literal) {
                 let rule = &self.rules[ri];
-                captures.clear();
-                captures.resize(rule.elements.len(), None);
-                if let Some(end) = match_elements(&rule.elements, 0, tokens, start, &mut captures) {
+                scratch.reset(&rule.elements, tokens, start);
+                if let Some(end) = match_elements(&rule.elements, 0, tokens, start, &mut scratch) {
                     if suppressed(rule, tokens, start, end) {
                         continue;
                     }
-                    if let Some(d) = render(rule, text, tokens, start, end, &captures) {
+                    if let Some(d) = render(rule, text, tokens, start, end, &scratch.captures) {
                         out.push(d);
                     }
                 }
@@ -653,17 +652,84 @@ fn eq(a: &str, b: &str, case_sensitive: bool) -> bool {
     }
 }
 
+/// Scratch state for matching one pattern from one start token: each element's captured token
+/// range, and the `(element, token)` pairs already known not to lead to a match.
+///
+/// Whether `elements[ei..]` can match from token `ti` depends only on `ei` and `ti` (elements test
+/// token content, never what earlier elements captured), so a pair that failed once fails again.
+/// Remembering failures bounds a match attempt to (elements × reachable tokens) calls; without it,
+/// `k` skipping elements cost on the order of `n^k` on text where each keeps matching.
+#[derive(Default)]
+struct MatchScratch {
+    captures: Vec<Option<(usize, usize)>>,
+    /// `failed[ei * width + (ti - start)] == stamp` marks a known failure for this attempt.
+    failed: Vec<u32>,
+    stamp: u32,
+    start: usize,
+    width: usize,
+    /// `match_elements` calls made, for tests that bound the work without timing it.
+    #[cfg(test)]
+    steps: u64,
+}
+
+impl MatchScratch {
+    /// Prepare to match `elements` from token `start` of `tokens`.
+    fn reset(&mut self, elements: &[Elem], tokens: &[Token], start: usize) {
+        self.captures.clear();
+        self.captures.resize(elements.len(), None);
+        // The furthest token a match can reach: every element at its longest run and skip.
+        let reach: usize = elements.iter().map(|e| e.max + e.skip).sum();
+        self.start = start;
+        self.width = reach.min(tokens.len().saturating_sub(start)) + 1;
+        let needed = elements.len() * self.width;
+        if self.failed.len() < needed {
+            self.failed.resize(needed, 0);
+        }
+        // A new stamp invalidates every earlier mark without clearing the buffer.
+        self.stamp = self.stamp.wrapping_add(1);
+        if self.stamp == 0 {
+            self.failed.fill(0);
+            self.stamp = 1;
+        }
+    }
+
+    fn slot(&self, ei: usize, ti: usize) -> Option<usize> {
+        let rel = ti.checked_sub(self.start)?;
+        (rel < self.width).then_some(ei * self.width + rel)
+    }
+
+    fn known_failure(&self, ei: usize, ti: usize) -> bool {
+        self.slot(ei, ti)
+            .is_some_and(|i| self.failed[i] == self.stamp)
+    }
+
+    fn mark_failure(&mut self, ei: usize, ti: usize) {
+        if let Some(i) = self.slot(ei, ti) {
+            self.failed[i] = self.stamp;
+        }
+    }
+}
+
 /// Backtracking match of `elements[ei..]` against `tokens[ti..]`; returns the end token index on
-/// success and records each element's captured token range in `captures`.
+/// success and records each element's captured token range in `scratch.captures`. Pairs that
+/// failed before in this attempt are skipped (see [`MatchScratch`]); the first match found is the
+/// same as without that, since only failures are remembered.
 fn match_elements(
     elements: &[Elem],
     ei: usize,
     tokens: &[Token],
     ti: usize,
-    captures: &mut [Option<(usize, usize)>],
+    scratch: &mut MatchScratch,
 ) -> Option<usize> {
+    #[cfg(test)]
+    {
+        scratch.steps += 1;
+    }
     if ei == elements.len() {
         return Some(ti);
+    }
+    if scratch.known_failure(ei, ti) {
+        return None;
     }
     let elem = &elements[ei];
     let remaining = tokens.len() - ti;
@@ -686,19 +752,20 @@ fn match_elements(
         {
             break; // depends only on `ti`, so larger counts are blocked too
         }
-        captures[ei] = (count > 0).then_some((ti, ti + count));
+        scratch.captures[ei] = (count > 0).then_some((ti, ti + count));
         let base = ti + count;
         let skip_end = (base + elem.skip).min(tokens.len());
         for next in base..=skip_end {
             if elem.skip > 0 && next < tokens.len() && elem.matcher.blocks_next(tokens, next) {
                 break;
             }
-            if let Some(end) = match_elements(elements, ei + 1, tokens, next, captures) {
+            if let Some(end) = match_elements(elements, ei + 1, tokens, next, scratch) {
                 return Some(end);
             }
         }
     }
-    captures[ei] = None;
+    scratch.captures[ei] = None;
+    scratch.mark_failure(ei, ti);
     None
 }
 
@@ -710,13 +777,13 @@ fn antipatterns_suppress(
     start: usize,
     end: usize,
 ) -> bool {
+    let mut scratch = MatchScratch::default();
     antipatterns.iter().any(|ap| {
-        let mut caps = vec![None; ap.len()];
         // Overlap requires the antipattern to start before the rule match ends.
         (0..end).any(|from| {
-            caps.fill(None);
+            scratch.reset(ap, tokens, from);
             matches!(
-                match_elements(ap, 0, tokens, from, &mut caps),
+                match_elements(ap, 0, tokens, from, &mut scratch),
                 Some(stop) if stop > from && start < stop
             )
         })
@@ -1018,16 +1085,17 @@ impl Disambiguator {
 /// marked tokens. Matches are collected before mutating so the scan can borrow `tokens` immutably.
 fn apply_disambig_rule(rule: &CompiledDisambig, tokens: &mut [Token]) {
     let mut hits: Vec<(usize, usize)> = Vec::new();
-    let mut caps = vec![None; rule.elements.len()];
+    let mut scratch = MatchScratch::default();
     let mut ti = 0;
     while ti < tokens.len() {
-        caps.fill(None);
-        match match_elements(&rule.elements, 0, tokens, ti, &mut caps) {
+        scratch.reset(&rule.elements, tokens, ti);
+        match match_elements(&rule.elements, 0, tokens, ti, &mut scratch) {
             Some(end) if end > ti => {
                 if antipatterns_suppress(&rule.antipatterns, tokens, ti, end) {
                     ti += 1; // suppressed here — let a later, non-excluded position match
                 } else {
-                    if let Some(range) = marker_token_range(rule.marker, &caps, ti, end) {
+                    if let Some(range) = marker_token_range(rule.marker, &scratch.captures, ti, end)
+                    {
                         hits.push(range);
                     }
                     ti = end; // non-overlapping: resume past this match
@@ -1775,6 +1843,43 @@ mod tests {
             }]),
         )]);
         assert_eq!(check(&converting, "Viele Erfolg"), "viele");
+    }
+
+    /// Skip patterns must not blow up: four `skip="-1"` wildcards before a token that never
+    /// matches took `n^4` steps without failure memoization (8.5 s at 200 tokens). With it, each
+    /// start costs at most elements x reachable tokens x (skip width + 1) calls.
+    #[test]
+    fn skip_patterns_do_bounded_work() {
+        let pattern: Vec<Construct> = (0..4)
+            .map(|_| {
+                Construct::Token(TokenPat {
+                    text: Some("a".to_owned()),
+                    skip: Some(-1),
+                    ..Default::default()
+                })
+            })
+            .chain([lit("z")])
+            .collect();
+        let elements = compile_elements(&pattern).expect("compiles");
+        let n = 300;
+        let words = vec!["a"; n].join(" ");
+        let tokens = plain(&words).tokens;
+        let mut scratch = MatchScratch::default();
+        for start in 0..n {
+            scratch.reset(&elements, &tokens, start);
+            assert_eq!(
+                match_elements(&elements, 0, &tokens, start, &mut scratch),
+                None
+            );
+        }
+        let reach: usize = elements.iter().map(|e| e.max + e.skip).sum();
+        let bound = n * (elements.len() + 1) * (reach + 1) * (UNBOUNDED_CAP + 2);
+        // Without memoization this pattern takes on the order of n^4 / 24 (~3e8) calls here.
+        assert!(
+            scratch.steps <= bound as u64,
+            "{} calls, more than the memoized bound {bound}",
+            scratch.steps
+        );
     }
 
     #[test]
