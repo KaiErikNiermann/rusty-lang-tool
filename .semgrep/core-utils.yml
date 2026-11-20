@@ -52,7 +52,7 @@ rules:
       FOUND 9 sites spelling the 100-character path out by hand, all now routed through those:
       `xtask::lang_inspect` re-formatted `lt_resource_dir`/`lt_rules_dir` verbatim, `xtask`'s
       `LT_EN_RESOURCE`, `rlt-convert`'s `DEFAULT_GRAMMAR` / `DEFAULT_CONFUSION_SETS` /
-      `DEFAULT_DISAMBIGUATION`, and three `mod tests` fixtures in `morfologik.rs` (ru/ar/it).
+      `DEFAULT_DISAMBIGUATION`, and three `mod tests` fixtures in `rlt-morfologik` (ru/ar/it).
       That path points into a VENDORED upstream repo whose layout moves between LT releases — the
       `adapt-sweep` task exists precisely because it does. When it drifts, each site fails
       independently with a `not found` in one task only, which reads as "fetch-lt is broken". The

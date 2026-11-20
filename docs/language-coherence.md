@@ -56,7 +56,7 @@ Required checks (each gates CI):
 | --- | --- | --- |
 | `manifest` | `lang-manifests/<code>.json` | the upstream content-hash manifest exists |
 | `sparse-checkout path` | `SPARSE_PATHS` in `xtask/src/main.rs` | `fetch-lt` pulls the language's resources (matches `LangConfig::lt_sparse_path`) |
-| `morfologik dict test` | `reads_real_languagetool_<name>_dict` in `rlt-convert/src/morfologik.rs` | the real LT dict reads back |
+| `morfologik dict test` | `reads_real_languagetool_<name>_dict` in `rlt-morfologik/src/lib.rs` | the real LT dict reads back |
 | `native oracle test` | `<code>_native_reproduces_examples` in `rlt-cli/tests/oracle.rs` | L2 grammar reproduces LT's `<example>`s (English is covered by the `nlprule_baseline` + `ir_matcher` pair instead) |
 | `L3 confusion build` | `confusion_corpus(code)` in `xtask/src/main.rs` | if `sources.confusion`, the L3 model is buildable (English builds via the dedicated Norvig path) |
 

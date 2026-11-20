@@ -1724,12 +1724,12 @@ name = "rlt-convert"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "encoding_rs",
  "quick-xml",
  "regex",
  "rkyv",
  "rlt-ir",
  "rlt-lang",
+ "rlt-morfologik",
  "serde",
  "tracing",
  "tracing-subscriber",
@@ -1770,6 +1770,15 @@ dependencies = [
 [[package]]
 name = "rlt-lang"
 version = "0.0.0"
+
+[[package]]
+name = "rlt-morfologik"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "encoding_rs",
+ "rlt-lang",
+]
 
 [[package]]
 name = "rlt-native"

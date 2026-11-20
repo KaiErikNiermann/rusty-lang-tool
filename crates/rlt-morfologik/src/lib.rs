@@ -1,15 +1,18 @@
-//! Read LanguageTool's morfologik FSA part-of-speech dictionaries into `(inflected, lemma, tag)`
-//! triples — the same shape [`rlt_native::build_from_triples`] consumes.
+//! Read LanguageTool's morfologik FSA dictionaries: enumerate every entry as an `(inflected, lemma,
+//! tag)` triple ([`read_triples`], the shape `rlt_native::build_from_triples` consumes), or look one
+//! word up in place ([`Dictionary::lookup`], what morfologik's `DictionaryLookup` does).
 //!
-//! LanguageTool ships each language's POS dictionary as a morfologik finite-state automaton (the
-//! binary `<lang>.dict`, distributed in the `*-pos-dict` Maven artifacts, absent from the git repo)
-//! plus a `.info` metadata file. There is no Rust reader for this format — morfologik is Java, with a
-//! Ruby port (`mormor`); nlprule sidesteps it with Java/Python build tooling. This module is a small
-//! pure-Rust reader for the **CFSA2** format (the one LT uses), so any LT language's *actual* current
-//! dictionary becomes a download-and-convert away — no AGID reconstruction, no Java at build time.
+//! LanguageTool ships each language's dictionaries as morfologik finite-state automata (the binary
+//! `<lang>.dict`, distributed in the `*-pos-dict` Maven artifacts, absent from the git repo) plus a
+//! `.info` metadata file. There is no Rust reader for this format — morfologik is Java, with a
+//! Ruby port (`mormor`); nlprule sidesteps it with Java/Python build tooling. This crate is a small
+//! pure-Rust reader for the **CFSA2** format (the one LT uses most) and the older **FSA5**, so any LT
+//! language's *actual* current dictionary becomes a download-and-convert away — no AGID
+//! reconstruction, no Java at build time — and a synthesis dictionary can be queried at run time
+//! straight from its compact automaton (German's 5M-entry `german_synth.dict` is 1.6 MB).
 //!
 //! Format references: morfologik `CFSA2.java` (arc/v-int encoding) and the `mormor` enumerator + the
-//! `SUFFIX` sequence encoder. CFSA2 only for now; FSA5 (`version=0x05`) would be a sibling reader.
+//! `SUFFIX` sequence encoder.
 
 use anyhow::{Result, anyhow, bail, ensure};
 
@@ -137,6 +140,109 @@ fn collect_triples(fsa: &impl Fsa, meta: &DictMeta, out: &mut Vec<(String, Strin
     });
 }
 
+/// A morfologik dictionary held in memory for repeated word lookups, without expanding it.
+///
+/// Mirrors morfologik's `DictionaryLookup.lookup(word)`: every entry whose inflected part equals
+/// `word` yields its decoded base form and tag. For a synthesis dictionary (`german_synth.dict`) the
+/// "word" is `lemma|POS-tag` and the decoded base form is the inflected word form.
+#[derive(Debug)]
+pub struct Dictionary {
+    bytes: Vec<u8>,
+    meta: DictMeta,
+}
+
+impl Dictionary {
+    /// Take ownership of a `.dict` file's bytes, checking the header.
+    ///
+    /// # Errors
+    /// Returns an error if the bytes are not a supported morfologik automaton.
+    pub fn new(bytes: Vec<u8>, meta: DictMeta) -> Result<Self> {
+        match bytes.get(..5) {
+            Some(b"\\fsa\xc6") => {
+                Cfsa2::parse(&bytes)?;
+            }
+            Some(b"\\fsa\x05") => {
+                Fsa5::parse(&bytes)?;
+            }
+            _ => bail!("not a supported morfologik FSA (bad magic or version)"),
+        }
+        Ok(Self { bytes, meta })
+    }
+
+    /// The `(base form, tag)` of every entry whose inflected part is exactly `word`, in automaton
+    /// order. Empty if `word` is absent (or cannot be encoded in the dictionary's byte encoding).
+    #[must_use]
+    pub fn lookup(&self, word: &str) -> Vec<(String, String)> {
+        let key = match self.meta.encoding {
+            None => word.as_bytes().to_vec(),
+            Some(enc) => {
+                let (bytes, _, had_errors) = enc.encode(word);
+                if had_errors {
+                    return Vec::new();
+                }
+                bytes.into_owned()
+            }
+        };
+        let mut out = Vec::new();
+        let sep = self.meta.separator;
+        let mut emit = |rest: &[u8]| {
+            let (encoded, tag) = match rest.iter().position(|&b| b == sep) {
+                Some(i) => (&rest[..i], &rest[i + 1..]),
+                None => (rest, &[][..]),
+            };
+            out.extend(decode_tail(&key, encoded, tag, &self.meta));
+        };
+        // The header was validated in `new`, so parsing again cannot fail.
+        if self.bytes[4] == 0xc6 {
+            if let Ok(fsa) = Cfsa2::parse(&self.bytes) {
+                lookup_entries(&fsa, &key, sep, &mut emit);
+            }
+        } else if let Ok(fsa) = Fsa5::parse(&self.bytes) {
+            lookup_entries(&fsa, &key, sep, &mut emit);
+        }
+        out
+    }
+}
+
+/// Follow `key` then `sep` from the root and emit what every entry continues with after them.
+fn lookup_entries(fsa: &impl Fsa, key: &[u8], sep: u8, emit: &mut impl FnMut(&[u8])) {
+    let mut node = fsa.root();
+    let mut path = key.iter().copied().chain(std::iter::once(sep)).peekable();
+    while let Some(byte) = path.next() {
+        let Some(arc) = find_arc(fsa, node, byte) else {
+            return;
+        };
+        if path.peek().is_some() {
+            match fsa.target(arc) {
+                Some(next) => node = next,
+                None => return,
+            }
+        } else {
+            // `key SEP` consumed: an entry may end right here, and others continue below.
+            if fsa.is_final(arc) {
+                emit(&[]);
+            }
+            if let Some(below) = fsa.target(arc) {
+                visit(fsa, below, &mut Vec::new(), emit);
+            }
+        }
+    }
+}
+
+/// The arc leaving `node` that carries `label`, if any.
+fn find_arc(fsa: &impl Fsa, node: usize, label: u8) -> Option<usize> {
+    let mut arc = node;
+    loop {
+        if fsa.label(arc) == label {
+            return Some(arc);
+        }
+        if fsa.is_last(arc) {
+            return None;
+        }
+        arc = fsa.next_arc(arc);
+    }
+}
+
 /// The arc primitives shared by the CFSA2 and FSA5 readers; the [`visit`] DFS is identical for both.
 trait Fsa {
     /// Offset of the start node.
@@ -179,23 +285,27 @@ fn decode_entry(entry: &[u8], meta: &DictMeta) -> Option<(String, String, String
     let inflected = &entry[..i1];
     let rest = &entry[i1 + 1..];
     let i2 = rest.iter().position(|&b| b == sep)?;
-    let encoded_base = &rest[..i2];
-    let mut tag = &rest[i2 + 1..];
+    let (base, tag) = decode_tail(inflected, &rest[..i2], &rest[i2 + 1..], meta)?;
+    Some((decode_field(inflected, meta)?, base, tag))
+}
+
+/// Decode the `encoded-base` and `tag` fields that follow `inflected` in an entry into strings.
+fn decode_tail(
+    inflected: &[u8],
+    encoded_base: &[u8],
+    mut tag: &[u8],
+    meta: &DictMeta,
+) -> Option<(String, String)> {
     // Drop the trailing frequency byte (a single appended printable code) so the tag matches the
     // grammar's postags, e.g. `N m pK` → `N m p`. No-op for dicts without `frequency-included`.
     if meta.frequency_included && !tag.is_empty() {
         tag = &tag[..tag.len() - 1];
     }
-
     let base = match meta.encoder {
         Encoder::None => encoded_base.to_vec(),
         Encoder::Suffix => decode_suffix(inflected, encoded_base),
     };
-    Some((
-        decode_field(inflected, meta)?,
-        decode_field(&base, meta)?,
-        decode_field(tag, meta)?,
-    ))
+    Some((decode_field(&base, meta)?, decode_field(tag, meta)?))
 }
 
 /// SUFFIX decoder: `base = inflected[.. len - trim] ++ encoded[1..]`, where `trim = (encoded[0] - 'A')
@@ -970,6 +1080,93 @@ mod tests {
         assert!(
             err.to_string().contains("unsupported FSA version"),
             "actionable error: {err}"
+        );
+    }
+
+    #[test]
+    fn dictionary_rejects_bad_header() {
+        let meta = DictMeta {
+            separator: b'+',
+            encoder: Encoder::Suffix,
+            encoding: None,
+            frequency_included: false,
+        };
+        assert!(Dictionary::new(b"\\fsa\x07\x00\x00\x00rest".to_vec(), meta.clone()).is_err());
+        assert!(Dictionary::new(b"nope".to_vec(), meta).is_err());
+    }
+
+    #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "reads fetched LT data from disk; miri runs under fs isolation"
+    )]
+    fn lookup_agrees_with_enumeration_on_the_german_pos_dict() {
+        // `lookup` must return exactly what `read_triples` enumerates for the same inflected form,
+        // for words that exercise umlauts, several readings and an absent key.
+        let base = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../resources/de"));
+        let (Ok(dict), Ok(info)) = (
+            std::fs::read(base.join("pos.dict")),
+            std::fs::read_to_string(base.join("pos.info")),
+        ) else {
+            eprintln!(
+                "skip: resources/de/pos.dict not present (cargo xtask build-tagger --lang de)"
+            );
+            return;
+        };
+        let meta = parse_info(&info).expect("parse .info");
+        let triples = read_triples(&dict, &meta).expect("read dict");
+        let lookup = Dictionary::new(dict, meta).expect("valid dict");
+        for word in ["Häuser", "ist", "der", "schnellen", "Xyzzyq"] {
+            let mut expected: Vec<(String, String)> = triples
+                .iter()
+                .filter(|(inflected, ..)| inflected == word)
+                .map(|(_, lemma, tag)| (lemma.clone(), tag.clone()))
+                .collect();
+            let mut got = lookup.lookup(word);
+            expected.sort();
+            got.sort();
+            assert_eq!(got, expected, "lookup({word:?})");
+        }
+        assert!(
+            lookup
+                .lookup("Häuser")
+                .contains(&("Haus".to_owned(), "SUB:NOM:PLU:NEU".to_owned()))
+        );
+        assert_eq!(lookup.lookup("Xyzzyq"), []);
+    }
+
+    #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "reads fetched LT data from disk; miri runs under fs isolation"
+    )]
+    fn lookup_reads_the_german_synthesis_dictionary() {
+        // A synthesis dictionary is keyed `lemma|tag`; the decoded base form is the inflected word.
+        // `schnell|ADJ:AKK:PLU:FEM:GRU:DEF` → `schnellen` is read off the automaton's SUFFIX
+        // encoding (`Yen`: trim 24 bytes of the key, append `en`).
+        let base = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../resources/de"));
+        let (Ok(dict), Ok(info)) = (
+            std::fs::read(base.join("synth.dict")),
+            std::fs::read_to_string(base.join("synth.info")),
+        ) else {
+            eprintln!(
+                "skip: resources/de/synth.dict not present (cargo xtask build-synth --lang de)"
+            );
+            return;
+        };
+        let dict =
+            Dictionary::new(dict, parse_info(&info).expect("parse .info")).expect("valid dict");
+        let forms = |key: &str| -> Vec<String> {
+            dict.lookup(key).into_iter().map(|(form, _)| form).collect()
+        };
+        assert_eq!(forms("schnell|ADJ:AKK:PLU:FEM:GRU:DEF"), ["schnellen"]);
+        assert_eq!(forms("schnell|ADJ:AKK:PLU:FEM:KOM:DEF"), ["schnelleren"]);
+        assert_eq!(forms("Haus|SUB:NOM:PLU:NEU"), ["Häuser"]);
+        assert_eq!(forms("schnell|NOPE"), [] as [String; 0]);
+        assert_eq!(
+            forms("schnell"),
+            [] as [String; 0],
+            "a prefix of a key is not a key"
         );
     }
 }

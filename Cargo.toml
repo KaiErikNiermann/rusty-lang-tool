@@ -4,6 +4,7 @@ members = [
     "crates/rlt-ir",
     "crates/rlt-lang",
     "crates/rlt-convert",
+    "crates/rlt-morfologik",
     "crates/rlt-engine",
     "crates/rlt-native",
     "crates/rlt-core",
@@ -80,6 +81,7 @@ rlt-lang = { path = "crates/rlt-lang" }
 rlt-engine = { path = "crates/rlt-engine" }
 rlt-core = { path = "crates/rlt-core" }
 rlt-convert = { path = "crates/rlt-convert" }
+rlt-morfologik = { path = "crates/rlt-morfologik" }
 rlt-tagger = { path = "crates/rlt-tagger" }
 rlt-native = { path = "crates/rlt-native" }
 rlt-cli = { path = "crates/rlt-cli" }

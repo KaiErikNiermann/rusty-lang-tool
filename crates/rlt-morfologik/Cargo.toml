@@ -1,0 +1,21 @@
+[package]
+name = "rlt-morfologik"
+description = "Pure-Rust reader for LanguageTool's morfologik FSA dictionaries (CFSA2 and FSA5): enumerate every entry or look a word up. Compiles to wasm32."
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+# Legacy single-byte dictionary encodings (Russian KOI8-R, Italian ISO-8859-15).
+encoding_rs = "0.8.35"
+
+[dev-dependencies]
+# `lt_resource_path!`: the real-dictionary tests locate LT's repo-shipped dicts through it.
+rlt-lang.workspace = true
+
+[lints]
+workspace = true

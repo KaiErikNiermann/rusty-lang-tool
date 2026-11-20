@@ -2066,8 +2066,8 @@ fn report_orphan_lang_configs() -> Result<usize> {
 fn lang_coherence() -> Result<()> {
     let oracle = std::fs::read_to_string("crates/rlt-cli/tests/oracle.rs")
         .context("reading crates/rlt-cli/tests/oracle.rs")?;
-    let morfologik = std::fs::read_to_string("crates/rlt-convert/src/morfologik.rs")
-        .context("reading crates/rlt-convert/src/morfologik.rs")?;
+    let morfologik = std::fs::read_to_string("crates/rlt-morfologik/src/lib.rs")
+        .context("reading crates/rlt-morfologik/src/lib.rs")?;
 
     let count = rlt_lang::LANGUAGES.len();
     println!(
@@ -2101,7 +2101,7 @@ fn lang_coherence() -> Result<()> {
                 "morfologik dict test",
                 morfologik.contains(&format!("fn reads_real_languagetool_{}_dict", cfg.name)),
                 format!(
-                    "add `reads_real_languagetool_{}_dict` to crates/rlt-convert/src/morfologik.rs",
+                    "add `reads_real_languagetool_{}_dict` to crates/rlt-morfologik/src/lib.rs",
                     cfg.name
                 ),
             ),

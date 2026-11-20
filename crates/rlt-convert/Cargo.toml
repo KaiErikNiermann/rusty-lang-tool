@@ -20,6 +20,8 @@ path = "src/main.rs"
 rlt-ir.workspace = true
 # For the LT-checkout / artifact path macros backing the `DEFAULT_*` consts below.
 rlt-lang.workspace = true
+# The morfologik FSA reader (`read_triples`, `parse_info`), re-exported for the xtask builders.
+rlt-morfologik.workspace = true
 # Generated bindings (src/lt_schema.rs) deserialize via these; quick-xml is referenced by the
 # generated deserializer impls. The heavy `xsd-parser` generator lives in xtask, not here.
 xsd-parser-types.workspace = true
@@ -33,7 +35,6 @@ rkyv.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-encoding_rs = "0.8.35"
 
 [lints]
 workspace = true
