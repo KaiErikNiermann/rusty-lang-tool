@@ -19,11 +19,13 @@ mod disambig;
 mod java_regex;
 mod matcher;
 mod spell;
+mod synth;
 #[doc(hidden)]
 pub use spell::fuzz_edits1;
 
 pub use disambig::ConfusionChecker;
 pub use matcher::{Disambiguator, IrMatcher};
+pub use synth::Synthesizer;
 
 use serde::{Deserialize, Serialize};
 

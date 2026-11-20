@@ -9,10 +9,13 @@
 //! `<antipattern>` suppression, rule-level `<regexp>` rules (matched over text), and suggestion
 //! rendering — literal text + `<match no>`/`\N` token copies with case conversion and
 //! `regexp_replace` transforms. `<phraseref>`s are inlined at convert time. Suggestions needing
-//! morphological synthesis (`postag_replace`) are dropped, and rules left with an unsupported
-//! construct (`<unify>` — unused in English — or `<filter>`) are skipped rather than matched wrong.
+//! morphological synthesis (`<match postag=…>`) are filled by a [`Synthesizer`] when the matcher is
+//! given one; without it a `postag_replace` drops the suggestion and a plain `postag` copies the
+//! matched surface. Rules left with an unsupported construct (`<unify>` — unused in English — or
+//! `<filter>`) are skipped rather than matched wrong.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use regex::Regex;
 use rlt_ir::{
@@ -20,7 +23,8 @@ use rlt_ir::{
     Suggestion as IrSuggestion, TagAction, TokenPat,
 };
 
-use crate::{Analysis, Diagnostic, GrammarChecker, Source, Span, Suggestion, Token};
+use crate::synth::CompiledSynth;
+use crate::{Analysis, Diagnostic, GrammarChecker, Source, Span, Suggestion, Synthesizer, Token};
 
 /// Cap for unbounded (`skip="-1"` / `max="-1"`) quantifiers, to bound backtracking.
 const UNBOUNDED_CAP: usize = 64;
@@ -34,12 +38,22 @@ pub struct IrMatcher {
     general: Vec<usize>,
     /// Rule-level `<regexp>` rules, matched as a regex over the sentence text.
     regexp_rules: Vec<CompiledRegexpRule>,
+    /// The language's word-form generator, if its artifact is present.
+    synthesizer: Option<Arc<dyn Synthesizer>>,
 }
 
 impl IrMatcher {
-    /// Compile a rule set (skipping rules that cannot be matched faithfully).
+    /// Compile a rule set (skipping rules that cannot be matched faithfully), without synthesis.
     #[must_use]
     pub fn new(rules: &[Rule]) -> Self {
+        Self::with_synthesizer(rules, None)
+    }
+
+    /// Compile a rule set; with a `synthesizer`, suggestions that ask for inflected forms
+    /// (`<match postag=…>`) are rendered with them, otherwise they behave as in [`IrMatcher::new`].
+    #[must_use]
+    pub fn with_synthesizer(rules: &[Rule], synthesizer: Option<Arc<dyn Synthesizer>>) -> Self {
+        let mode = SynthMode::of(synthesizer.is_some());
         let mut compiled = Vec::new();
         let mut by_first_literal: HashMap<String, Vec<usize>> = HashMap::new();
         let mut general = Vec::new();
@@ -52,7 +66,7 @@ impl IrMatcher {
                 regexp_rules.extend(compile_regexp_rule(r));
                 continue;
             }
-            let Some(rule) = compile_rule(r) else {
+            let Some(rule) = compile_rule(r, mode) else {
                 continue;
             };
             let idx = compiled.len();
@@ -67,6 +81,7 @@ impl IrMatcher {
             by_first_literal,
             general,
             regexp_rules,
+            synthesizer,
         }
     }
 
@@ -75,7 +90,21 @@ impl IrMatcher {
     /// # Errors
     /// Returns an error if `bytes` is not a valid archived `Vec<Rule>`.
     pub fn from_rkyv_bytes(bytes: &[u8]) -> Result<Self, rkyv::rancor::Error> {
-        Ok(Self::new(&rlt_ir::deserialize_rules(bytes)?))
+        Self::from_rkyv_bytes_with(bytes, None)
+    }
+
+    /// [`IrMatcher::from_rkyv_bytes`] with a [`Synthesizer`] (see [`IrMatcher::with_synthesizer`]).
+    ///
+    /// # Errors
+    /// Returns an error if `bytes` is not a valid archived `Vec<Rule>`.
+    pub fn from_rkyv_bytes_with(
+        bytes: &[u8],
+        synthesizer: Option<Arc<dyn Synthesizer>>,
+    ) -> Result<Self, rkyv::rancor::Error> {
+        Ok(Self::with_synthesizer(
+            &rlt_ir::deserialize_rules(bytes)?,
+            synthesizer,
+        ))
     }
 
     /// Number of rules successfully compiled (the matchable subset, including regexp rules).
@@ -106,7 +135,15 @@ impl IrMatcher {
                     if suppressed(rule, tokens, start, end) {
                         continue;
                     }
-                    if let Some(d) = render(rule, text, tokens, start, end, &scratch.captures) {
+                    if let Some(d) = render(
+                        rule,
+                        text,
+                        tokens,
+                        start,
+                        end,
+                        &scratch.captures,
+                        self.synthesizer.as_deref(),
+                    ) {
                         out.push(d);
                     }
                 }
@@ -156,6 +193,13 @@ enum CompiledPart {
         no: usize,
         case: Case,
         regex: Option<(Regex, String)>,
+    },
+    /// The inflected forms of the Nth matched token (see [`CompiledSynth`]); every form is cased
+    /// like the matched surface and yields its own suggestion.
+    Synth {
+        no: usize,
+        case: Case,
+        synth: CompiledSynth,
     },
 }
 
@@ -231,10 +275,10 @@ impl TagMatch {
 
 /// Compile a rule, or `None` if it cannot be matched faithfully (unsupported construct, no
 /// suggestions, empty pattern, or an uncompilable main regex).
-fn compile_rule(r: &Rule) -> Option<CompiledRule> {
+fn compile_rule(r: &Rule, mode: SynthMode) -> Option<CompiledRule> {
     // Compile suggestions up front (pre-compiling regex transforms); a rule with no renderable
     // suggestion cannot produce a correction, so skip it.
-    let suggestions = compile_suggestions(&r.suggestions)?;
+    let suggestions = compile_suggestions(&r.suggestions, mode)?;
     let mut elements = Vec::new();
     let mut marker_start = None;
     let mut marker = None;
@@ -270,17 +314,42 @@ fn compile_rule(r: &Rule) -> Option<CompiledRule> {
     })
 }
 
+/// Whether a rule's `<match postag=…>` parts can be synthesized.
+#[derive(Clone, Copy)]
+enum SynthMode {
+    /// The matcher has no synthesizer (or the rule matches over text, not tokens, so there are no
+    /// tags to synthesize from).
+    Absent,
+    /// The matcher has a synthesizer.
+    Available,
+}
+
+impl SynthMode {
+    fn of(available: bool) -> Self {
+        if available {
+            Self::Available
+        } else {
+            Self::Absent
+        }
+    }
+}
+
 /// Pre-compile a rule's suggestion templates, or `None` if none render — a rule with no renderable
 /// correction cannot produce a fix, so the caller skips it.
-fn compile_suggestions(suggestions: &[IrSuggestion]) -> Option<Vec<CompiledSuggestion>> {
-    let compiled: Vec<CompiledSuggestion> =
-        suggestions.iter().filter_map(compile_suggestion).collect();
+fn compile_suggestions(
+    suggestions: &[IrSuggestion],
+    mode: SynthMode,
+) -> Option<Vec<CompiledSuggestion>> {
+    let compiled: Vec<CompiledSuggestion> = suggestions
+        .iter()
+        .filter_map(|s| compile_suggestion(s, mode))
+        .collect();
     (!compiled.is_empty()).then_some(compiled)
 }
 
 /// Pre-compile a suggestion's parts (compiling any `regexp_replace`); `None` if a transform regex
 /// or an unknown part makes it unrenderable.
-fn compile_suggestion(s: &IrSuggestion) -> Option<CompiledSuggestion> {
+fn compile_suggestion(s: &IrSuggestion, mode: SynthMode) -> Option<CompiledSuggestion> {
     let mut parts = Vec::new();
     for p in &s.parts {
         match p {
@@ -290,23 +359,56 @@ fn compile_suggestion(s: &IrSuggestion) -> Option<CompiledSuggestion> {
                 case,
                 transform,
             } => {
-                let regex = match transform {
-                    Some((m, r)) => Some((
-                        Regex::new(&crate::java_regex::translate(m)).ok()?,
-                        crate::java_regex::translate_replacement(r),
-                    )),
-                    None => None,
-                };
-                parts.push(CompiledPart::Token {
+                parts.push(compile_token_part(*no, *case, transform.as_ref())?);
+            }
+            SugPart::Synth {
+                no,
+                case,
+                transform,
+                postag,
+                postag_regexp,
+                postag_replace,
+                lemma,
+                suppress_misspelled,
+            } => match mode {
+                SynthMode::Available => parts.push(CompiledPart::Synth {
                     no: *no,
                     case: *case,
-                    regex,
-                });
-            }
+                    synth: CompiledSynth::new(
+                        postag,
+                        *postag_regexp,
+                        postag_replace.as_deref(),
+                        lemma.as_deref(),
+                        *suppress_misspelled,
+                    )?,
+                }),
+                // Without a synthesizer LT copies the matched token (`MatchState.toFinalString`,
+                // line 232); this matcher always dropped a suggestion that needed `postag_replace`.
+                SynthMode::Absent if postag_replace.is_some() => return None,
+                SynthMode::Absent => {
+                    parts.push(compile_token_part(*no, *case, transform.as_ref())?);
+                }
+            },
             _ => return None,
         }
     }
     Some(CompiledSuggestion { parts })
+}
+
+/// A copy of the Nth matched token's surface, with its `regexp_replace` compiled.
+fn compile_token_part(
+    no: usize,
+    case: Case,
+    transform: Option<&(String, String)>,
+) -> Option<CompiledPart> {
+    let regex = match transform {
+        Some((m, r)) => Some((
+            Regex::new(&crate::java_regex::translate(m)).ok()?,
+            crate::java_regex::translate_replacement(r),
+        )),
+        None => None,
+    };
+    Some(CompiledPart::Token { no, case, regex })
 }
 
 /// A compiled rule-level `<regexp>` rule, matched as a regex over the sentence text.
@@ -328,7 +430,7 @@ impl CompiledRegexpRule {
             let suggestions = dedup_suggestions(
                 self.suggestions
                     .iter()
-                    .map(|s| render_regexp_suggestion(s, &caps)),
+                    .map(|s| render_regexp_suggestion(s, &caps).into_iter().collect()),
             );
             if suggestions.is_empty() {
                 continue;
@@ -366,7 +468,8 @@ fn compile_regexp_rule(r: &Rule) -> Option<CompiledRegexpRule> {
         format!("(?i){pattern}")
     };
     let regex = Regex::new(&crate::java_regex::translate(&src)).ok()?;
-    let suggestions = compile_suggestions(&r.suggestions)?;
+    // Capture groups carry no tags, so there is nothing to synthesize from.
+    let suggestions = compile_suggestions(&r.suggestions, SynthMode::Absent)?;
     Some(CompiledRegexpRule {
         id: r.id.clone(),
         message: r.message.clone(),
@@ -390,6 +493,8 @@ fn render_regexp_suggestion(sug: &CompiledSuggestion, caps: &regex::Captures) ->
                 };
                 out.push_str(&apply_case(&transformed, *case, surface));
             }
+            // Never compiled for a rule matched over text (`SynthMode::Absent`).
+            CompiledPart::Synth { .. } => return None,
         }
     }
     Some(out)
@@ -397,7 +502,7 @@ fn render_regexp_suggestion(sug: &CompiledSuggestion, caps: &regex::Captures) ->
 
 /// Collect rendered suggestion strings into [`Suggestion`]s, dropping empties and duplicates
 /// (order-preserving) — the same templates can render to the same correction.
-fn dedup_suggestions(rendered: impl Iterator<Item = Option<String>>) -> Vec<Suggestion> {
+fn dedup_suggestions(rendered: impl Iterator<Item = Vec<String>>) -> Vec<Suggestion> {
     let mut seen: Vec<String> = Vec::new();
     let mut out = Vec::new();
     for rep in rendered.flatten() {
@@ -883,6 +988,7 @@ fn render(
     start: usize,
     end: usize,
     captures: &[Option<(usize, usize)>],
+    synthesizer: Option<&dyn Synthesizer>,
 ) -> Option<Diagnostic> {
     let (mtok_start, mtok_end) = marker_token_range(rule.marker, captures, start, end)?;
     let span = Span {
@@ -897,11 +1003,12 @@ fn render(
         end,
         text.get(span.start..span.end).unwrap_or_default(),
     );
-    let suggestions = dedup_suggestions(
-        rule.suggestions
-            .iter()
-            .map(|s| render_suggestion(s, text, tokens, captures).map(|r| case.apply(r))),
-    );
+    let suggestions = dedup_suggestions(rule.suggestions.iter().map(|s| {
+        render_suggestion(s, text, tokens, captures, synthesizer)
+            .into_iter()
+            .map(|r| case.apply(r))
+            .collect()
+    }));
     if suggestions.is_empty() {
         return None;
     }
@@ -971,29 +1078,69 @@ fn marker_token_range(
     (hi > lo).then_some((lo, hi))
 }
 
-/// Render one suggestion template against the captured tokens, or `None` if a token reference is
-/// missing.
+/// Render one suggestion template against the captured tokens: one string per combination of the
+/// forms its [`CompiledPart::Synth`] parts produce (the first such part varies slowest, as in LT's
+/// `PatternRuleMatcher.formatMultipleSynthesis`), or none if a token reference is missing.
 fn render_suggestion(
     sug: &CompiledSuggestion,
     text: &str,
     tokens: &[Token],
     captures: &[Option<(usize, usize)>],
-) -> Option<String> {
-    let mut out = String::new();
+    synthesizer: Option<&dyn Synthesizer>,
+) -> Vec<String> {
+    let mut out = vec![String::new()];
     for part in &sug.parts {
         match part {
-            CompiledPart::Text(t) => out.push_str(t),
+            CompiledPart::Text(t) => {
+                for o in &mut out {
+                    o.push_str(t);
+                }
+            }
             CompiledPart::Token { no, case, regex } => {
-                let surface = captured_surface(*no, text, tokens, captures)?;
+                let Some(surface) = captured_surface(*no, text, tokens, captures) else {
+                    return Vec::new();
+                };
                 let transformed = match regex {
                     Some((re, rep)) => re.replace_all(&surface, rep.as_str()).into_owned(),
                     None => surface.clone(),
                 };
-                out.push_str(&apply_case(&transformed, *case, &surface));
+                let copy = apply_case(&transformed, *case, &surface);
+                for o in &mut out {
+                    o.push_str(&copy);
+                }
+            }
+            CompiledPart::Synth { no, case, synth } => {
+                let (Some(synthesizer), Some(token)) =
+                    (synthesizer, captured_token(*no, tokens, captures))
+                else {
+                    return Vec::new();
+                };
+                let Some(forms) = synth.forms(synthesizer, token) else {
+                    return Vec::new();
+                };
+                let forms: Vec<String> = forms
+                    .iter()
+                    .map(|f| apply_case(f, *case, &token.text))
+                    .collect();
+                out = out
+                    .iter()
+                    .flat_map(|prefix| forms.iter().map(move |f| format!("{prefix}{f}")))
+                    .collect();
             }
         }
     }
-    Some(out)
+    out
+}
+
+/// The first token captured by the `no`-th (1-based) pattern element: the one LT's `MatchState`
+/// formats (`setToken(tokens, index, next)`), or `None` if that element matched nothing.
+fn captured_token<'t>(
+    no: usize,
+    tokens: &'t [Token],
+    captures: &[Option<(usize, usize)>],
+) -> Option<&'t Token> {
+    let (first, _) = captures.get(no.checked_sub(1)?).copied().flatten()?;
+    tokens.get(first)
 }
 
 /// Apply a [`Case`] transform to a copied token surface.
@@ -1566,6 +1713,157 @@ mod tests {
         );
         // <match no=1> copies the first token surface ("were"), StartUpper → "Were".
         assert_eq!(diags[0].suggestions[0].replacement, "Were");
+    }
+
+    /// A synthesizer over a literal `(lemma, tag) -> forms` table.
+    struct Forms(Vec<(&'static str, &'static str, &'static [&'static str])>);
+
+    impl Synthesizer for Forms {
+        fn synthesize(&self, lemma: &str, tag: &str) -> Vec<String> {
+            self.synthesize_matching(
+                lemma,
+                &Regex::new(&format!("^{}$", regex::escape(tag))).unwrap(),
+            )
+        }
+
+        fn synthesize_matching(&self, lemma: &str, tags: &Regex) -> Vec<String> {
+            self.0
+                .iter()
+                .filter(|(l, t, _)| *l == lemma && tags.is_match(t))
+                .flat_map(|(_, _, forms)| forms.iter().map(|f| (*f).to_owned()))
+                .collect()
+        }
+    }
+
+    fn synth_part(no: usize, postag: &str, replace: Option<&str>, suppress: bool) -> SugPart {
+        SugPart::Synth {
+            no,
+            case: Case::Keep,
+            transform: None,
+            postag: postag.to_owned(),
+            postag_regexp: true,
+            postag_replace: replace.map(str::to_owned),
+            lemma: None,
+            suppress_misspelled: suppress,
+        }
+    }
+
+    /// `<marker><token>schnelle</token> <token>Autos</token></marker>` suggesting `parts`.
+    fn synth_rule(parts: Vec<SugPart>) -> Rule {
+        Rule {
+            id: "SYNTH".to_owned(),
+            pattern: vec![
+                Construct::MarkerStart,
+                lit("schnelle"),
+                lit("Autos"),
+                Construct::MarkerEnd,
+            ],
+            antipatterns: vec![],
+            message: String::new(),
+            suggestions: vec![IrSuggestion { parts }],
+        }
+    }
+
+    fn synth_analysis() -> (&'static str, Analysis) {
+        let text = "schnelle Autos";
+        let analysis = analyze(
+            text,
+            &[
+                ("schnelle", &["ADJ:NOM:PLU:NEU:GRU:DEF"], &["schnell"]),
+                ("Autos", &["SUB:NOM:PLU:NEU"], &["Auto"]),
+            ],
+        );
+        (text, analysis)
+    }
+
+    fn german_forms() -> Arc<dyn Synthesizer> {
+        Arc::new(Forms(vec![
+            ("schnell", "ADJ:PRD:GRU", &["schnell"]),
+            (
+                "schnell",
+                "ADJ:NOM:PLU:NEU:GRU:SOL",
+                &["schnelle", "schnelle2"],
+            ),
+            ("Auto", "SUB:NOM:SIN:NEU", &["Auto"]),
+        ]))
+    }
+
+    fn replacements(matcher: &IrMatcher, text: &str, analysis: &Analysis) -> Vec<String> {
+        matcher
+            .grammar_diagnostics(text, analysis)
+            .into_iter()
+            .flat_map(|d| d.suggestions.into_iter().map(|s| s.replacement))
+            .collect()
+    }
+
+    #[test]
+    fn a_synth_part_renders_every_form_as_its_own_suggestion() {
+        let (text, analysis) = synth_analysis();
+        let rule = synth_rule(vec![
+            synth_part(1, "ADJ:NOM:(.*):GRU:DEF", Some("ADJ:NOM:$1:GRU:SOL"), false),
+            SugPart::Text(" Autos".to_owned()),
+        ]);
+        let matcher = IrMatcher::with_synthesizer(&[rule], Some(german_forms()));
+        assert_eq!(
+            replacements(&matcher, text, &analysis),
+            ["schnelle Autos", "schnelle2 Autos"]
+        );
+    }
+
+    #[test]
+    fn two_synth_parts_give_the_product_with_the_first_varying_slowest() {
+        let (text, analysis) = synth_analysis();
+        let rule = synth_rule(vec![
+            synth_part(1, "ADJ:NOM:(.*):GRU:DEF", Some("ADJ:NOM:$1:GRU:SOL"), false),
+            SugPart::Text("+".to_owned()),
+            synth_part(2, "SUB:NOM:PLU:NEU", Some("SUB:NOM:SIN:NEU"), false),
+        ]);
+        let matcher = IrMatcher::with_synthesizer(&[rule], Some(german_forms()));
+        assert_eq!(
+            replacements(&matcher, text, &analysis),
+            ["schnelle+Auto", "schnelle2+Auto"]
+        );
+    }
+
+    #[test]
+    fn synthesized_forms_follow_the_requested_case_of_the_matched_surface() {
+        let (text, analysis) = synth_analysis();
+        let mut part = synth_part(1, "ADJ:NOM:(.*):GRU:DEF", Some("ADJ:PRD:GRU"), false);
+        if let SugPart::Synth { case, .. } = &mut part {
+            *case = Case::StartUpper;
+        }
+        let matcher = IrMatcher::with_synthesizer(&[synth_rule(vec![part])], Some(german_forms()));
+        assert_eq!(replacements(&matcher, text, &analysis), ["Schnell"]);
+    }
+
+    #[test]
+    fn suppress_misspelled_drops_a_suggestion_nothing_was_synthesized_for() {
+        let (text, analysis) = synth_analysis();
+        let parts = |suppress| {
+            vec![
+                synth_part(2, "ADJ:.*", None, suppress),
+                SugPart::Text(" x".to_owned()),
+            ]
+        };
+        let shown = IrMatcher::with_synthesizer(&[synth_rule(parts(false))], Some(german_forms()));
+        assert_eq!(replacements(&shown, text, &analysis), ["(Autos) x"]);
+        let dropped = IrMatcher::with_synthesizer(&[synth_rule(parts(true))], Some(german_forms()));
+        assert_eq!(replacements(&dropped, text, &analysis), [] as [String; 0]);
+    }
+
+    #[test]
+    fn without_a_synthesizer_the_matcher_behaves_as_before() {
+        let (text, analysis) = synth_analysis();
+        // `postag_replace` needs forms: the suggestion (and so this rule) was never rendered.
+        let replaced = synth_rule(vec![synth_part(1, "ADJ:(.*)", Some("ADJ:PRD:GRU"), false)]);
+        assert_eq!(IrMatcher::new(&[replaced]).rule_count(), 0);
+        // A plain `postag` copied the matched surface, with its `regexp_replace`.
+        let mut copy = synth_part(1, "ADJ:.*", None, false);
+        if let SugPart::Synth { transform, .. } = &mut copy {
+            *transform = Some(("e$".to_owned(), "em".to_owned()));
+        }
+        let matcher = IrMatcher::new(&[synth_rule(vec![copy])]);
+        assert_eq!(replacements(&matcher, text, &analysis), ["schnellem"]);
     }
 
     #[test]

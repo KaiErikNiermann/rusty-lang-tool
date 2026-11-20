@@ -67,6 +67,35 @@ pub enum SugPart {
         /// `(regexp_match, regexp_replace)` applied to the copied surface before `case`, if any.
         transform: Option<(String, String)>,
     },
+    /// `<match no="N" postag="…">`: inflected forms generated from the lemma(s) of the Nth matched
+    /// token (or from `lemma`) and a target POS tag, by the language's synthesizer.
+    ///
+    /// One part can yield several forms, which become several suggestions. A matcher without a
+    /// synthesizer renders it like LanguageTool without one: a `postag_replace` makes the suggestion
+    /// unrenderable here, otherwise the matched surface is copied as for [`SugPart::Token`].
+    Synth {
+        /// 1-based index into the pattern's tokens.
+        no: usize,
+        /// Case transform applied to every synthesized form (relative to the matched surface).
+        case: Case,
+        /// `(regexp_match, regexp_replace)`: used only when no synthesizer is available, where the
+        /// part degrades to a copy of the matched surface (LanguageTool ignores it when it
+        /// synthesizes).
+        transform: Option<(String, String)>,
+        /// The `postag` attribute: the target tag, or a regex over the matched token's tags.
+        postag: String,
+        /// `postag_regexp="yes"`: `postag` is a regex.
+        postag_regexp: bool,
+        /// `postag_replace`: a (Java) replacement applied to each matching tag of the matched token
+        /// to build the target tag.
+        postag_replace: Option<String>,
+        /// A fixed lemma from the element's text (`<match …>verfügen</match>`) to inflect instead of
+        /// the matched token's own lemmas; `no` then only supplies the tags to match.
+        lemma: Option<String>,
+        /// The enclosing `<message>` or `<suggestion>` sets `suppress_misspelled`: a suggestion in
+        /// which synthesis finds nothing is dropped rather than shown as `(word)`.
+        suppress_misspelled: bool,
+    },
 }
 
 /// Case transform applied when rendering a [`SugPart::Token`] (LT `case_conversion`).
