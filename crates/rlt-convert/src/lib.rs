@@ -1468,6 +1468,7 @@ mod tests {
                <rule id="R2" name="r2">
                  <pattern><token/></pattern>
                  <message suppress_misspelled="yes"><suggestion><match no="1" postag="VER:INF:NON"/></suggestion></message>
+                 <suggestion><match no="1" postag="VER:INF:NON"/></suggestion>
                  <example correction="x"><marker>b</marker></example>
                </rule>"#,
         );
@@ -1533,6 +1534,18 @@ mod tests {
             ),
             "{:?}",
             r2.suggestions[0].parts
+        );
+        // ... and the ones after it in the rule.
+        assert!(
+            matches!(
+                r2.suggestions[1].parts.as_slice(),
+                [SugPart::Synth {
+                    suppress_misspelled: true,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r2.suggestions[1].parts
         );
     }
 

@@ -1833,7 +1833,7 @@ mod tests {
                 "ADJ:NOM:PLU:NEU:GRU:SOL",
                 &["schnelle", "schnelle2"],
             ),
-            ("Auto", "SUB:NOM:SIN:NEU", &["Auto"]),
+            ("Auto", "SUB:NOM:SIN:NEU", &["Auto", "Auto2"]),
         ]))
     }
 
@@ -1870,7 +1870,12 @@ mod tests {
         let matcher = IrMatcher::with_synthesizer(&[rule], Some(german_forms()));
         assert_eq!(
             replacements(&matcher, text, &analysis),
-            ["schnelle+Auto", "schnelle2+Auto"]
+            [
+                "schnelle+Auto",
+                "schnelle+Auto2",
+                "schnelle2+Auto",
+                "schnelle2+Auto2"
+            ]
         );
     }
 

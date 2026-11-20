@@ -263,12 +263,23 @@ mod tests {
     }
 
     #[test]
+    fn a_tag_must_match_the_whole_pattern_not_a_part_of_it() {
+        // Java `matches`: `ADJ` is not a match for `ADJ:PRD:GRU`, so the fallback to the pattern
+        // applies (and the pattern then selects nothing, as nothing is tagged plain `ADJ`).
+        let c = CompiledSynth::new("ADJ", true, None, None, false).unwrap();
+        let t = token("x", &["ADJ:PRD:GRU"], &["schnell"]);
+        assert_eq!(c.target_tag(&t.tags), "ADJ");
+        assert_eq!(c.forms(&adjectives(), &t), Some(vec!["(x)".to_owned()]));
+    }
+
+    #[test]
     fn a_plain_postag_is_looked_up_literally_for_every_lemma() {
         let table = Table::default()
             .with("gehen", "VER:INF:NON", &["gehen"])
             .with("ging", "VER:INF:NON", &["ging"]);
         let c = CompiledSynth::new("VER:INF:NON", false, None, None, false).unwrap();
-        let t = token("ging", &["VER:1:SIN:PRT:NON"], &["gehen", "ging"]);
+        // The lemmas arrive out of order and twice over: the forms come back sorted and unique.
+        let t = token("ging", &["VER:1:SIN:PRT:NON"], &["ging", "gehen", "ging"]);
         // Sorted and unique, like LT's TreeSet.
         assert_eq!(
             c.forms(&table, &t),
