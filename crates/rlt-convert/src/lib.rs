@@ -510,13 +510,7 @@ fn lower_document(doc: &rules::RulesElementType) -> Vec<Rule> {
                     let group_aps: Vec<Vec<Construct>> = g
                         .antipattern
                         .iter()
-                        .map(|a| {
-                            let mut ap = lower_antipattern(a, &phrases);
-                            if a.case_sensitive.as_ref().is_some_and(is_yes) {
-                                force_case_sensitive(&mut ap);
-                            }
-                            ap
-                        })
+                        .map(|a| lower_antipattern(a, &phrases))
                         .collect();
                     out.extend(
                         g.rule
@@ -552,8 +546,8 @@ fn lower_phrase(p: &pattern::PhraseElementType) -> Vec<Construct> {
     let mut out = Vec::new();
     for c in &p.content {
         match c {
-            pattern::PhraseElementTypeContent::Token(t) => push_token(t, &mut out),
-            pattern::PhraseElementTypeContent::And(a) => push_and(a, &mut out),
+            pattern::PhraseElementTypeContent::Token(t) => push_token(t, &mut out, false),
+            pattern::PhraseElementTypeContent::And(a) => push_and(a, &mut out, false),
             pattern::PhraseElementTypeContent::Unify(_) => {
                 out.push(Construct::Unsupported {
                     kind: "unify".to_owned(),
@@ -605,18 +599,11 @@ fn lower_rule(
     for c in &r.content {
         match c {
             rules::RuleElementTypeContent::Pattern(p) => {
-                let start = pattern.len();
-                lower_pattern(&p.content, &mut pattern, phrases);
-                if p.case_sensitive.as_ref().is_some_and(is_yes) {
-                    force_case_sensitive(&mut pattern[start..]);
-                }
+                let case_sensitive = p.case_sensitive.as_ref().is_some_and(is_yes);
+                lower_pattern(&p.content, &mut pattern, phrases, case_sensitive);
             }
             rules::RuleElementTypeContent::Antipattern(a) => {
-                let mut ap = lower_antipattern(a, phrases);
-                if a.case_sensitive.as_ref().is_some_and(is_yes) {
-                    force_case_sensitive(&mut ap);
-                }
-                antipatterns.push(ap);
+                antipatterns.push(lower_antipattern(a, phrases));
             }
             rules::RuleElementTypeContent::Filter(f) => pattern.push(Construct::Opaque {
                 class: f.class.clone(),
@@ -653,18 +640,19 @@ fn lower_rule(
 /// Lower an `<antipattern>` into a construct list (the same token vocabulary as a `<pattern>`;
 /// `<example>` children and unsupported sub-constructs are dropped/kept as `Unsupported`).
 fn lower_antipattern(a: &rules::AntipatternElementType, phrases: &Phrases) -> Vec<Construct> {
+    let cs = a.case_sensitive.as_ref().is_some_and(is_yes);
     let mut out = Vec::new();
     for item in &a.content {
         match item {
             rules::AntipatternElementTypeContent::Token(t) => {
-                push_token(t, &mut out);
+                push_token(t, &mut out, cs);
             }
             rules::AntipatternElementTypeContent::Marker(m) => {
                 out.push(Construct::MarkerStart);
-                lower_marker(&m.content, &mut out, phrases);
+                lower_marker(&m.content, &mut out, phrases, cs);
                 out.push(Construct::MarkerEnd);
             }
-            rules::AntipatternElementTypeContent::And(a) => push_and(a, &mut out),
+            rules::AntipatternElementTypeContent::And(a) => push_and(a, &mut out, cs),
             rules::AntipatternElementTypeContent::Unify(_) => {
                 out.push(Construct::Unsupported {
                     kind: "unify".to_owned(),
@@ -806,22 +794,23 @@ fn lower_pattern(
     content: &[rules::PatternElementTypeContent],
     out: &mut Vec<Construct>,
     phrases: &Phrases,
+    case_sensitive: bool,
 ) {
     for item in content {
         match item {
             rules::PatternElementTypeContent::Token(t) => {
-                push_token(t, out);
+                push_token(t, out, case_sensitive);
             }
             rules::PatternElementTypeContent::Marker(m) => {
                 out.push(Construct::MarkerStart);
-                lower_marker(&m.content, out, phrases);
+                lower_marker(&m.content, out, phrases, case_sensitive);
                 out.push(Construct::MarkerEnd);
             }
             rules::PatternElementTypeContent::Phraseref(p) => {
                 push_phraseref(&p.idref, out, phrases);
             }
-            rules::PatternElementTypeContent::And(a) => push_and(a, out),
-            rules::PatternElementTypeContent::Or(o) => push_or(o, out),
+            rules::PatternElementTypeContent::And(a) => push_and(a, out, case_sensitive),
+            rules::PatternElementTypeContent::Or(o) => push_or(o, out, case_sensitive),
             rules::PatternElementTypeContent::Unify(_) => {
                 out.push(Construct::Unsupported {
                     kind: "unify".to_owned(),
@@ -836,14 +825,15 @@ fn lower_marker(
     content: &[pattern::MarkerElementTypeContent],
     out: &mut Vec<Construct>,
     phrases: &Phrases,
+    case_sensitive: bool,
 ) {
     for item in content {
         match item {
             pattern::MarkerElementTypeContent::Token(t) => {
-                push_token(t, out);
+                push_token(t, out, case_sensitive);
             }
-            pattern::MarkerElementTypeContent::Or(o) => push_or(o, out),
-            pattern::MarkerElementTypeContent::And(a) => push_and(a, out),
+            pattern::MarkerElementTypeContent::Or(o) => push_or(o, out, case_sensitive),
+            pattern::MarkerElementTypeContent::And(a) => push_and(a, out, case_sensitive),
             pattern::MarkerElementTypeContent::Phraseref(p) => {
                 push_phraseref(&p.idref, out, phrases);
             }
@@ -875,13 +865,13 @@ fn push_phraseref(idref: &str, out: &mut Vec<Construct>, phrases: &Phrases) {
 /// Push a `<token>` as a construct. A token containing a `<match>` child is a back-reference
 /// matcher (its value depends on another captured token) we can't faithfully match, so it becomes
 /// `Unsupported` — which makes the enclosing rule skip rather than match too loosely.
-fn push_token(t: &pattern::TokenElementType, out: &mut Vec<Construct>) {
+fn push_token(t: &pattern::TokenElementType, out: &mut Vec<Construct>, case_sensitive: bool) {
     if token_has_match(t) {
         out.push(Construct::Unsupported {
             kind: "token-match".to_owned(),
         });
     } else {
-        out.push(Construct::Token(lower_token(t)));
+        out.push(Construct::Token(lower_token(t, case_sensitive)));
     }
 }
 
@@ -894,7 +884,7 @@ fn token_has_match(t: &pattern::TokenElementType) -> bool {
 
 /// Push an `<or>` as `Construct::Or` (alternatives), or `Unsupported` if any alternative is not a
 /// plain token.
-fn push_or(o: &pattern::OrElementType, out: &mut Vec<Construct>) {
+fn push_or(o: &pattern::OrElementType, out: &mut Vec<Construct>, case_sensitive: bool) {
     let mut alts = Vec::new();
     for c in &o.content {
         // `OrElementTypeContent` has a single `Token` variant, so this is irrefutable.
@@ -905,7 +895,7 @@ fn push_or(o: &pattern::OrElementType, out: &mut Vec<Construct>) {
             });
             return;
         }
-        alts.push(lower_token(t));
+        alts.push(lower_token(t, case_sensitive));
     }
     out.push(if alts.is_empty() {
         Construct::Unsupported {
@@ -918,12 +908,12 @@ fn push_or(o: &pattern::OrElementType, out: &mut Vec<Construct>) {
 
 /// Push an `<and>` as `Construct::And` (constraints that must all hold), or `Unsupported` if it
 /// contains a non-token child (e.g. a nested `<marker>`).
-fn push_and(a: &pattern::AndElementType, out: &mut Vec<Construct>) {
+fn push_and(a: &pattern::AndElementType, out: &mut Vec<Construct>, case_sensitive: bool) {
     let mut alts = Vec::new();
     for c in &a.content {
         match c {
             pattern::AndElementTypeContent::Token(t) if !token_has_match(t) => {
-                alts.push(lower_token(t));
+                alts.push(lower_token(t, case_sensitive));
             }
             _ => {
                 out.push(Construct::Unsupported {
@@ -942,17 +932,22 @@ fn push_and(a: &pattern::AndElementType, out: &mut Vec<Construct>) {
     });
 }
 
-/// Lower a `<token>`'s declarative attributes, literal/regex text and `<exception>`s.
-fn lower_token(t: &pattern::TokenElementType) -> TokenPat {
-    let exceptions = t
+/// Lower a `<token>`'s declarative attributes, literal/regex text and `<exception>`s;
+/// `pattern_case_sensitive` is the enclosing `<pattern>`/`<antipattern>`'s `case_sensitive`.
+fn lower_token(t: &pattern::TokenElementType, pattern_case_sensitive: bool) -> TokenPat {
+    let excs: Vec<&pattern::ExceptionElementType> = t
         .content
         .iter()
         .filter_map(|c| match c {
-            pattern::TokenElementTypeContent::Exception(e) => Some(lower_exception(&e.value)),
+            pattern::TokenElementTypeContent::Exception(e) => Some(&e.value),
             pattern::TokenElementTypeContent::Match(_) => None,
         })
         .collect();
-    TokenPat {
+    let exceptions_explicit: Vec<Option<bool>> = excs
+        .iter()
+        .map(|e| e.case_sensitive.as_ref().map(is_yes))
+        .collect();
+    let mut token = TokenPat {
         text: token_literal(t),
         postag: t.postag.clone(),
         regexp: is_yes(&t.regexp),
@@ -963,10 +958,17 @@ fn lower_token(t: &pattern::TokenElementType) -> TokenPat {
         min: t.min,
         max: t.max,
         skip: t.skip,
-        case_sensitive: t.case_sensitive.as_ref().is_some_and(is_yes),
+        case_sensitive: false, // resolved below
         space_before: space_before(&t.spacebefore),
-        exceptions,
-    }
+        exceptions: excs.into_iter().map(lower_exception).collect(),
+    };
+    resolve_case(
+        &mut token,
+        pattern_case_sensitive,
+        t.case_sensitive.as_ref().map(is_yes),
+        &exceptions_explicit,
+    );
+    token
 }
 
 /// Lower LT's `spacebefore` (`yes`/`no`/`ignore`) to the IR's optional whitespace constraint.
@@ -1032,26 +1034,38 @@ fn trimmed(text: Option<&xsd_parser_types::xml::Text>) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Force case-sensitive matching on every token (and its exceptions) and rule-level `<regexp>` in
-/// `constructs`. `<pattern>`/`<antipattern>` carry a `case_sensitive="yes"` that applies to *all* their
-/// tokens, but the lowering only sees the children, not that attribute — so the enclosing scope stamps
-/// it on afterward. Without this, a case-sensitive uppercase regex (e.g. Russian `AllCaps`'s
-/// `[А-ЯЁ]{4,4}…`) matches case-insensitively and fires on every capitalised word. Shared with the
-/// disambiguation lowering, which has the same `<pattern case_sensitive>` (98 in en, 284 in de).
-pub(crate) fn force_case_sensitive(constructs: &mut [Construct]) {
-    fn mark(t: &mut TokenPat) {
-        t.case_sensitive = true;
-        for e in &mut t.exceptions {
-            e.case_sensitive = true;
-        }
-    }
-    for c in constructs {
-        match c {
-            Construct::Token(t) => mark(t),
-            Construct::Or(ts) | Construct::And(ts) => ts.iter_mut().for_each(mark),
-            Construct::Regexp { case_sensitive, .. } => *case_sensitive = true,
-            _ => {}
-        }
+/// Whether a regex uses `\p{Lu}`/`\p{Ll}`, which LT treats as case-sensitive (for Java 15
+/// compatibility, `XMLRuleHandler.hasPosixCharacterClass`, v6.8).
+fn has_case_class(text: Option<&str>) -> bool {
+    text.is_some_and(|s| s.contains(r"\p{Lu}") || s.contains(r"\p{Ll}"))
+}
+
+/// Set the case sensitivity of `token` and its exceptions as LT resolves it
+/// (`XMLRuleHandler.finalizeTokens` and `finalizeExceptions`, v6.8). `pattern` is the enclosing
+/// `<pattern>`/`<antipattern>`'s `case_sensitive`; `explicit` and `exceptions_explicit` are the
+/// `case_sensitive` attributes written on the token and on each exception, if any:
+///
+/// - the token takes its own attribute, else the pattern's, and a `\p{Lu}`/`\p{Ll}` class in its
+///   text makes it case-sensitive (overriding an explicit `no` only when it has exceptions);
+/// - an exception takes its own attribute, else the token's (before the class check), and a class in
+///   its own text makes it case-sensitive.
+///
+/// Shared by the grammar and disambiguation lowerings.
+pub(crate) fn resolve_case(
+    token: &mut TokenPat,
+    pattern: bool,
+    explicit: Option<bool>,
+    exceptions_explicit: &[Option<bool>],
+) {
+    let base = explicit.unwrap_or(pattern);
+    let class = has_case_class(token.text.as_deref());
+    token.case_sensitive = if token.exceptions.is_empty() {
+        explicit.unwrap_or(pattern || class)
+    } else {
+        base || class
+    };
+    for (e, own) in token.exceptions.iter_mut().zip(exceptions_explicit) {
+        e.case_sensitive = has_case_class(e.text.as_deref()) || own.unwrap_or(base);
     }
 }
 
@@ -1451,6 +1465,53 @@ mod tests {
                 "{code}: full ids carry the [n] suffix"
             );
         }
+    }
+
+    /// LT's case-sensitivity precedence (`XMLRuleHandler.finalizeTokens`/`finalizeExceptions`).
+    #[test]
+    fn case_sensitivity_resolves_like_lt() {
+        use rlt_ir::{ExceptionPat, TokenPat};
+        let tok = |text: &str, excs: &[&str]| TokenPat {
+            text: Some(text.to_owned()),
+            exceptions: excs
+                .iter()
+                .map(|e| ExceptionPat {
+                    text: Some((*e).to_owned()),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let resolved = |mut t: TokenPat, pattern, explicit, excs: &[Option<bool>]| {
+            super::resolve_case(&mut t, pattern, explicit, excs);
+            (
+                t.case_sensitive,
+                t.exceptions
+                    .iter()
+                    .map(|e| e.case_sensitive)
+                    .collect::<Vec<_>>(),
+            )
+        };
+        // A token's own `case_sensitive="no"` wins over the pattern's `yes`.
+        assert_eq!(
+            resolved(tok("a", &[]), true, Some(false), &[]),
+            (false, vec![])
+        );
+        // \p{Lu} implies case-sensitive.
+        assert_eq!(
+            resolved(tok(r"\p{Lu}.*", &[]), false, None, &[]),
+            (true, vec![])
+        );
+        // Exceptions inherit the token's setting unless they set their own or use \p{Ll}.
+        assert_eq!(
+            resolved(
+                tok("a", &["b", "c", r"\p{Ll}+"]),
+                false,
+                Some(true),
+                &[None, Some(false), Some(false)]
+            ),
+            (true, vec![true, false, true])
+        );
     }
 
     /// en/de/ru/ar have only an *inline* internal subset — a `base_dir` must not change their

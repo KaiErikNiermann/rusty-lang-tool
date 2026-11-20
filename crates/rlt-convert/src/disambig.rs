@@ -81,15 +81,9 @@ fn lower_rule(rule: &XRule, group_id: Option<&str>) -> DisambigRule {
         .to_owned();
     let mut pattern = Vec::new();
     let supported_pattern = match &rule.pattern {
-        Some(p) => {
-            let ok = lower_items(&p.items, &mut pattern);
-            // `<pattern case_sensitive="yes">` applies to all the pattern's tokens; the serde model
-            // doesn't thread it down, so stamp it on after lowering (98 such patterns in en, 284 de).
-            if ok && is_yes(p.case_sensitive.as_deref()) {
-                crate::force_case_sensitive(&mut pattern);
-            }
-            ok
-        }
+        // `<pattern case_sensitive="yes">` applies to the pattern's tokens unless a token says
+        // otherwise (98 such patterns in en, 284 in de).
+        Some(p) => lower_items(&p.items, &mut pattern, is_yes(p.case_sensitive.as_deref())),
         None => false,
     };
     let action = if supported_pattern && !pattern.is_empty() {
@@ -106,12 +100,8 @@ fn lower_rule(rule: &XRule, group_id: Option<&str>) -> DisambigRule {
         .iter()
         .filter_map(|a| {
             let mut ap = Vec::new();
-            (lower_items(&a.items, &mut ap) && !ap.is_empty()).then(|| {
-                if is_yes(a.case_sensitive.as_deref()) {
-                    crate::force_case_sensitive(&mut ap);
-                }
-                ap
-            })
+            let case_sensitive = is_yes(a.case_sensitive.as_deref());
+            (lower_items(&a.items, &mut ap, case_sensitive) && !ap.is_empty()).then_some(ap)
         })
         .collect();
     DisambigRule {
@@ -124,25 +114,25 @@ fn lower_rule(rule: &XRule, group_id: Option<&str>) -> DisambigRule {
 
 /// Lower an ordered list of pattern items into constructs, returning `false` if any is unsupported
 /// (a `<match>`/`chunk_re` token, `<unify>`) — in which case the rule must not run.
-fn lower_items(items: &[XPatItem], out: &mut Vec<Construct>) -> bool {
+fn lower_items(items: &[XPatItem], out: &mut Vec<Construct>, case_sensitive: bool) -> bool {
     for item in items {
         match item {
-            XPatItem::Token(t) => match lower_token(t) {
+            XPatItem::Token(t) => match lower_token(t, case_sensitive) {
                 Some(p) => out.push(Construct::Token(p)),
                 None => return false,
             },
             XPatItem::Marker(m) => {
                 out.push(Construct::MarkerStart);
-                if !lower_items(&m.items, out) {
+                if !lower_items(&m.items, out, case_sensitive) {
                     return false;
                 }
                 out.push(Construct::MarkerEnd);
             }
-            XPatItem::And(g) => match lower_group(g) {
+            XPatItem::And(g) => match lower_group(g, case_sensitive) {
                 Some(alts) => out.push(Construct::And(alts)),
                 None => return false,
             },
-            XPatItem::Or(g) => match lower_group(g) {
+            XPatItem::Or(g) => match lower_group(g, case_sensitive) {
                 Some(alts) => out.push(Construct::Or(alts)),
                 None => return false,
             },
@@ -154,18 +144,23 @@ fn lower_items(items: &[XPatItem], out: &mut Vec<Construct>) -> bool {
 }
 
 /// Lower an `<and>`/`<or>` group's tokens, or `None` if any token is unsupported.
-fn lower_group(g: &XGroup) -> Option<Vec<TokenPat>> {
-    let alts: Option<Vec<TokenPat>> = g.token.iter().map(lower_token).collect();
+fn lower_group(g: &XGroup, case_sensitive: bool) -> Option<Vec<TokenPat>> {
+    let alts: Option<Vec<TokenPat>> = g
+        .token
+        .iter()
+        .map(|t| lower_token(t, case_sensitive))
+        .collect();
     alts.filter(|a| !a.is_empty())
 }
 
 /// Lower a `<token>` to a [`TokenPat`], or `None` if it carries a `<match>` back-reference or a
-/// `chunk`/`chunk_re` constraint we can't evaluate.
-fn lower_token(t: &XToken) -> Option<TokenPat> {
+/// `chunk`/`chunk_re` constraint we can't evaluate. `pattern_case_sensitive` is the enclosing
+/// pattern's `case_sensitive`.
+fn lower_token(t: &XToken, pattern_case_sensitive: bool) -> Option<TokenPat> {
     if !t.r#match.is_empty() || t.chunk_re.is_some() || t.chunk.is_some() {
         return None;
     }
-    Some(TokenPat {
+    let mut token = TokenPat {
         text: trimmed(t.text.as_deref()),
         postag: t.postag.clone(),
         regexp: is_yes(t.regexp.as_deref()),
@@ -176,10 +171,23 @@ fn lower_token(t: &XToken) -> Option<TokenPat> {
         min: t.min,
         max: t.max,
         skip: t.skip,
-        case_sensitive: is_yes(t.case_sensitive.as_deref()),
+        case_sensitive: false, // resolved below
         space_before: space_before(t.spacebefore.as_deref()),
         exceptions: t.exception.iter().map(lower_exception).collect(),
-    })
+    };
+    let explicit = |v: Option<&str>| v.map(|v| is_yes(Some(v)));
+    let exceptions_explicit: Vec<Option<bool>> = t
+        .exception
+        .iter()
+        .map(|e| explicit(e.case_sensitive.as_deref()))
+        .collect();
+    crate::resolve_case(
+        &mut token,
+        pattern_case_sensitive,
+        explicit(t.case_sensitive.as_deref()),
+        &exceptions_explicit,
+    );
+    Some(token)
 }
 
 /// LT's `spacebefore` (`yes`/`no`/`ignore`) as an optional whitespace constraint.
