@@ -577,8 +577,8 @@ impl TokenMatcher {
             return false;
         }
         // Disqualified if any exception matches: `current` ones against this token, `previous` ones
-        // against the token before it. `next` ones are applied by the quantifier loop (they also
-        // bound what a `skip` may pass over), see `blocks_next`.
+        // against the token before it. `next` ones are applied by `match_elements`, see
+        // `blocks_next`.
         !self.exceptions.iter().any(|e| match e.scope {
             ExceptionScope::Current => e.exception_hits(token),
             ExceptionScope::Previous => k > 0 && e.exception_hits(&tokens[k - 1]),
@@ -591,8 +591,8 @@ impl TokenMatcher {
         if self.negate { !m } else { m }
     }
 
-    /// Whether `token` matches one of this matcher's `scope="next"` exceptions, i.e. may be neither
-    /// the token right after a match of this matcher nor one that a `skip` passes over.
+    /// Whether `token` matches one of this matcher's `scope="next"` exceptions (see
+    /// `match_elements` for which tokens that is tested against).
     fn blocks_next(&self, token: &Token) -> bool {
         self.exceptions
             .iter()
@@ -648,18 +648,30 @@ fn match_elements(
     let elem = &elements[ei];
     let remaining = tokens.len() - ti;
     let max = elem.max.min(remaining);
+    // `scope="next"` exceptions are checked where LT v6.8 checks them
+    // (`AbstractPatternRulePerformer.testAllReadings`): when the previous element has no `skip`,
+    // against the token right after this one, also for the last element of a pattern; and when this
+    // element has a `skip`, against every token the skip passes over and the next element's
+    // candidate. An element without `skip` that follows one with `skip` is not checked at all.
+    let prev_skip = ei.checked_sub(1).map_or(0, |p| elements[p].skip);
 
     for count in elem.min..=max {
         if count > 0 && !(ti..ti + count).all(|k| elem.matcher.matches(tokens, k)) {
             break; // contiguous run broken — larger counts cannot match either
         }
+        if count > 0
+            && prev_skip == 0
+            && tokens
+                .get(ti + 1)
+                .is_some_and(|t| elem.matcher.blocks_next(t))
+        {
+            break; // depends only on `ti`, so larger counts are blocked too
+        }
         captures[ei] = (count > 0).then_some((ti, ti + count));
         let base = ti + count;
         let skip_end = (base + elem.skip).min(tokens.len());
         for next in base..=skip_end {
-            // `scope="next"` exceptions: the token after the match, and every token the skip passes
-            // over, must not hit them (only relevant while another element still has to match).
-            if ei + 1 < elements.len()
+            if elem.skip > 0
                 && tokens
                     .get(next)
                     .is_some_and(|t| elem.matcher.blocks_next(t))
@@ -1356,6 +1368,79 @@ mod tests {
         );
         assert_eq!(
             matcher.grammar_diagnostics("a x , b", &comma),
+            [] as [Diagnostic; 0]
+        );
+    }
+
+    fn tok_next_exc(text: &str, skip: Option<i32>, exc: &str) -> Construct {
+        Construct::Token(TokenPat {
+            text: Some(text.to_owned()),
+            skip,
+            exceptions: vec![rlt_ir::ExceptionPat {
+                text: Some(exc.to_owned()),
+                scope: rlt_ir::ExceptionScope::Next,
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+    }
+
+    fn rule_of(id: &str, pattern: Vec<Construct>) -> Rule {
+        Rule {
+            id: id.to_owned(),
+            pattern,
+            antipatterns: vec![],
+            message: String::new(),
+            suggestions: vec![IrSuggestion {
+                parts: vec![SugPart::Text("x".to_owned())],
+            }],
+        }
+    }
+
+    fn plain(text: &str) -> Analysis {
+        let words: Vec<(&str, &[&str], &[&str])> =
+            text.split(' ').map(|w| (w, &[][..], &[][..])).collect();
+        analyze(text, &words)
+    }
+
+    #[test]
+    fn next_scope_exception_on_last_element_checks_following_token() {
+        // LT checks a last element's `scope="next"` exception against the token after the match:
+        // `a` not followed by `b`.
+        let matcher = IrMatcher::new(&[rule_of("LAST_NEXT", vec![tok_next_exc("a", None, "b")])]);
+        assert_eq!(matcher.grammar_diagnostics("a c", &plain("a c")).len(), 1);
+        assert_eq!(matcher.grammar_diagnostics("c a", &plain("c a")).len(), 1);
+        assert_eq!(
+            matcher.grammar_diagnostics("a b", &plain("a b")),
+            [] as [Diagnostic; 0]
+        );
+    }
+
+    #[test]
+    fn next_scope_exception_after_skip_element_is_not_checked() {
+        // LT only tests an element's own `scope="next"` exception when the element before it has
+        // no `skip` (`prevSkipNext == 0` in `testAllReadings`); after a skipping element it is inert.
+        let matcher = IrMatcher::new(&[rule_of(
+            "QUIRK",
+            vec![
+                Construct::Token(TokenPat {
+                    text: Some("a".to_owned()),
+                    skip: Some(-1),
+                    ..Default::default()
+                }),
+                tok_next_exc("b", None, "c"),
+                lit("c"),
+            ],
+        )]);
+        let text = "a b c";
+        assert_eq!(matcher.grammar_diagnostics(text, &plain(text)).len(), 1);
+        // The same element after a non-skipping predecessor is checked, and blocks the match.
+        let checked = IrMatcher::new(&[rule_of(
+            "CHECKED",
+            vec![lit("a"), tok_next_exc("b", None, "c"), lit("c")],
+        )]);
+        assert_eq!(
+            checked.grammar_diagnostics(text, &plain(text)),
             [] as [Diagnostic; 0]
         );
     }
