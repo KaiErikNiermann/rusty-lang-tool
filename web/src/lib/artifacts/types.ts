@@ -35,6 +35,8 @@ export interface LangArtifacts {
     "disambig.rkyv"?: ArtifactRef;
     /** L3 real-word-error model (en/de/ru/fr/es); absent for ar/it. */
     "confusion.rkyv"?: ArtifactRef;
+    /** Word-form synthesizer for suggestions that need an inflected form (de); absent elsewhere. */
+    "synth.rkyv"?: ArtifactRef;
   };
 }
 
@@ -128,6 +130,8 @@ export interface LangBytes {
   /** Empty when the language ships no disambiguation. */
   disambig: Uint8Array;
   grammar: Uint8Array;
+  /** Empty when the language ships no word-form synthesizer (every language but de). */
+  synth: Uint8Array;
   /** Empty when the language has no L3 confusion model (ar/it). */
   confusion: Uint8Array;
 }

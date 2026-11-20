@@ -76,6 +76,8 @@ interface StagedFetch {
   grammar: Promise<Uint8Array>;
   /** Resolves to an empty buffer when the language ships no disambiguation. */
   disambig: Promise<Uint8Array>;
+  /** Resolves to an empty buffer when the language ships no word-form synthesizer. */
+  synth: Promise<Uint8Array>;
   /** Resolves to an empty buffer when the language has no L3 confusion model. */
   confusion: Promise<Uint8Array>;
   /** Resolves once every artifact above has settled successfully (drives the "ready" state). */
@@ -228,6 +230,7 @@ export class ArtifactStore {
     const all = [srx, lang.files["tagger.rkyv"], lang.files["grammar.rkyv"]];
     if (lang.files["disambig.rkyv"]) all.push(lang.files["disambig.rkyv"]);
     if (lang.files["confusion.rkyv"]) all.push(lang.files["confusion.rkyv"]);
+    if (lang.files["synth.rkyv"]) all.push(lang.files["synth.rkyv"]);
     return { srx, lang, all };
   }
 
@@ -287,15 +290,16 @@ export class ArtifactStore {
     try {
       const { lang, srx, get } = this.progress(code, codec, signal, forceRefetch);
       const empty = Promise.resolve(new Uint8Array());
-      const [srxBytes, tagger, grammar, disambig, confusion] = await Promise.all([
+      const [srxBytes, tagger, grammar, disambig, synth, confusion] = await Promise.all([
         get(srx),
         get(lang.files["tagger.rkyv"]),
         get(lang.files["grammar.rkyv"]),
         lang.files["disambig.rkyv"] ? get(lang.files["disambig.rkyv"]) : empty,
+        lang.files["synth.rkyv"] ? get(lang.files["synth.rkyv"]) : empty,
         lang.files["confusion.rkyv"] ? get(lang.files["confusion.rkyv"]) : empty,
       ]);
       this.state.set({ kind: "ready" });
-      return { segmentSrx: new TextDecoder().decode(srxBytes), tagger, grammar, disambig, confusion };
+      return { segmentSrx: new TextDecoder().decode(srxBytes), tagger, grammar, disambig, synth, confusion };
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") throw err;
       const message = err instanceof Error ? err.message : String(err);
@@ -306,7 +310,7 @@ export class ArtifactStore {
 
   /**
    * Start a **staged** (Fast-track) load with **priority ordering**: the L1 group (tagger + shared srx +
-   * optional disambig) downloads first, *then* grammar, *then* confusion. On a bandwidth-bound link this
+   * optional disambig) downloads first, *then* grammar (with the optional synthesizer), *then* confusion. On a bandwidth-bound link this
    * is what makes progressive pay off — the tagger (the largest artifact, which spelling needs) completes
    * at its own size instead of finishing last in a parallel race, so spelling lights up well before the
    * later layers. The returned per-artifact promises let the caller build L1 → L2 → L3 as each group
@@ -326,11 +330,16 @@ export class ArtifactStore {
     // bandwidth (the first-lint win), but then download in parallel with *each other* so the total-load
     // penalty over a strict serial chain stays small.
     const grammar = l1Done.then(() => get(lang.files["grammar.rkyv"]));
+    // The synthesizer belongs to the grammar stage (the matcher is built with it), so it downloads
+    // alongside the grammar.
+    const synth = lang.files["synth.rkyv"]
+      ? l1Done.then(() => get(lang.files["synth.rkyv"] as ArtifactRef))
+      : empty;
     const confusion = lang.files["confusion.rkyv"]
       ? l1Done.then(() => get(lang.files["confusion.rkyv"] as ArtifactRef))
       : empty;
-    const done = this.settleOn([l1Done, grammar, confusion]);
-    return { ...l1, grammar, confusion, done };
+    const done = this.settleOn([l1Done, grammar, synth, confusion]);
+    return { ...l1, grammar, synth, confusion, done };
   }
 
   /** Flag an in-flight staged load as failed, for the UI. */

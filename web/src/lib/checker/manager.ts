@@ -97,9 +97,17 @@ export class CheckerManager {
               bytes.tagger,
               bytes.disambig,
               bytes.grammar,
+              bytes.synth,
               bytes.confusion,
             )
-          : mod.RltChecker.with_native(code, bytes.segmentSrx, bytes.tagger, bytes.disambig, bytes.grammar);
+          : mod.RltChecker.with_native(
+              code,
+              bytes.segmentSrx,
+              bytes.tagger,
+              bytes.disambig,
+              bytes.grammar,
+              bytes.synth,
+            );
       this.install(code, checker);
       onStage?.("all");
     }
@@ -128,9 +136,9 @@ export class CheckerManager {
       this.install(code, mod.RltChecker.with_native_spelling(code, segmentSrx, tagger, disambig));
       onStage?.("spelling");
 
-      // L2 — grammar.
-      const grammar = await f.grammar;
-      this.install(code, mod.RltChecker.with_native(code, segmentSrx, tagger, disambig, grammar));
+      // L2 — grammar, with the word-form synthesizer when the language ships one.
+      const [grammar, synth] = await Promise.all([f.grammar, f.synth]);
+      this.install(code, mod.RltChecker.with_native(code, segmentSrx, tagger, disambig, grammar, synth));
       onStage?.("grammar");
 
       // L3 — confusion, when the language ships a model.
@@ -138,7 +146,7 @@ export class CheckerManager {
         const confusion = await f.confusion;
         this.install(
           code,
-          mod.RltChecker.with_native_confusion(code, segmentSrx, tagger, disambig, grammar, confusion),
+          mod.RltChecker.with_native_confusion(code, segmentSrx, tagger, disambig, grammar, synth, confusion),
         );
         onStage?.("confusion");
       }
