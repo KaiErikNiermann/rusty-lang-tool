@@ -79,3 +79,6 @@ __pycache__/
 /LOG.md
 /.upstream-issues/
 /.scratch/
+
+# Playwright MCP screenshots and snapshots
+/.playwright-mcp/
