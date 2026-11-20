@@ -138,6 +138,8 @@ struct CompiledRule {
     suggestions: Vec<CompiledSuggestion>,
     /// Antipattern element sequences; if any matches overlapping the rule's match, suppress it.
     antipatterns: Vec<Vec<Elem>>,
+    /// Whether suggestions follow the matched text's case (see [`CaseAdjust`]).
+    adjust_case: bool,
 }
 
 /// A correction template with any `regexp_replace` transforms pre-compiled.
@@ -262,6 +264,7 @@ fn compile_rule(r: &Rule) -> Option<CompiledRule> {
         marker,
         suggestions,
         antipatterns,
+        adjust_case: preserves_case(&r.suggestions),
     })
 }
 
@@ -723,6 +726,80 @@ fn suppressed(rule: &CompiledRule, tokens: &[Token], start: usize, end: usize) -
 
 /// Build a diagnostic from a successful match, or `None` if the marker is empty or no suggestion
 /// renders.
+/// LT's `matchPreservesCase` (`PatternRuleMatcher`, v6.8): a rule whose first suggestion starts with
+/// a token reference, while some reference converts case, keeps its suggestions' case as written.
+/// LT checks the suggestions inside `<message>` and those after it separately; the IR keeps one
+/// list, so this checks the first suggestion of that list.
+fn preserves_case(suggestions: &[IrSuggestion]) -> bool {
+    let starts_with_ref = suggestions
+        .first()
+        .is_some_and(|s| matches!(s.parts.first(), Some(SugPart::Token { .. })));
+    let converts = suggestions
+        .iter()
+        .flat_map(|s| &s.parts)
+        .any(|p| matches!(p, SugPart::Token { case, .. } if !matches!(case, Case::Keep)));
+    !(starts_with_ref && converts)
+}
+
+/// LT's adjustment of a suggestion's case to the matched text (`PatternRuleMatcher.createRuleMatch`
+/// and the `RuleMatch` constructor, v6.8): all upper-case when the matched words are, otherwise a
+/// capital first letter when the first marked word has one (the word after the sentence start, if
+/// the marker begins there).
+struct CaseAdjust<'a> {
+    all_upper: bool,
+    start_upper: bool,
+    /// The marked text: an all-upper-case suggestion equal to it is left as written.
+    original: &'a str,
+}
+
+impl<'a> CaseAdjust<'a> {
+    /// The adjustment for a match whose marker starts at token `first`, whose pattern ends before
+    /// token `end`, and whose marked text is `original`.
+    fn new(adjust: bool, tokens: &[Token], first: usize, end: usize, original: &'a str) -> Self {
+        let words: Vec<&str> = tokens[first..end].iter().map(|t| t.text.as_str()).collect();
+        let first_text = words.first().copied().unwrap_or_default();
+        let all_upper = words.iter().all(|w| !w.chars().any(char::is_lowercase))
+            && words.iter().any(|w| w.chars().any(char::is_alphabetic))
+            && (first_text.replace('\'', "").chars().count() > 1 || end - first > 1);
+        // The zero-width sentence-start token has no case of its own: LT looks at the next one.
+        let lead = if first_text.is_empty() && first + 1 < tokens.len() {
+            tokens[first + 1].text.as_str()
+        } else {
+            first_text
+        };
+        Self {
+            all_upper: adjust && all_upper,
+            start_upper: adjust && lead.chars().next().is_some_and(char::is_uppercase),
+            original,
+        }
+    }
+
+    fn apply(&self, suggestion: String) -> String {
+        // A single mixed-case word (`iPhone`) keeps its case even in upper-case text.
+        if self.all_upper && (!is_mixed_case(&suggestion) || suggestion.contains(' ')) {
+            let upper = suggestion.to_uppercase();
+            if upper == self.original {
+                suggestion
+            } else {
+                upper
+            }
+        } else if self.start_upper {
+            crate::capitalize_first(&suggestion)
+        } else {
+            suggestion
+        }
+    }
+}
+
+/// LT's `StringTools.isMixedCase`: not all upper-case, not a capitalised word, and has an upper-case
+/// letter (`MixedCase`, `mixedCase`).
+fn is_mixed_case(s: &str) -> bool {
+    let mut chars = s.chars();
+    let capitalized = chars.next().is_some_and(char::is_uppercase)
+        && chars.all(|c| !c.is_alphabetic() || c.is_lowercase());
+    s.chars().any(char::is_lowercase) && !capitalized && s.chars().any(char::is_uppercase)
+}
+
 fn render(
     rule: &CompiledRule,
     text: &str,
@@ -737,10 +814,17 @@ fn render(
         end: tokens[mtok_end - 1].span.end,
     };
 
+    let case = CaseAdjust::new(
+        rule.adjust_case,
+        tokens,
+        mtok_start,
+        end,
+        text.get(span.start..span.end).unwrap_or_default(),
+    );
     let suggestions = dedup_suggestions(
         rule.suggestions
             .iter()
-            .map(|s| render_suggestion(s, text, tokens, captures)),
+            .map(|s| render_suggestion(s, text, tokens, captures).map(|r| case.apply(r))),
     );
     if suggestions.is_empty() {
         return None;
@@ -1653,6 +1737,40 @@ mod tests {
         assert_eq!(apply_case("haus", Case::Preserve, "BAUM"), "HAUS");
         assert_eq!(apply_case("Haus", Case::Preserve, "baum"), "Haus");
         assert_eq!(apply_case("", Case::StartLower, "x"), "");
+    }
+
+    #[test]
+    fn suggestion_case_follows_the_marked_text() {
+        let fix = |parts: Vec<SugPart>| IrSuggestion { parts };
+        let rule = |id: &str, sug: IrSuggestion| Rule {
+            id: id.to_owned(),
+            pattern: vec![lit("viele"), lit("erfolg")],
+            antipatterns: vec![],
+            message: String::new(),
+            suggestions: vec![sug],
+        };
+        let literal = IrMatcher::new(&[rule(
+            "LIT",
+            fix(vec![SugPart::Text("viel Erfolg".to_owned())]),
+        )]);
+        let check = |m: &IrMatcher, text: &str| {
+            m.grammar_diagnostics(text, &plain(text))[0].suggestions[0]
+                .replacement
+                .clone()
+        };
+        assert_eq!(check(&literal, "Viele Erfolg"), "Viel Erfolg");
+        assert_eq!(check(&literal, "viele Erfolg"), "viel Erfolg");
+        assert_eq!(check(&literal, "VIELE ERFOLG"), "VIEL ERFOLG");
+        // First suggestion starts with a reference that converts case: written case is kept.
+        let converting = IrMatcher::new(&[rule(
+            "REF",
+            fix(vec![SugPart::Token {
+                no: 1,
+                case: Case::Lower,
+                transform: None,
+            }]),
+        )]);
+        assert_eq!(check(&converting, "Viele Erfolg"), "viele");
     }
 
     #[test]
