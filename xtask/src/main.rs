@@ -121,7 +121,18 @@ enum Task {
         #[arg(long, default_value = "en")]
         lang: String,
     },
-    /// Build all per-language artifacts for `--lang` (tagger + disambig + grammar blob).
+    /// Build the word-form synthesis artifact (`resources/<lang>/synth.rkyv`) for `--lang` from the
+    /// synthesis dictionary and tag list in LanguageTool's `*-pos-dict` Maven jar (fetched when
+    /// absent) plus the LT checkout's `added.txt`, `removed.txt` and `do-not-synthesize.txt`. Only
+    /// for languages configured with a synthesizer; without the artifact, suggestions that need
+    /// inflected forms are rendered as before.
+    BuildSynth {
+        /// Language ISO code (e.g. `de`).
+        #[arg(long, default_value = "de")]
+        lang: String,
+    },
+    /// Build all per-language artifacts for `--lang` (tagger + disambig + grammar blob, and the
+    /// synthesizer where the language has one).
     BuildLang {
         /// Language ISO code (e.g. `en`, `de`).
         #[arg(long, default_value = "en")]
@@ -271,10 +282,14 @@ fn main() -> Result<()> {
         Task::BuildBlob { lang } => build_blob(lang_cfg(&lang)?),
         Task::BuildTagger { lang } => build_tagger(lang_cfg(&lang)?),
         Task::BuildDisambig { lang } => build_disambig(lang_cfg(&lang)?),
+        Task::BuildSynth { lang } => build_synth(lang_cfg(&lang)?),
         Task::BuildLang { lang } => {
             let cfg = lang_cfg(&lang)?;
             build_tagger(cfg)?;
             build_disambig(cfg)?;
+            if cfg.synth.is_some() {
+                build_synth(cfg)?;
+            }
             build_blob(cfg)
         }
         Task::Bench => run("cargo", &["bench", "-p", "rlt-native", "--bench", "engine"]),
@@ -1116,6 +1131,78 @@ fn agid_triples() -> Result<Vec<(String, String, String)>> {
     triples.retain(|(surface, ..)| !overridden.contains(surface));
     triples.extend(overrides);
     Ok(triples)
+}
+
+/// Supplements LanguageTool's `BaseSynthesizer` reads from the language's resource directory
+/// (v6.8, constructor lines 89-112): `added.txt` adds forms, the other two remove them.
+const SYNTH_ADDED: &str = "added.txt";
+const SYNTH_REMOVED: [&str; 2] = ["removed.txt", "do-not-synthesize.txt"];
+
+/// Build `cfg`'s synthesis artifact (`resources/<lang>/synth.rkyv`): the synthesis dictionary and
+/// tag list extracted from the POS-dict jar (kept next to it as `synth.dict`, `synth.info`,
+/// `synth-tags.txt`), the supplements from the LT checkout, packed by `rlt_native`.
+fn build_synth(cfg: &'static rlt_lang::LangConfig) -> Result<()> {
+    let Some(synth) = cfg.synth else {
+        bail!("{} has no synthesis dictionary configured", cfg.code);
+    };
+    let Some(url) = cfg.pos_dict.jar_url() else {
+        bail!(
+            "{}: the synthesis dictionary ships in the POS-dict jar, which this language does not use",
+            cfg.code
+        );
+    };
+    std::fs::create_dir_all(cfg.resource_dir())?;
+    let jar = cfg.pos_jar_local();
+    fetch_if_absent(&jar, &url)?;
+    let extract = |member: &str, dest: String| -> Result<Vec<u8>> {
+        let out = Command::new("unzip")
+            .args(["-p", &jar, member])
+            .output()
+            .context("running `unzip` (is it installed?)")?;
+        if !out.status.success() || out.stdout.is_empty() {
+            bail!(
+                "could not extract {member} from {jar}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        std::fs::write(&dest, &out.stdout).with_context(|| format!("writing {dest}"))?;
+        Ok(out.stdout)
+    };
+    let dict = extract(synth.jar_dict_path, cfg.synth_dict_local())?;
+    let info = String::from_utf8(extract(synth.jar_info_path, cfg.synth_info_local())?)?;
+    let tags = String::from_utf8(extract(synth.jar_tags_path, cfg.synth_tags_local())?)?;
+
+    let res = cfg.lt_resource_dir();
+    let read = |name: &str| -> Result<Vec<rlt_native::ManualEntry>> {
+        let path = format!("{res}/{name}");
+        if !Path::new(&path).exists() {
+            return Ok(Vec::new());
+        }
+        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
+        Ok(rlt_native::parse_manual_entries(&text, &path)?)
+    };
+    let added = read(SYNTH_ADDED)?;
+    let mut removed = Vec::new();
+    for name in SYNTH_REMOVED {
+        removed.extend(read(name)?);
+    }
+    let out = cfg.synth_path();
+    let bytes = rlt_native::build_synth_artifact(&rlt_native::SynthSources {
+        dict,
+        info: &info,
+        tags: &tags,
+        added: &added,
+        removed: &removed,
+    })
+    .map_err(|e| anyhow::anyhow!("building synthesis artifact: {e}"))?;
+    std::fs::write(&out, &bytes).with_context(|| format!("writing {out}"))?;
+    println!(
+        "wrote {out}: {} added, {} removed supplement forms, {} bytes",
+        added.len(),
+        removed.len(),
+        bytes.len(),
+    );
+    Ok(())
 }
 
 /// Lower `cfg`'s `disambiguation.xml` into `resources/<lang>/disambig.rkyv`.

@@ -70,9 +70,13 @@ fetch-engine:
 langs:
     @cargo run -q -p xtask -- lang-codes
 
-# Build one language's native artifacts (tagger + disambig + grammar blob)
+# Build one language's native artifacts (tagger + disambig + grammar blob, + synthesizer where configured)
 build-lang lang:
     cargo run -p xtask -- build-lang --lang {{lang}}
+
+# Build one language's word-form synthesis artifact (suggestions that need inflected forms)
+build-synth lang="de":
+    cargo run -p xtask -- build-synth --lang {{lang}}
 
 # Build every configured language's artifacts
 build-all:

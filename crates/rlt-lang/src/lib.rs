@@ -46,6 +46,39 @@ pub struct LangConfig {
     /// "Ich" is a pronoun as well as the noun "das Ich". Languages without it keep the tagger's
     /// plain exact-then-lower-case lookup.
     pub sentence_start_lowercase: bool,
+    /// Word-form synthesis for suggestions (`<match postag=…>`), for languages whose synthesis
+    /// dictionary is wired in; `None` leaves such suggestions as the matcher renders them without one.
+    pub synth: Option<SynthConfig>,
+}
+
+/// Where a language's synthesis dictionary comes from and how its lookups are filtered.
+///
+/// The dictionary is a morfologik automaton keyed `lemma|POS-tag` (LT's `german_synth.dict`),
+/// shipped next to the POS dictionary in the same Maven jar ([`PosDict::Maven`]), together with the
+/// list of POS tags a tag regex is matched against. The supplements `added.txt`, `removed.txt` and
+/// `do-not-synthesize.txt` come from the LT checkout's resource directory, when it has them.
+#[derive(Debug, Clone, Copy)]
+pub struct SynthConfig {
+    /// Path of the synthesis `.dict` inside the POS-dict jar.
+    pub jar_dict_path: &'static str,
+    /// Path of its `.info` inside the jar.
+    pub jar_info_path: &'static str,
+    /// Path of the list of possible POS tags (one per line) inside the jar.
+    pub jar_tags_path: &'static str,
+    /// The language synthesizer's own filters on top of the dictionary.
+    pub policy: SynthPolicy,
+}
+
+/// Filters a language's `Synthesizer` subclass applies to dictionary lookups.
+#[derive(Debug, Clone, Copy)]
+pub struct SynthPolicy {
+    /// Keep a form only if it starts in the same case as the lemma (German: "don't inflect a
+    /// lowercase lemma to an uppercase word and vice versa").
+    pub keep_case_class: bool,
+    /// Lemmas exempt from `keep_case_class` (German `mein`, `ich`, because of `Ihr`/`Sie`).
+    pub case_exempt_lemmas: &'static [&'static str],
+    /// Forms never offered (old spellings and `unsre`-style contractions still in the dictionary).
+    pub forbidden_forms: &'static [&'static str],
 }
 
 /// Where a language's morfologik POS dictionary comes from. Most languages publish a standalone
@@ -282,6 +315,26 @@ impl LangConfig {
     pub fn disambig_path(&self) -> String {
         format!("resources/{}/disambig.rkyv", self.code)
     }
+    /// The word-form synthesis artifact (languages with a [`SynthConfig`]).
+    #[must_use]
+    pub fn synth_path(&self) -> String {
+        format!("resources/{}/synth.rkyv", self.code)
+    }
+    /// Local path of the synthesis `.dict` extracted from the POS-dict jar.
+    #[must_use]
+    pub fn synth_dict_local(&self) -> String {
+        format!("resources/{}/synth.dict", self.code)
+    }
+    /// Local path of the synthesis `.info` extracted from the POS-dict jar.
+    #[must_use]
+    pub fn synth_info_local(&self) -> String {
+        format!("resources/{}/synth.info", self.code)
+    }
+    /// Local path of the possible-POS-tag list extracted from the POS-dict jar.
+    #[must_use]
+    pub fn synth_tags_local(&self) -> String {
+        format!("resources/{}/synth-tags.txt", self.code)
+    }
     /// The compiled grammar-rules (IR) artifact.
     #[must_use]
     pub fn grammar_blob_path(&self) -> String {
@@ -425,6 +478,7 @@ pub static EN: LangConfig = LangConfig {
     elision: &[],
     compounds: None,
     sentence_start_lowercase: false,
+    synth: None,
 };
 
 /// German. The morfologik dict is complete (no AGID/closed-class); STTS-style tagset; compounds split.
@@ -473,6 +527,48 @@ pub static DE: LangConfig = LangConfig {
         min_part_len: 3,
     }),
     sentence_start_lowercase: true,
+    // `GermanSynthesizer` (LT v6.8): its `REMOVE` list and `lookup` case guard, reading
+    // `german_synth.dict` and `german_tags.txt` from the same jar as the POS dictionary.
+    synth: Some(SynthConfig {
+        jar_dict_path: "org/languagetool/resource/de/german_synth.dict",
+        jar_info_path: "org/languagetool/resource/de/german_synth.info",
+        jar_tags_path: "org/languagetool/resource/de/german_tags.txt",
+        policy: SynthPolicy {
+            keep_case_class: true,
+            case_exempt_lemmas: &["mein", "ich"],
+            forbidden_forms: &[
+                "unsren",
+                "unsrem",
+                "unsres",
+                "unsre",
+                "unsern",
+                "unserm",
+                "unsrer",
+                "angepaßt",
+                "beschloß",
+                "biß",
+                "entschloß",
+                "ergoß",
+                "faßt",
+                "genoß",
+                "paßt",
+                "paßte",
+                "preßt",
+                "preßte",
+                "riß",
+                "schloß",
+                "streßtest",
+                "vergißt",
+                "verlaß",
+                "verläßt",
+                "vermiß",
+                "vermißt",
+                "wißt",
+                "wußtest",
+                "wüßtest",
+            ],
+        },
+    }),
 };
 
 /// Russian — the first far-from-Latin language. The morfologik dict ships inside the LT repo as
@@ -515,6 +611,7 @@ pub static RU: LangConfig = LangConfig {
     elision: &[],
     compounds: None,
     sentence_start_lowercase: false,
+    synth: None,
 };
 
 /// The Arabic `[.,;:…!?]` punctuation class plus the Arabic comma `،`, semicolon `؛`, and question
@@ -560,6 +657,7 @@ pub static AR: LangConfig = LangConfig {
     elision: &[],
     compounds: None,
     sentence_start_lowercase: false,
+    synth: None,
 };
 
 /// French — Romance. Maven dict (`org.languagetool:french-pos-dict`, CFSA2/UTF-8/SUFFIX, `_` sep).
@@ -606,6 +704,7 @@ pub static FR: LangConfig = LangConfig {
     ],
     compounds: None,
     sentence_start_lowercase: false,
+    synth: None,
 };
 
 /// Spanish — Romance. Maven dict shipped by Softcatalà (`org.softcatala:spanish-pos-dict`, jar entries
@@ -649,6 +748,7 @@ pub static ES: LangConfig = LangConfig {
     elision: &[],
     compounds: None,
     sentence_start_lowercase: false,
+    synth: None,
 };
 
 /// Italian — Romance, but the **first FSA5** language: `italian.dict` ships in the LT repo in the older
@@ -694,6 +794,7 @@ pub static IT: LangConfig = LangConfig {
     ],
     compounds: None,
     sentence_start_lowercase: false,
+    synth: None,
 };
 
 #[cfg(test)]

@@ -11,8 +11,13 @@
 #![forbid(unsafe_code)]
 
 mod compound;
+mod synth;
 mod tagger;
 
+pub use synth::{
+    DictSynthesizer, ManualEntry, SynthError, SynthSources, build_artifact as build_synth_artifact,
+    parse_manual_entries,
+};
 pub use tagger::{Tagger, TaggerError, WordData, build_artifact, build_from_triples};
 
 use std::borrow::Cow;

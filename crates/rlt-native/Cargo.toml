@@ -14,6 +14,10 @@ rlt-core.workspace = true
 rlt-ir.workspace = true
 # Per-language config: the structural TagSet (Penn vs STTS) + the SRX language code.
 rlt-lang.workspace = true
+# The morfologik reader the synthesis dictionary is looked up with.
+rlt-morfologik.workspace = true
+# `Regex` is part of the `rlt_core::Synthesizer` interface.
+regex.workspace = true
 # LanguageTool sentence segmentation from segment.srx (pure Rust, wasm-ok).
 srx.workspace = true
 # The POS tagger FSA (inflected -> lemma+tags); also backs is_known.
