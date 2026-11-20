@@ -16,6 +16,11 @@
 
 use anyhow::{Result, anyhow, bail, ensure};
 
+/// The version byte (after the `\\fsa` magic) of the compressed CFSA2 automaton en/de/ru/ar ship.
+const CFSA2_VERSION: u8 = 0xc6;
+/// The version byte of the older, uncompressed FSA5 automaton (Italian).
+const FSA5_VERSION: u8 = 0x05;
+
 /// Parsed `.info` metadata (only the fields we need to decode entries).
 #[derive(Debug, Clone)]
 pub struct DictMeta {
@@ -123,8 +128,8 @@ pub fn read_triples(dict: &[u8], meta: &DictMeta) -> Result<Vec<(String, String,
     );
     let mut out = Vec::new();
     match dict[4] {
-        0xc6 => collect_triples(&Cfsa2::parse(dict)?, meta, &mut out),
-        0x05 => collect_triples(&Fsa5::parse(dict)?, meta, &mut out),
+        CFSA2_VERSION => collect_triples(&Cfsa2::parse(dict)?, meta, &mut out),
+        FSA5_VERSION => collect_triples(&Fsa5::parse(dict)?, meta, &mut out),
         v => bail!("unsupported FSA version {v:#x} (expected CFSA2 0xc6 or FSA5 0x05)"),
     }
     Ok(out)
@@ -193,7 +198,7 @@ impl Dictionary {
             out.extend(decode_tail(&key, encoded, tag, &self.meta));
         };
         // The header was validated in `new`, so parsing again cannot fail.
-        if self.bytes[4] == 0xc6 {
+        if self.bytes[4] == CFSA2_VERSION {
             if let Ok(fsa) = Cfsa2::parse(&self.bytes) {
                 lookup_entries(&fsa, &key, sep, &mut emit);
             }
@@ -346,7 +351,7 @@ impl<'a> Cfsa2<'a> {
         ensure!(file.len() > 8, "file too short for a CFSA2 header");
         ensure!(&file[..4] == b"\\fsa", "not a morfologik FSA (bad magic)");
         ensure!(
-            file[4] == 0xc6,
+            file[4] == CFSA2_VERSION,
             "unsupported FSA version {:#x} (expected CFSA2 0xc6)",
             file[4]
         );
@@ -488,7 +493,7 @@ impl<'a> Fsa5<'a> {
         ensure!(file.len() > 8, "file too short for an FSA5 header");
         ensure!(&file[..4] == b"\\fsa", "not a morfologik FSA (bad magic)");
         ensure!(
-            file[4] == 0x05,
+            file[4] == FSA5_VERSION,
             "expected FSA5 version 0x05, got {:#x}",
             file[4]
         );
