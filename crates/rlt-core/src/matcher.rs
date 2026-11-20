@@ -195,6 +195,8 @@ struct TokenMatcher {
     postag: Option<TagMatch>,
     inflected: bool,
     negate: bool,
+    /// `negate_pos`: invert the POS test.
+    negate_pos: bool,
     /// `spacebefore`: `Some(true)` requires whitespace before the token, `Some(false)` forbids it,
     /// `None` ignores it (the default). Checked against the gap between adjacent token spans.
     space_before: Option<bool>,
@@ -471,6 +473,7 @@ fn compile_token(t: &TokenPat) -> Option<TokenMatcher> {
         postag,
         inflected: t.inflected,
         negate: t.negate,
+        negate_pos: t.negate_pos,
         space_before: t.space_before,
         exceptions,
         scope: ExceptionScope::Current,
@@ -490,6 +493,7 @@ fn compile_exception(e: &ExceptionPat) -> Option<TokenMatcher> {
         postag,
         inflected: e.inflected,
         negate: e.negate,
+        negate_pos: e.negate_pos,
         space_before: None, // exceptions constrain the token's content, not its spacing
         exceptions: Vec::new(),
         scope: e.scope,
@@ -594,10 +598,10 @@ impl TokenMatcher {
             .any(|e| e.scope == ExceptionScope::Next && e.exception_hits(token))
     }
 
-    /// The text and POS constraint with `negate`, ignoring exceptions. As in LT's
-    /// `PatternToken.isMatched`, `negate` flips only the text test,
-    /// $(\text{text\_ok} \oplus \text{negate}) \land \text{tag\_ok}$, and a negated token without
-    /// text matches nothing.
+    /// The text and POS constraint with `negate`/`negate_pos`, ignoring exceptions. As in LT's
+    /// `PatternToken.isMatched`,
+    /// $(\text{text\_ok} \oplus \text{negate}) \land (\text{tag\_ok} \oplus \text{negate\_pos})$,
+    /// and a negated token without text matches nothing.
     fn constraint(&self, token: &Token) -> bool {
         // LT's `PatternToken.getTestToken`: `inflected` tests the lemma, falling back to the surface
         // form for a reading without one; literal and regex text alike.
@@ -618,10 +622,13 @@ impl TokenMatcher {
                 .iter()
                 .any(|s| eq(s, value, *case_sensitive) != self.negate),
         };
+        // `negate_pos` flips the POS test per reading; an untagged token is one reading without a
+        // tag, which a POS test fails (so a negated one passes). Without `postag` LT's POS test
+        // holds, so `negate_pos` alone matches nothing.
         let tag_ok = match &self.postag {
-            None => true,
-            Some(TagMatch::Regex(re)) => token.tags.iter().any(|t| re.is_match(t)),
-            Some(TagMatch::Literal(p)) => token.tags.iter().any(|t| t == p),
+            None => !self.negate_pos,
+            Some(_) if token.tags.is_empty() => self.negate_pos,
+            Some(p) => token.tags.iter().any(|t| p.matches(t) != self.negate_pos),
         };
         text_ok && tag_ok
     }
@@ -1556,6 +1563,38 @@ mod tests {
         let run = analyze("run", &[("run", &["NN"], &[])]);
         assert_eq!(
             matcher.grammar_diagnostics("run", &run),
+            [] as [Diagnostic; 0]
+        );
+    }
+
+    #[test]
+    fn negate_pos_inverts_the_pos_test() {
+        // `<token postag="VB.*" postag_regexp="yes" negate_pos="yes"/>`: a token with a non-verb reading,
+        // and an exception that disqualifies non-nouns.
+        let matcher = IrMatcher::new(&[rule_of(
+            "NEG_POS",
+            vec![Construct::Token(TokenPat {
+                postag: Some("VB.*".to_owned()),
+                postag_regexp: true,
+                negate_pos: true,
+                exceptions: vec![rlt_ir::ExceptionPat {
+                    postag: Some("NN".to_owned()),
+                    negate_pos: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })],
+        )]);
+        let noun = analyze("dog", &[("dog", &["NN"], &[])]);
+        assert_eq!(matcher.grammar_diagnostics("dog", &noun).len(), 1);
+        let verb = analyze("go", &[("go", &["VB"], &[])]);
+        assert_eq!(
+            matcher.grammar_diagnostics("go", &verb),
+            [] as [Diagnostic; 0]
+        );
+        let adj = analyze("red", &[("red", &["JJ"], &[])]);
+        assert_eq!(
+            matcher.grammar_diagnostics("red", &adj),
             [] as [Diagnostic; 0]
         );
     }

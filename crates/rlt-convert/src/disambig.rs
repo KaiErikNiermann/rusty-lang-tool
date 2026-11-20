@@ -170,6 +170,7 @@ fn lower_token(t: &XToken) -> Option<TokenPat> {
         postag: t.postag.clone(),
         regexp: is_yes(t.regexp.as_deref()),
         postag_regexp: is_yes(t.postag_regexp.as_deref()),
+        negate_pos: is_yes(t.negate_pos.as_deref()),
         negate: is_yes(t.negate.as_deref()),
         inflected: is_yes(t.inflected.as_deref()),
         min: t.min,
@@ -187,6 +188,7 @@ fn lower_exception(e: &XException) -> ExceptionPat {
         postag: e.postag.clone(),
         regexp: is_yes(e.regexp.as_deref()),
         postag_regexp: is_yes(e.postag_regexp.as_deref()),
+        negate_pos: is_yes(e.negate_pos.as_deref()),
         inflected: is_yes(e.inflected.as_deref()),
         negate: is_yes(e.negate.as_deref()),
         case_sensitive: is_yes(e.case_sensitive.as_deref()),
@@ -318,6 +320,8 @@ struct XToken {
     postag: Option<String>,
     #[serde(rename = "@postag_regexp")]
     postag_regexp: Option<String>,
+    #[serde(rename = "@negate_pos")]
+    negate_pos: Option<String>,
     #[serde(rename = "@regexp")]
     regexp: Option<String>,
     #[serde(rename = "@negate")]
@@ -350,6 +354,8 @@ struct XException {
     postag: Option<String>,
     #[serde(rename = "@postag_regexp")]
     postag_regexp: Option<String>,
+    #[serde(rename = "@negate_pos")]
+    negate_pos: Option<String>,
     #[serde(rename = "@regexp")]
     regexp: Option<String>,
     #[serde(rename = "@negate")]
@@ -405,6 +411,27 @@ mod tests {
                 .any(|c| matches!(c, Construct::Token(t) if t.case_sensitive)),
             "disambig pattern-level case_sensitive was not propagated to the token",
         );
+    }
+
+    /// `negate_pos` and `scope` on tokens and exceptions must survive lowering; dropping them inverts
+    /// or misplaces the constraint.
+    #[test]
+    fn negate_pos_and_scope_are_lowered() {
+        let xml = "<rules><rule id=\"X\"><pattern>\
+                   <token postag=\"V.*\" postag_regexp=\"yes\" negate_pos=\"yes\">\
+                   <exception postag=\"N\" negate_pos=\"yes\" scope=\"next\"/></token></pattern>\
+                   <disambig postag=\"NNP\"/></rule></rules>";
+        let parsed: XRules = quick_xml::de::from_str(xml).expect("parse");
+        let rule = lower_rule(&parsed.rule[0], None);
+        let Some(Construct::Token(t)) = rule.pattern.first() else {
+            panic!("expected a token, got {:?}", rule.pattern);
+        };
+        assert!(t.negate_pos, "token negate_pos dropped");
+        let [e] = t.exceptions.as_slice() else {
+            panic!("expected one exception, got {:?}", t.exceptions);
+        };
+        assert!(e.negate_pos, "exception negate_pos dropped");
+        assert_eq!(e.scope, ExceptionScope::Next);
     }
 
     #[test]
