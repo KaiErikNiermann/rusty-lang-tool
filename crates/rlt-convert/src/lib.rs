@@ -395,6 +395,9 @@ pub fn extract_examples(grammar_path: &Path) -> Result<Vec<Example>> {
         let rules::RulesElementTypeContent::Category(cat) = item else {
             continue;
         };
+        if !category_enabled(cat) {
+            continue;
+        }
         for c in &cat.content {
             match c {
                 rules::CategoryElementTypeContent::Rule(r) if rule_enabled(r.default.as_ref()) => {
@@ -498,6 +501,9 @@ fn lower_document(doc: &rules::RulesElementType) -> Vec<Rule> {
         let rules::RulesElementTypeContent::Category(cat) = item else {
             continue; // <unification> at the top level carries no rules.
         };
+        if !category_enabled(cat) {
+            continue;
+        }
         for c in &cat.content {
             match c {
                 rules::CategoryElementTypeContent::Rule(r) if rule_enabled(r.default.as_ref()) => {
@@ -561,6 +567,12 @@ fn lower_phrase(p: &pattern::PhraseElementType) -> Vec<Construct> {
         }
     }
     out
+}
+
+/// Whether a `<category>` is enabled: LT disables every rule of a `default="off"` category
+/// (`JLanguageTool`'s `isCategoryDisabled`, v6.8).
+fn category_enabled(cat: &rules::CategoryElementType) -> bool {
+    !matches!(cat.default, Some(rules::CategoryDefaultType::Off))
 }
 
 /// Whether a `<rule>` is enabled (not `default="off"`/`"temp_off"`).
