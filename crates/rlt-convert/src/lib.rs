@@ -375,6 +375,11 @@ pub struct Example {
     pub marker: Option<(usize, usize)>,
     /// Expected correction alternatives (from `correction="a|b"`); empty for negative examples.
     pub corrections: Vec<String>,
+    /// Index of the owning rule in the rule list [`convert`] writes (same traversal and filters).
+    pub rule_index: usize,
+    /// LanguageTool's full rule id, `ID[n]` with `n` the rule's 1-based position in its
+    /// `<rulegroup>` (`ID[1]` for a standalone rule): what LT's `getFullId()` reports.
+    pub full_id: String,
 }
 
 /// Extract every `<example>` sentence from a LanguageTool `grammar.xml` — the oracle corpus.
@@ -384,6 +389,8 @@ pub struct Example {
 pub fn extract_examples(grammar_path: &Path) -> Result<Vec<Example>> {
     let doc = parse_grammar(grammar_path)?;
     let mut out = Vec::new();
+    // Walks rules exactly like `lower_document`, so `rule_index` lines up with the artifact.
+    let mut rule_index = 0;
     for item in &doc.content {
         let rules::RulesElementTypeContent::Category(cat) = item else {
             continue;
@@ -391,13 +398,27 @@ pub fn extract_examples(grammar_path: &Path) -> Result<Vec<Example>> {
         for c in &cat.content {
             match c {
                 rules::CategoryElementTypeContent::Rule(r) if rule_enabled(r.default.as_ref()) => {
-                    collect_examples(r, None, &mut out);
+                    let owner = RuleRef {
+                        index: rule_index,
+                        full_id: format!("{}[1]", r.id.as_deref().unwrap_or("<anon>")),
+                    };
+                    collect_examples(r, None, &owner, &mut out);
+                    rule_index += 1;
                 }
                 rules::CategoryElementTypeContent::Rulegroup(g)
                     if group_enabled(g.default.as_ref()) =>
                 {
-                    for r in g.rule.iter().filter(|r| rule_enabled(r.default.as_ref())) {
-                        collect_examples(r, Some(&g.id), &mut out);
+                    // LT numbers group members by position, disabled ones included.
+                    for (n, r) in g.rule.iter().enumerate() {
+                        if !rule_enabled(r.default.as_ref()) {
+                            continue;
+                        }
+                        let owner = RuleRef {
+                            index: rule_index,
+                            full_id: format!("{}[{}]", g.id, n + 1),
+                        };
+                        collect_examples(r, Some(&g.id), &owner, &mut out);
+                        rule_index += 1;
                     }
                 }
                 // Disabled rules/groups don't fire by default — exclude their examples too.
@@ -408,21 +429,32 @@ pub fn extract_examples(grammar_path: &Path) -> Result<Vec<Example>> {
     Ok(out)
 }
 
+/// Where an example's owning rule sits: its artifact index and LT full id.
+struct RuleRef {
+    index: usize,
+    full_id: String,
+}
+
 /// Gather the `<example>`s of a single `<rule>` into `out`.
-fn collect_examples(r: &rules::RuleElementType, group_id: Option<&str>, out: &mut Vec<Example>) {
+fn collect_examples(
+    r: &rules::RuleElementType,
+    group_id: Option<&str>,
+    owner: &RuleRef,
+    out: &mut Vec<Example>,
+) {
     let rule_id =
         r.id.clone()
             .or_else(|| group_id.map(str::to_owned))
             .unwrap_or_else(|| "<anon>".to_owned());
     for c in &r.content {
         if let rules::RuleElementTypeContent::Example(ex) = c {
-            out.push(lower_example(&rule_id, ex));
+            out.push(lower_example(&rule_id, owner, ex));
         }
     }
 }
 
 /// Reconstruct an example's plain text and marker span from its mixed content.
-fn lower_example(rule_id: &str, ex: &rules::ExampleElementType) -> Example {
+fn lower_example(rule_id: &str, owner: &RuleRef, ex: &rules::ExampleElementType) -> Example {
     let corrections = ex
         .correction
         .as_deref()
@@ -450,6 +482,8 @@ fn lower_example(rule_id: &str, ex: &rules::ExampleElementType) -> Example {
         text,
         marker,
         corrections,
+        rule_index: owner.index,
+        full_id: owner.full_id.clone(),
     }
 }
 
@@ -1378,6 +1412,42 @@ mod tests {
             missing.is_empty(),
             "dropped token literals (wildcard bugs): {missing:?}"
         );
+    }
+
+    /// Every example's `rule_index` must point at the converted rule it belongs to (needs `fetch-lt`).
+    /// `extract_examples` and `lower_document` walk the rules separately, so a filter added to one
+    /// and not the other would shift every index after it.
+    #[test]
+    #[ignore = "needs fetch-lt resources"]
+    fn example_rule_index_matches_converted_rules() {
+        let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../"));
+        for code in ["en", "de"] {
+            let cfg = rlt_lang::config(code).expect("configured language");
+            let path = root.join(cfg.grammar_xml_path());
+            if !path.exists() {
+                eprintln!(
+                    "SKIP: {} missing — run `cargo xtask fetch-lt`",
+                    path.display()
+                );
+                continue;
+            }
+            let rules = super::lower_document(&super::parse_grammar(&path).expect("parse"));
+            let examples = super::extract_examples(&path).expect("examples");
+            let misplaced: Vec<_> = examples
+                .iter()
+                .filter(|e| rules.get(e.rule_index).is_none_or(|r| r.id != e.rule_id))
+                .map(|e| (&e.full_id, e.rule_index))
+                .collect();
+            assert_eq!(
+                misplaced,
+                [] as [(&String, usize); 0],
+                "{code}: examples off their rule"
+            );
+            assert!(
+                examples.iter().all(|e| e.full_id.ends_with(']')),
+                "{code}: full ids carry the [n] suffix"
+            );
+        }
     }
 
     /// en/de/ru/ar have only an *inline* internal subset — a `base_dir` must not change their
