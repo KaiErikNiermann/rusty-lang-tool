@@ -38,7 +38,7 @@ try {
   process.exit(0);
 }
 
-const checker = RltChecker.with_native("en", srx, tagger, disambig, ir);
+const checker = RltChecker.with_native("en", srx, tagger, disambig, ir, new Uint8Array()); // en: no synthesizer
 const INPUT = "I should of went their yesterday. She go to school. In 2023, they recieve teh msg.";
 
 function sample() {

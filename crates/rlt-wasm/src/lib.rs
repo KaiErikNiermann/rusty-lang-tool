@@ -7,13 +7,15 @@
 
 #![forbid(unsafe_code)]
 
+use std::sync::Arc;
+
 use rlt_core::{
     Checker, Composite, ConfusionChecker, Diagnostic, Disambiguator, Engine, GrammarChecker,
-    IrMatcher, NoGrammar, WithConfusion, WithGrammar,
+    IrMatcher, NoGrammar, Synthesizer, WithConfusion, WithGrammar,
 };
 #[cfg(feature = "nlprule")]
 use rlt_engine::VendoredEngine;
-use rlt_native::NativeEngine;
+use rlt_native::{DictSynthesizer, NativeEngine};
 use rlt_tagger::Tagger;
 use wasm_bindgen::prelude::*;
 
@@ -106,7 +108,9 @@ impl RltChecker {
     /// Construct a **fully-native** L1+L2 checker — the pure-Rust pipeline that needs no nlprule
     /// binary. `segment_srx` is LanguageTool's `segment.srx` text; `tagger` is the `tagger.rkyv`
     /// artifact; `disambig` is `disambig.rkyv` (pass an empty buffer to skip disambiguation);
-    /// `ir_blob` is the converter's `en.rkyv` grammar artifact.
+    /// `ir_blob` is the converter's grammar artifact; `synth` is `synth.rkyv`, the word-form
+    /// synthesizer for suggestions that ask for inflected forms (pass an empty buffer when the
+    /// language ships none — such suggestions then render as without synthesis).
     ///
     /// # Errors
     /// Returns a JS error if any artifact buffer is invalid.
@@ -116,11 +120,12 @@ impl RltChecker {
         tagger: &[u8],
         disambig: &[u8],
         ir_blob: &[u8],
+        synth: &[u8],
     ) -> Result<RltChecker, JsValue> {
         console_error_panic_hook::set_once();
         let (alphabet, spell_msg) = lang_spell(lang)?;
         let engine = load_native_engine(lang, segment_srx, tagger, disambig)?;
-        let ir = load_ir(ir_blob)?;
+        let ir = load_ir(lang, ir_blob, synth)?;
         Ok(Self {
             inner: Box::new(Checker::with_spell(
                 Composite::new(engine, ir),
@@ -143,12 +148,13 @@ impl RltChecker {
         tagger: &[u8],
         disambig: &[u8],
         ir_blob: &[u8],
+        synth: &[u8],
         confusion_blob: &[u8],
     ) -> Result<RltChecker, JsValue> {
         console_error_panic_hook::set_once();
         let (alphabet, spell_msg) = lang_spell(lang)?;
         let engine = load_native_engine(lang, segment_srx, tagger, disambig)?;
-        let ir = load_ir(ir_blob)?;
+        let ir = load_ir(lang, ir_blob, synth)?;
         let confusion = ConfusionChecker::from_rkyv_bytes(confusion_blob)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Self {
@@ -174,6 +180,7 @@ impl RltChecker {
         tagger: &[u8],
         disambig: &[u8],
         ir_blob: &[u8],
+        synth: &[u8],
         l4_model: Vec<u8>,
         l4_tokenizer: &[u8],
         l4_labels: &[u8],
@@ -183,7 +190,7 @@ impl RltChecker {
         console_error_panic_hook::set_once();
         let (alphabet, spell_msg) = lang_spell(lang)?;
         let engine = load_native_engine(lang, segment_srx, tagger, disambig)?;
-        let ir = load_ir(ir_blob)?;
+        let ir = load_ir(lang, ir_blob, synth)?;
         let l4 = Tagger::from_bytes(l4_model, l4_tokenizer, l4_labels, l4_meta, l4_verb)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Self {
@@ -240,9 +247,22 @@ fn load_native_engine(
     Ok(engine)
 }
 
-/// Compile the IR grammar matcher from the `en.rkyv` artifact bytes.
-fn load_ir(ir_blob: &[u8]) -> Result<IrMatcher, JsValue> {
-    IrMatcher::from_rkyv_bytes(ir_blob).map_err(|e| JsValue::from_str(&e.to_string()))
+/// Compile the IR grammar matcher from the grammar artifact bytes, with the language's word-form
+/// synthesizer when `synth` holds one (empty: none).
+fn load_ir(lang: &str, ir_blob: &[u8], synth: &[u8]) -> Result<IrMatcher, JsValue> {
+    let synthesizer: Option<Arc<dyn Synthesizer>> = if synth.is_empty() {
+        None
+    } else {
+        let policy = rlt_lang::config(lang)
+            .and_then(|c| c.synth)
+            .ok_or_else(|| JsValue::from_str(&format!("{lang:?} has no synthesizer configured")))?
+            .policy;
+        let s = DictSynthesizer::from_bytes(synth, policy)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Some(Arc::new(s))
+    };
+    IrMatcher::from_rkyv_bytes_with(ir_blob, synthesizer)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 /// Decompress Brotli-compressed bytes. Exposed so the web demo's **Fast (beta)** download track can

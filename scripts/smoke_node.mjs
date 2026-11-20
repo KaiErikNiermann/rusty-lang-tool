@@ -75,7 +75,14 @@ const srx = loadText("segment.srx");
 const taggerRkyv = loadOpt("en/tagger.rkyv");
 const irBlob = loadOpt("en/grammar.rkyv");
 if (srx && taggerRkyv && irBlob) {
-  const native = RltChecker.with_native("en", srx, taggerRkyv, loadOpt("en/disambig.rkyv") ?? new Uint8Array(), irBlob);
+  const native = RltChecker.with_native(
+    "en",
+    srx,
+    taggerRkyv,
+    loadOpt("en/disambig.rkyv") ?? new Uint8Array(),
+    irBlob,
+    new Uint8Array(), // no word-form synthesizer for en
+  );
   const nvInput = "I should of went their yesterday. I recieve teh msg.";
   const nvDiags = native.check(nvInput);
   console.log(`native input: ${JSON.stringify(nvInput)} -> ${nvDiags.length} diagnostics`);
