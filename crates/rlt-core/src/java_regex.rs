@@ -52,6 +52,36 @@ pub fn translate(src: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
+/// `rep`, a Java `Matcher.replaceAll` replacement, in the `regex` crate's replacement syntax.
+///
+/// Java reads `$1s` as group 1 followed by `s`; `regex` reads it as a group named `1s` and inserts
+/// nothing. Java's `\x` is a literal `x`; a literal `$` is `$$` in `regex`.
+#[must_use]
+pub fn translate_replacement(rep: &str) -> String {
+    let mut out = String::with_capacity(rep.len() + 4);
+    let mut chars = rep.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some('$') => out.push_str("$$"),
+                Some(lit) => out.push(lit),
+                None => out.push('\\'),
+            },
+            '$' if chars.peek().is_some_and(char::is_ascii_digit) => {
+                out.push_str("${");
+                while let Some(d) = chars.next_if(char::is_ascii_digit) {
+                    out.push(d);
+                }
+                out.push('}');
+            }
+            '$' if chars.peek() == Some(&'{') => out.push('$'), // `${name}` reads the same
+            '$' => out.push_str("$$"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Whether `regex` treats `c` as a meta character (so `\c` is a valid escape there).
 fn is_meta(c: char) -> bool {
     let mut buf = [0; 4];
@@ -91,6 +121,16 @@ mod tests {
     fn classes_and_assertions_are_kept() {
         assert_eq!(translate(r"\p{Lu}\d+\b\.\\"), r"\p{Lu}\d+\b\.\\");
         assert_eq!(translate("plain"), "plain");
+    }
+
+    #[test]
+    fn replacements_keep_java_group_boundaries() {
+        use super::translate_replacement as rep;
+        assert_eq!(rep("$1s"), "${1}s");
+        assert_eq!(rep("Grü$1e"), "Grü${1}e");
+        assert_eq!(rep(r"\$$1 \\x"), r"$$${1} \x");
+        let re = regex::Regex::new("(a)").unwrap();
+        assert_eq!(re.replace_all("a", rep("$1x").as_str()), "ax");
     }
 
     #[test]

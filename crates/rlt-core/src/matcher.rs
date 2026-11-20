@@ -291,7 +291,7 @@ fn compile_suggestion(s: &IrSuggestion) -> Option<CompiledSuggestion> {
                 let regex = match transform {
                     Some((m, r)) => Some((
                         Regex::new(&crate::java_regex::translate(m)).ok()?,
-                        r.clone(),
+                        crate::java_regex::translate_replacement(r),
                     )),
                     None => None,
                 };
