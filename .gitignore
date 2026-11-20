@@ -50,6 +50,9 @@ node_modules/
 # *.dict is globbed above; the .info / jar are not:
 /resources/*/pos.info
 /resources/*/pos-dict.jar
+# The synthesis dictionary's .info and tag list, extracted from the same jar by `xtask build-synth`
+/resources/*/synth.info
+/resources/*/synth-tags.txt
 
 # Java extractor build deps (NgramDump.java source IS committed)
 /tools/lib/
@@ -82,3 +85,6 @@ __pycache__/
 
 # Playwright MCP screenshots and snapshots
 /.playwright-mcp/
+
+# Backlog.md task board (local planning, not shared)
+/backlog/

@@ -118,6 +118,38 @@ web-check:
 web-build:
     cd web && pnpm install && pnpm run build
 
+# --- Backlog board ---
+#
+# Tasks live in backlog/ (gitignored: local planning, not shared). The board is a fork of Backlog.md
+# that adds a Graph view; it serves this project on port 6421 so it can run beside other projects'
+# boards on the default 6420.
+
+# Checkout of the Backlog.md fork that adds a Graph view to the web board (override: BACKLOG_BOARD_DIR)
+board_dir := env("BACKLOG_BOARD_DIR", home_directory() / "Projects/ext-projects/Backlog.md")
+
+# Build the board fork (needs bun 1.4.4); run again after pulling or editing the fork
+board-build:
+    cd {{ board_dir }} && bun install --frozen-lockfile --ignore-scripts && bun scripts/build.ts
+
+# Open this project's Backlog board (LAN host + printed ?token= URL; `just board 6421 127.0.0.1` stays local)
+board port="6421" host=env("BACKLOG_BOARD_HOST", ""):
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # On a non-loopback address the server refuses every request without a session token: open the
+    # `?token=` URL it prints once per browser (it sets a cookie), or send `Authorization: Bearer
+    # <token>`. The token is random per start; BACKLOG_BROWSER_TOKEN (16+ characters) keeps it across
+    # restarts. Anyone who holds it can edit tasks, so treat the URL as a password.
+    test -x {{ board_dir }}/dist/backlog || { echo "no build in {{ board_dir }}: run just board-build (or set BACKLOG_BOARD_DIR)" >&2; exit 1; }
+    test -f backlog/config.yml || { echo "no backlog/ here: run {{ board_dir }}/dist/backlog init" >&2; exit 1; }
+    host={{ quote(host) }}
+    if [ -z "$host" ]; then
+        # The source address of the default route, i.e. this machine's LAN address.
+        host=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}' || true)
+        host=${host:-127.0.0.1}
+    fi
+    echo "board on http://$host:{{ port }} (open the ?token= URL printed below unless the host is 127.0.0.1)" >&2
+    exec {{ board_dir }}/dist/backlog browser --port {{ port }} --host "$host" --no-open
+
 # --- Versioning / deploy (the GitHub Pages demo) ---
 #
 # The "release" here is the per-language artifact bundle published to the
