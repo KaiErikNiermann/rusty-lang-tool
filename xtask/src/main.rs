@@ -1731,8 +1731,8 @@ fn web_manifest(out: &Path, langs: &[String]) -> Result<()> {
     let wanted = |code: &str| langs.is_empty() || langs.iter().any(|c| c == code);
 
     // 1. Enumerate every (source, flat-base) compression task: the one shared segment.srx, then each
-    //    wanted language's tagger + grammar (required by `with_native`) and disambig + confusion
-    //    (optional).
+    //    wanted language's tagger + grammar (required by `with_native`) and disambig + confusion +
+    //    synth (optional).
     let mut tasks = vec![EncodeTask {
         code: None,
         name: "segment.srx",
@@ -1748,7 +1748,13 @@ fn web_manifest(out: &Path, langs: &[String]) -> Result<()> {
             ("disambig.rkyv", false, cfg.disambig_path()),
             // L3 confusion model (en/de/ru/fr/es); absent for ar/it.
             ("confusion.rkyv", false, cfg.confusion_path()),
+            // Word-form synthesis for `<match postag>` suggestions (de). Only for languages that
+            // configure it, so a stale file left in `resources/<code>/` is never shipped.
+            ("synth.rkyv", false, cfg.synth_path()),
         ] {
+            if name == "synth.rkyv" && cfg.synth.is_none() {
+                continue;
+            }
             tasks.push(EncodeTask {
                 code: Some(code),
                 name,
