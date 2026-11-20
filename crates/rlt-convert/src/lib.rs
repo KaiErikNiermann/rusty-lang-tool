@@ -197,8 +197,8 @@ fn parse_confusion_sets(path: &Path) -> Result<Vec<rlt_ir::ConfusionPair>> {
             continue;
         };
         pairs.push(rlt_ir::ConfusionPair {
-            a: a.to_ascii_lowercase(),
-            b: b.to_ascii_lowercase(),
+            a: a.to_lowercase(),
+            b: b.to_lowercase(),
             factor,
             symmetric,
         });
@@ -217,7 +217,7 @@ fn prune_unigrams(
         let Some((w, c)) = line.split_once('\t') else {
             continue;
         };
-        let w = w.to_ascii_lowercase();
+        let w = w.to_lowercase();
         if words.contains(&w) {
             if let Ok(count) = c.trim().parse::<u32>() {
                 out.push((w, count));
@@ -263,7 +263,7 @@ fn prune_bigrams(
         let Some((gram, c)) = line.split_once('\t') else {
             continue;
         };
-        let gram = gram.to_ascii_lowercase();
+        let gram = gram.to_lowercase();
         let Some((w1, w2)) = gram.split_once(' ') else {
             continue;
         };
@@ -1508,6 +1508,19 @@ mod tests {
             super::smart_regexp_spaces("a b[ ]c"),
             "a(?:[\\s\u{00A0}\u{202F}]+)b[ ]c"
         );
+    }
+
+    /// Confusion words are folded the way the runtime folds tokens (Unicode `to_lowercase`), so a
+    /// word with a capital umlaut is stored under the key it is looked up with.
+    #[test]
+    fn confusion_sets_fold_non_ascii_capitals() {
+        let dir = std::env::temp_dir().join(format!("rlt-confusion-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("confusion_sets.txt");
+        std::fs::write(&path, "Über -> Ober; 10;\n").expect("write");
+        let pairs = super::parse_confusion_sets(&path).expect("parse");
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!((pairs[0].a.as_str(), pairs[0].b.as_str()), ("über", "ober"));
     }
 
     /// LT's case-sensitivity precedence (`XMLRuleHandler.finalizeTokens`/`finalizeExceptions`).
